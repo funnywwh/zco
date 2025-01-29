@@ -26,11 +26,18 @@ pub const Co = struct{
         READY,
         RUNNING,
         STOP,
+        FREED,
     };
     const DEFAULT_STACK_SZIE = blk:{
         if(@hasDecl(root,"ZCO_STACK_SIZE")) {
-            if(root.ZCO_STACK_SIZE < 1024*4){
-                @compileError("root.ZCO_STACK_SIZE < 1024*4");
+            if(builtin.mode == .Debug){
+                if(root.ZCO_STACK_SIZE < 1024*12){
+                    @compileError("root.ZCO_STACK_SIZE < 1024*12");
+                }
+            }else{
+                if(root.ZCO_STACK_SIZE < 1024*4){
+                    @compileError("root.ZCO_STACK_SIZE < 1024*4");
+                }
             }
             break :blk root.ZCO_STACK_SIZE;
         }else {
@@ -124,10 +131,10 @@ pub const Schedule = struct{
     allocator:std.mem.Allocator,
     sendCo:?*Co = null,
     recvCo:?*Co = null,
-
+    exit:bool = false,
     allCoMap:CoMap,
 
-    const CoMap = std.AutoArrayHashMap(*Co,*Co);
+    const CoMap = std.AutoArrayHashMap(usize,*Co);
     const PriorityQueue = std.PriorityQueue(*Co,void,Schedule.queueCompare);
 
     pub fn init(allocator:std.mem.Allocator)Schedule{
@@ -140,14 +147,21 @@ pub const Schedule = struct{
         return mg;
     }
     pub fn deinit(self:*Schedule)void{
+        std.log.debug("Schedule deinit readyQueue count:{}",.{self.readyQueue.count()});
+        std.log.debug("Schedule deinit sleepQueue count:{}",.{self.sleepQueue.count()});
+        var readyIt = self.readyQueue.iterator();
+        while(readyIt.next())|co|{
+            std.log.debug("Schedule deinit resume ready coid:{}",.{co.id});
+            co.Resume()  catch {};
+        }
         self.sleepQueue.deinit();
         self.readyQueue.deinit();
-        while(self.allCoMap.popOrNull())|co|{
-            self.allocator.destroy(co);
+        while(self.allCoMap.popOrNull())|kv|{
+            self.allocator.destroy(kv.value);
         }
         self.allCoMap.deinit();
     }
-    pub fn go(self:*Schedule,func:Co.Func,args:?*anyopaque)!*Co{
+    pub fn go(self:*Schedule,func:Co.Func,args:?*const anyopaque)!*Co{
         const co = try self.allocator.create(Co);
         co.* = Co{
             .arg = args,
@@ -156,6 +170,7 @@ pub const Schedule = struct{
             .schedule = self,
         };
         Co.nextId +%= 1;
+        try self.allCoMap.put(co.id,co);
         try self.ResumeCo(co);
         return co;
     }
@@ -170,25 +185,37 @@ pub const Schedule = struct{
         try self.readyQueue.add(co);   
     }
     fn freeCo(self:*Schedule,co:*Co)void{
-        if(co.state == .STOP){
-            return;
-        }
-        for(self.sleepQueue.items,0..)|_co,i|{
+        std.log.debug("Schedule freeCo coid:{}",.{co.id});
+        var sleepIt = self.sleepQueue.iterator();
+        var i:usize = 0;
+        while(sleepIt.next())|_co|{
             if(_co == co){
                 _ = self.sleepQueue.removeIndex(i);
+                break;
             }
+            i +|= 1;
         }
-        for(self.readyQueue.items,0..)|_co,i|{
+        i = 0;
+        var readyIt = self.readyQueue.iterator();
+        while(readyIt.next())|_co|{
             if(_co == co){
+                std.log.debug("Schedule freed ready coid:{}",.{co.id});
                 _ = self.readyQueue.removeIndex(i);
+                break;
             }
+            i +|= 1;
         }
-        if(self.allCoMap.get(co))|_|{
+        if(self.allCoMap.get(co.id))|_|{
+            std.log.debug("Schedule destroy coid:{} co:{*}",.{co.id,co});
+            _ = self.allCoMap.swapRemove(co.id);
             self.allocator.destroy(co);
         }
     }
-    pub fn loop(self:*Schedule,exit:*bool)!void{
-        while(!exit.*){
+    pub fn stop(self:*Schedule)void{
+        self.exit = true;
+    }
+    pub fn loop(self:*Schedule)!void{
+        while(!self.exit){
             self.checkNextCo()  catch |e|{
                 std.log.err("Schedule loop checkNextCo error:{s}",.{@errorName(e)});
             };
@@ -197,9 +224,11 @@ pub const Schedule = struct{
     fn checkNextCo(self:*Schedule)!void{
         const count = self.readyQueue.count();
         var iter = self.readyQueue.iterator();
-        std.log.debug("checkNextCo begin",.{});
-        while(iter.next())|_co|{
-            std.log.debug("checkNextCo cid:{d}",.{_co.id});
+        if(builtin.mode == .Debug){
+            std.log.debug("checkNextCo begin",.{});
+            while(iter.next())|_co|{
+                std.log.debug("checkNextCo cid:{d}",.{_co.id});
+            }
         }
         if(count > 0 ){
             const nextCo = self.readyQueue.remove();
@@ -227,6 +256,9 @@ pub const Chan = struct{
     bufferCap:usize = 1,
     closed:bool = false,
 
+    sendCount:usize = 0,
+    recvCount:usize = 0,
+
     pub fn init(s:*Schedule,bufCap:usize)Self{
         std.debug.assert(bufCap > 0);
         return .{
@@ -237,7 +269,7 @@ pub const Chan = struct{
             .bufferCap = bufCap,
         };
     }
-    pub fn close(self:*Self)!void{
+    pub fn close(self:*Self)void{
         const schedule = self.schedule;
         self.closed = true;
         //唤醒所有sender和recver
@@ -246,23 +278,33 @@ pub const Chan = struct{
                 std.log.err("Chan close coid:{d} ResumeCo error:{s}",.{sendCo.id,@errorName(e)});
             };
         }
+        self.sendingQueue.clearAndFree();
         for(self.recvingQueue.items)|recvCo|{
             schedule.ResumeCo(recvCo) catch |e|{
                 std.log.err("Chan close coid:{d} ResumeCo error:{s}",.{recvCo.id,@errorName(e)});
             };
         }
+        self.recvingQueue.clearAndFree();
+    }
+    pub fn deinit(self:*Self)void{
+        std.debug.assert(self.closed);
+        std.debug.assert(self.isEmpty());
+        self.valueQueue.clearAndFree();
     }
     pub fn isEmpty(self:*Self)bool{
         return self.valueQueue.items.len == 0;
     }
     pub fn send(self:*Self,data:*anyopaque)!void{
+        const schedule = self.schedule;
+        const sendCo = schedule.runningCo orelse unreachable;
+        self.sendCount += 1;
+        std.log.debug("Chan send_ coid:{d}",.{sendCo.id});
+
         if(self.closed){
             std.log.err("Chan send closed",.{});
             return error.sendClosed;
         }
-        const schedule = self.schedule;
-        const sendCo = schedule.runningCo orelse unreachable;
-        if(self.valueQueue.items.len  >= self.bufferCap)
+        while(self.valueQueue.items.len  >= self.bufferCap)
         {
             //缓冲区满等待空位
             try self.sendingQueue.append(sendCo);
@@ -276,9 +318,10 @@ pub const Chan = struct{
             .value = data,
             .co = sendCo,
         });
+        std.log.debug("Chan send appendValue",.{});
         if(self.recvingQueue.items.len > 0 ){
-            std.log.debug("Chan send recvingQueue len:{d}",.{self.recvingQueue.items.len});
             const recvCo = self.recvingQueue.orderedRemove(0);
+            std.log.debug("Chan send wakeup recv coid:{d}",.{recvCo.id});
             try schedule.ResumeCo(recvCo);            
         }
         std.log.debug("Chan send waiting recv",.{});
@@ -288,33 +331,32 @@ pub const Chan = struct{
     pub fn recv(self:*Self)!?*anyopaque{
         const schedule = self.schedule;
         const recvCo = schedule.runningCo orelse unreachable;
-        if(self.valueQueue.items.len <= 0 ){
+
+        std.log.debug("Chan recv_ coid:{d}",.{recvCo.id});
+        while(self.valueQueue.items.len <= 0 ){
             //没有数据可读
-            while(true){
-                if(self.closed){
-                    std.log.debug("Chan recv closed",.{});
-                    return null;
-                }
-                try self.recvingQueue.append(recvCo);
-                std.log.debug("Chan recv waiting data recvCo id:{d}",.{recvCo.id});
-                try recvCo.Suspend();
-                //唤醒后要检测有没有可读数据
-                //有可能已经被其它recver处理完了
-                if(self.valueQueue.items.len <= 0){
-                    std.log.debug("Chan recv nodata recvCo id:{d}",.{recvCo.id});
-                }else{
-                    break;
-                }
+            try self.recvingQueue.append(recvCo);
+            std.log.debug("Chan recv waiting data recvCo id:{d}",.{recvCo.id});
+            try recvCo.Suspend();
+            //唤醒后要检测有没有可读数据
+            //有可能已经被其它recver处理完了
+            std.log.debug("Chan recv nodata recvCo id:{d}",.{recvCo.id});
+            if(self.closed){
+                std.log.debug("Chan recv closed",.{});
+                break;
             }
             std.log.debug("Chan recv wakeup recvCo id:{d}",.{recvCo.id});
         }
-        const val = self.valueQueue.orderedRemove(0);
-        try schedule.ResumeCo(val.co);
-        if(self.sendingQueue.items.len > 0){
-            const sendCo = self.sendingQueue.orderedRemove(0);
-            try schedule.ResumeCo(sendCo);
+        if(self.valueQueue.items.len > 0 ){
+            std.log.debug("Chan send removeValue",.{});
+            const val = self.valueQueue.orderedRemove(0);
+            try schedule.ResumeCo(val.co);
+            if(self.sendingQueue.items.len > 0){
+                const sendCo = self.sendingQueue.orderedRemove(0);
+                try schedule.ResumeCo(sendCo);
+            }
+            return val.value;
         }
-
-        return val.value;
+        return null;
     }
 };
