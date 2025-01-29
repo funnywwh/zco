@@ -1,4 +1,6 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const root = @import("root");
 const testing = std.testing;
 const c = @cImport({
     @cInclude("ucontext.h");
@@ -25,8 +27,20 @@ pub const Co = struct{
         RUNNING,
         STOP,
     };
-    const DEFAULT_STACK_SZIE = 1024*100;
-
+    const DEFAULT_STACK_SZIE = blk:{
+        if(@hasDecl(root,"ZCO_STACK_SIZE")) {
+            if(root.ZCO_STACK_SIZE < 1024*4){
+                @compileError("root.ZCO_STACK_SIZE < 1024*4");
+            }
+            break :blk root.ZCO_STACK_SIZE;
+        }else {
+            if(builtin.mode == .Debug){
+                break :blk 1024*32;
+            }else {
+                break :blk 1024*8 ;
+            }
+        }
+    };
     var nextId:usize = 0;
     
     const Func =*const fn (self:*Co,args:?*anyopaque)anyerror!void;

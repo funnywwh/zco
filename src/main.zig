@@ -1,5 +1,8 @@
 const std = @import("std");
 const co = @import("./root.zig");
+
+pub const ZCO_STACK_SIZE = 1024*4;
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
