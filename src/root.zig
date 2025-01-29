@@ -161,11 +161,11 @@ pub const Schedule = struct{
         }
         self.allCoMap.deinit();
     }
-    pub fn go(self:*Schedule,func:Co.Func,args:?*const anyopaque)!*Co{
+    pub fn go(self:*Schedule,func:anytype,args:?*anyopaque)!*Co{
         const co = try self.allocator.create(Co);
         co.* = Co{
             .arg = args,
-            .func = @ptrCast(func),
+            .func = @ptrCast(&func),
             .id =  Co.nextId,
             .schedule = self,
         };
