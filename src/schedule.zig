@@ -157,7 +157,7 @@ pub const Schedule = struct{
             };
         }
     }
-    fn checkNextCo(self:*Schedule)!void{
+    inline fn checkNextCo(self:*Schedule)!void{
         const count = self.readyQueue.count();
         var iter = self.readyQueue.iterator();
         if(builtin.mode == .Debug){
