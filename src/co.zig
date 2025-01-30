@@ -46,7 +46,7 @@ pub const Co = struct{
     };
     pub var nextId:usize = 0;
     
-    const Func =*const fn (self:*Co,args:?*anyopaque)anyerror!void;
+    pub const Func =*const fn (self:*Co,args:?*anyopaque)anyerror!void;
 
 
     pub fn Suspend(self:*Self)!void{

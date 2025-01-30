@@ -1,7 +1,7 @@
 const std = @import("std");
 const co = @import("./root.zig");
 
-pub const ZCO_STACK_SIZE = 1024*100;
+pub const ZCO_STACK_SIZE = 1024*12;
 
 pub fn main() !void {
       var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -10,17 +10,50 @@ pub fn main() !void {
  
     try co.SwitchTimer.init(allocator);
     defer {
-        co.SwitchTimer.deinit();
+        co.SwitchTimer.deinit(allocator);
     }
-    const t1 = try std.Thread.spawn(.{},coRun,.{1});
+    // const t1 = try std.Thread.spawn(.{},coRun,.{1});
+    // defer t1.join();
+    
     const t2 = try std.Thread.spawn(.{},coRun1,.{5});
+    defer t2.join();
 
-    t1.join();
-    t2.join();
+    // const t3 = try std.Thread.spawn(.{},ctxSwithBench,.{});
+    // defer t3.join();
+
 }
 
+pub fn ctxSwithBench()!void{
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+    
+    var schedule = try co.Schedule.init(allocator);
+    defer {
+        schedule.deinit();
+        allocator.destroy(schedule);
+    }
 
+
+    _ = try schedule.go(struct{
+        const num_bounces = 1_000_000;
+        fn run(_co:*co.Co,_s:?*co.Schedule)!void{
+            const s = _s orelse unreachable;
+            const start = std.time.nanoTimestamp();
+            for(0..num_bounces)|_|{
+                try _co.Sleep(1);
+            }
+            const end = std.time.nanoTimestamp();
+            const duration = end - start;
+            const ns_per_bounce = @divFloor(duration, num_bounces * 2);
+            std.log.err("coid:{d} switch ns:{d}",.{_co.id,ns_per_bounce});
+            s.exit = true;
+        }
+    }.run,schedule);
+    try schedule.loop();
+}
 pub fn coRun(baseIdx:u32) !void {
+      _ = baseIdx; // autofix
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -34,27 +67,34 @@ pub fn coRun(baseIdx:u32) !void {
     const CoArg = struct{
         baseIdx:usize,
     };
-    for(0..10_000)|i|{
+    for(0..1_000)|i|{
 
-        var arg1 = CoArg{.baseIdx = baseIdx+i};
+        var arg1 = try allocator.create(CoArg);
+        arg1.baseIdx = i;
 
         _ = try schedule.go(struct{
             fn run(_co:*co.Co,_args:?*CoArg)!void{
                 const args = _args orelse return error.noArg;
+                defer _co.schedule.allocator.destroy(args);
                 const idx = args.baseIdx;
                 var v:usize = idx;
+                var maxSleep:usize = 0;
                 while(true){
-                    std.log.debug("co{d} running v:{d}",.{idx,v});
+                    std.log.debug("co{d} running v:{d}",.{_co.id,v});
                     const start = try std.time.Instant.now();
                     try _co.Sleep(10);
                     const end = try std.time.Instant.now();
                     v +%= 1;
-                    std.log.err("idx{d} sleeped ms:{d}",.{v,end.since(start)/std.time.ns_per_ms});
+                    const d = end.since(start)/std.time.ns_per_ms;
+                    if(d > maxSleep){
+                        maxSleep = d;
+                        std.log.err("coid:{d} sleeped max ms:{d}",.{_co.id,maxSleep});
+                    }
                 }
             }
-        }.run,&arg1);
+        }.run,arg1);
     }
-
+    try schedule.loop();
 }
 pub fn coRun1(baseIdx:u32) !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -86,9 +126,9 @@ pub fn coRun1(baseIdx:u32) !void {
                 // try c.Sleep(10);
                 v +%= 1;
                 try _ch.send(&v);
-                // if(v == 1000){
-                //     break;
-                // }
+                if(v == 1000){
+                    break;
+                }
                 std.log.debug("co{d} sent",.{idx});
             }
             _ch.close();

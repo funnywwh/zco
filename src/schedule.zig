@@ -20,8 +20,50 @@ pub const Schedule = struct{
 
     const CoMap = std.AutoArrayHashMap(usize,*Co);
     const PriorityQueue = std.PriorityQueue(*Co,void,Schedule.queueCompare);
+    // const PriorityQueue = ListQueue;
 
 
+    const ListQueue = struct{
+        const List = std.ArrayList(*Co);
+        list:List,
+        pub fn init(allocator:std.mem.Allocator,_:anytype)ListQueue{
+            return .{
+                .list = List.init(allocator),
+            };
+        }
+        pub fn deinit(self:*ListQueue)void{
+            self.list.deinit();
+        }
+        pub fn add(self:*ListQueue,co:*Co)!void{
+            return self.list.append(co);
+        }
+        pub fn remove(self:*ListQueue)*Co{
+            return self.list.orderedRemove(0);
+        }
+        pub fn removeIndex(self:*ListQueue,idx:usize)*Co{
+            return self.list.orderedRemove(idx);
+        }
+        pub fn count(self:*ListQueue)usize{
+            return self.list.items.len;
+        }
+        const Iterator = struct{
+            list:*ListQueue,
+            idx:usize = 0,
+            fn next(self:*Iterator)?*Co{
+                if(self.idx >= self.list.list.items.len){
+                    return null;
+                }
+                const co = self.list.list.items[self.idx];
+                self.idx += 1;
+                return co;
+            }
+        };
+        pub fn iterator(self:*ListQueue)Iterator{
+            return .{
+                .list = self,
+            };
+        }
+    };
     pub fn mainInit()!void{
 
     }
