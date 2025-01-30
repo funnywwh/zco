@@ -66,9 +66,10 @@ pub const SwitchTimer = struct{
 
         return ;
     }
-    pub fn deinit()void{
+    pub fn deinit(allocator:std.mem.Allocator)void{
         if(localSwitchTimer)|switchTimer|{
             switchTimer.listSchedule.clearAndFree();
+            allocator.destroy(switchTimer);
         }
     }
     pub fn addSchedule(s:*Schedule)!void{
