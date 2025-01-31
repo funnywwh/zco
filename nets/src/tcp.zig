@@ -8,6 +8,13 @@ pub const Tcp = struct{
     xtcp:?xev.TCP = null,
     co:*zco.Co,
     allocator:std.mem.Allocator,
+
+    pub const Error = error{
+        NoError,
+        NotInit,
+        swapcontext,
+        getcontext,
+    } || xev.ReadError;
     pub fn init(allocator:std.mem.Allocator,co:*zco.Co)!Tcp{
         return .{
             .co = co,
@@ -32,6 +39,7 @@ pub const Tcp = struct{
                 ) xev.CallbackAction {
                     _ = r catch unreachable;
                     const owner = ud orelse unreachable;
+                    std.log.debug("Tcp closed",.{});
                     owner.co.Resume() catch |e|{
                         std.log.err("nets tcp close ResumeCo error:{s}",.{@errorName(e)});
                     };
@@ -88,12 +96,12 @@ pub const Tcp = struct{
         return xtcp.listen(backlog);
     }
 
-    pub fn read(self:*Self,buffer:[]u8)!usize{
+    pub fn read(self:*Self,buffer:[]u8)Error!usize{
         const xtcp = self.xtcp orelse return error.NotInit;
         var c_read = xev.Completion{};
         const Result = struct{
             self:*Self,
-            size:anyerror!usize = undefined,
+            size:Error!usize = undefined,
         };
         var result:Result = .{
             .self = self,
@@ -120,7 +128,7 @@ pub const Tcp = struct{
         try self.co.Suspend();
         return result.size;
     }
-    pub fn write(self:*Self,buffer:[]u8)!usize{
+    pub fn write(self:*Self,buffer:[]const u8)!usize{
         const xtcp = self.xtcp orelse return error.NotInit;
         var c_write = xev.Completion{};
         const Result = struct{
@@ -130,7 +138,7 @@ pub const Tcp = struct{
         var result:Result = .{
             .self = self,
         };
-        xtcp.write(&self.co.schedule, &c_write, .{ .slice = buffer }, Result, &result, (struct {
+        xtcp.write(&self.co.schedule.xLoop.?, &c_write, .{ .slice = buffer }, Result, &result, (struct {
                 fn callback(
                     ud: ?*Result,
                     _: *xev.Loop,

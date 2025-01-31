@@ -83,7 +83,9 @@ pub const Schedule = struct{
             allocator.destroy(schedule);
         }
 
-        schedule.xLoop = try xev.Loop.init(.{});
+        schedule.xLoop = try xev.Loop.init(.{
+            .entries = 1024*4,
+        });
 
         var sa = c.struct_sigaction{};
         sa.__sigaction_handler.sa_sigaction = @ptrCast(&user2SigHandler);
