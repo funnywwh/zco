@@ -4,6 +4,7 @@ const Context = c.ucontext_t;
 const Co = @import("./co.zig").Co;
 const SwitchTimer = @import("./switch_timer.zig").SwitchTimer;
 const builtin = @import("builtin");
+const xev = @import("xev");
 
 pub const Schedule = struct{
     ctx:Context = std.mem.zeroes(Context),
@@ -15,6 +16,8 @@ pub const Schedule = struct{
     allCoMap:CoMap,
 
     tid:usize = 0,
+
+    xLoop:?xev.Loop = null,
 
     threadlocal var localSchedule:?*Schedule = null;
 
@@ -68,19 +71,20 @@ pub const Schedule = struct{
 
     }
     pub fn init(allocator:std.mem.Allocator)!*Schedule{
-        const mg = Schedule{
+        const schedule = try allocator.create(Schedule);
+        schedule.* = .{
             .sleepQueue = PriorityQueue.init(allocator,{}),
             .readyQueue = PriorityQueue.init(allocator,{}),
             .allocator = allocator,
             .allCoMap = CoMap.init(allocator),
         };
-
-        const schedule = try allocator.create(Schedule);
         errdefer {
             schedule.deinit();
             allocator.destroy(schedule);
         }
-        
+
+        schedule.xLoop = try xev.Loop.init(.{});
+
         var sa = c.struct_sigaction{};
         sa.__sigaction_handler.sa_sigaction = @ptrCast(&user2SigHandler);
         sa.sa_flags = 0;
@@ -94,7 +98,6 @@ pub const Schedule = struct{
         _ = c.sigaddset(&set,SwitchTimer.SIGNO);
         _ = c.pthread_sigmask(c.SIG_UNBLOCK,&set,null);
 
-        schedule.* = mg;
         localSchedule = schedule;
         schedule.tid = std.Thread.getCurrentId();
         try SwitchTimer.addSchedule(schedule);
@@ -132,6 +135,9 @@ pub const Schedule = struct{
             std.log.debug("Schedule deinit resume ready coid:{}",.{co.id});
             co.Resume()  catch {};
         }
+        if(self.xLoop)|*xLoop|{
+            xLoop.deinit();
+        }
         self.sleepQueue.deinit();
         self.readyQueue.deinit();
         while(self.allCoMap.popOrNull())|kv|{
@@ -141,7 +147,7 @@ pub const Schedule = struct{
     }
     pub fn go(self:*Schedule,func:anytype,args:?*anyopaque)!*Co{
         const co = try self.allocator.create(Co);
-        co.* = Co{
+        co.* = .{
             .arg = args,
             .func = @ptrCast(&func),
             .id =  Co.nextId,
@@ -193,7 +199,10 @@ pub const Schedule = struct{
         self.exit = true;
     }
     pub fn loop(self:*Schedule)!void{
+        const xLoop = &(self.xLoop orelse unreachable);
+        defer xLoop.deinit();
         while(!self.exit){
+            try xLoop.run(.no_wait);
             self.checkNextCo()  catch |e|{
                 std.log.err("Schedule loop checkNextCo error:{s}",.{@errorName(e)});
             };
@@ -203,9 +212,11 @@ pub const Schedule = struct{
         const count = self.readyQueue.count();
         var iter = self.readyQueue.iterator();
         if(builtin.mode == .Debug){
-            std.log.debug("checkNextCo begin",.{});
-            while(iter.next())|_co|{
-                std.log.debug("checkNextCo cid:{d}",.{_co.id});
+            if(count > 0 ){
+                std.log.debug("checkNextCo begin",.{});
+                while(iter.next())|_co|{
+                    std.log.debug("checkNextCo cid:{d}",.{_co.id});
+                }
             }
         }
         if(count > 0 ){

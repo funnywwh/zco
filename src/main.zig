@@ -15,12 +15,14 @@ pub fn main() !void {
     // const t1 = try std.Thread.spawn(.{},coRun,.{1});
     // defer t1.join();
     
-    const t2 = try std.Thread.spawn(.{},coNest,.{});
-    defer t2.join();
+    // const t2 = try std.Thread.spawn(.{},coRun1,.{2});
+    // defer t2.join();
 
     // const t3 = try std.Thread.spawn(.{},ctxSwithBench,.{});
     // defer t3.join();
 
+    const t4 = try std.Thread.spawn(.{},coNest,.{});
+    defer t4.join();
 }
 
 pub fn coNest()!void{
@@ -36,15 +38,14 @@ pub fn coNest()!void{
 
 
     _ = try schedule.go(struct{
-        fn run(_co:*co.Co,_s:?*anyopaque)!void{
-              const s:*co.Schedule = @alignCast(@ptrCast(_s orelse unreachable)); // autofix
-            std.log.debug("cNest Schedule:{*} {*}",.{_co.schedule,_s});
+        fn run(_co:*co.Co,_s:?*co.Schedule)!void{
+              const s = _s orelse unreachable; // autofix
             _ = try s.go(struct{
-                fn run(_co1:*co.Co,_:?*anyopaque)!void{
+                fn run(_co1:*co.Co,_:?*co.Schedule)!void{
+                    std.log.debug("coNest co2 will Suspend",.{});
                     try _co1.Suspend();
                 }
             }.run,s);
-            std.log.debug("cNest Schedule:{*} {*}",.{_co.schedule,_s});
             try _co.Suspend();
         }
     }.run,schedule);

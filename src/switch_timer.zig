@@ -32,7 +32,9 @@ pub const SwitchTimer = struct{
     }
 
     pub fn init(allocator:std.mem.Allocator)!void{
-        const self:Self = .{
+        const switchTimer = try allocator.create(SwitchTimer);
+        errdefer allocator.destroy(switchTimer);
+        switchTimer.* = .{
             .listSchedule = List.init(allocator),
         };
 
@@ -60,8 +62,6 @@ pub const SwitchTimer = struct{
 
         // _ = c.setitimer(c.ITIMER_REAL,&timer,null);
 
-        const switchTimer = try allocator.create(SwitchTimer);
-        switchTimer.* = self;
         localSwitchTimer = switchTimer;
 
         return ;

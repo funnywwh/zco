@@ -15,18 +15,12 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+
+    const zco = b.dependency("zco",.{}).module("zco");
     const xev = b.dependency("libxev", .{ .target = target, .optimize = optimize }).module("xev");
 
-    const zco = b.addModule("zco",.{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = b.path("./src/root.zig"),
-    });
-    zco.link_libc = true;
-    zco.addImport("xev",xev);
-
     const lib = b.addStaticLibrary(.{
-        .name = "zco",
+        .name = "nets",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = b.path("src/root.zig"),
@@ -34,19 +28,22 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    lib.root_module.addImport("zco",zco);
+    lib.root_module.addImport("xev",xev);
+    
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
     // running `zig build`).
     b.installArtifact(lib);
 
     const exe = b.addExecutable(.{
-        .name = "zco",
+        .name = "nets",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    exe.linkLibC();
-    exe.linkSystemLibrary("rt");
+    exe.root_module.addImport("nets",&lib.root_module);
+    exe.root_module.addImport("zco",b.dependency("zco",.{}).module("zco"));
     exe.root_module.addImport("xev",xev);
     
     // This declares intent for the executable to be installed into the
@@ -84,7 +81,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 

@@ -9,11 +9,11 @@ pub const Co = struct{
     const Self = @This();
     id:usize = 0,
     ctx:Context = std.mem.zeroes(Context),
-    func:Func,
+    func:Func = undefined,
     arg:?*anyopaque = null,
     state:State = .INITED,
     priority:usize = 0,
-    schedule:*Schedule,
+    schedule:*Schedule = undefined,
     stack:[DEFAULT_STACK_SZIE]u8 = std.mem.zeroes([DEFAULT_STACK_SZIE]u8),
     wakeupTimestampNs:usize = 0,//纳秒
     const State = enum{
@@ -124,7 +124,7 @@ pub const Co = struct{
         _ = try self.Suspend();
     }
     fn contextEntry(self:*Self) callconv(.C) void{
-        std.log.debug("Co contextEntry coid:{d}",.{self.id});
+        std.log.debug("Co contextEntry coid:{d} schedule{*}",.{self.id,self.schedule});
         defer std.log.debug("Co contextEntry coid:{d} exited",.{self.id});
         const schedule = self.schedule;
         self.func(self,self.arg)  catch |e|{
