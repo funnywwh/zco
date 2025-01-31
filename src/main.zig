@@ -15,7 +15,7 @@ pub fn main() !void {
     // const t1 = try std.Thread.spawn(.{},coRun,.{1});
     // defer t1.join();
     
-    const t2 = try std.Thread.spawn(.{},coRun1,.{5});
+    const t2 = try std.Thread.spawn(.{},coNest,.{});
     defer t2.join();
 
     // const t3 = try std.Thread.spawn(.{},ctxSwithBench,.{});
@@ -23,6 +23,33 @@ pub fn main() !void {
 
 }
 
+pub fn coNest()!void{
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+    
+    var schedule = try co.Schedule.init(allocator);
+    defer {
+        schedule.deinit();
+        allocator.destroy(schedule);
+    }
+
+
+    _ = try schedule.go(struct{
+        fn run(_co:*co.Co,_s:?*anyopaque)!void{
+              const s:*co.Schedule = @alignCast(@ptrCast(_s orelse unreachable)); // autofix
+            std.log.debug("cNest Schedule:{*} {*}",.{_co.schedule,_s});
+            _ = try s.go(struct{
+                fn run(_co1:*co.Co,_:?*anyopaque)!void{
+                    try _co1.Suspend();
+                }
+            }.run,s);
+            std.log.debug("cNest Schedule:{*} {*}",.{_co.schedule,_s});
+            try _co.Suspend();
+        }
+    }.run,schedule);
+    try schedule.loop();
+}
 pub fn ctxSwithBench()!void{
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
