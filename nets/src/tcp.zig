@@ -151,4 +151,34 @@ pub const Tcp = struct{
         try self.co.Suspend();
         return result.size;
     }
+
+    pub const GoFunc =*const fn(*Tcp,?*anyopaque)anyerror!void;
+    pub fn go(self:*Self,func:anytype,arg:?*anyopaque)!void{
+        const Data = struct{
+            tcp:*Self,
+            func:GoFunc,
+            arg:?*anyopaque ,
+        };
+        const data = try self.allocator.create(Data);
+        data.* = .{
+            .tcp = self,
+            .func = @alignCast(@ptrCast(&func)),
+            .arg = arg,
+        };
+        errdefer {
+            self.allocator.destroy(data);
+        }
+        const co = try self.co.schedule.go(struct{
+            fn run(co:*zco.Co,_data:?*Data)!void{
+                _ = co; // autofix
+                const runData = _data orelse unreachable;
+                const allocator:std.mem.Allocator = runData.tcp.allocator;
+                defer {
+                    allocator.destroy(runData);
+                }
+                try runData.func(runData.tcp,runData.arg);
+            }
+        }.run,data);
+        self.co = co;
+    }
 };

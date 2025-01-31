@@ -12,11 +12,10 @@ pub fn main() !void {
         zco.SwitchTimer.deinit(allocator);
     }
 
-    try run();
+    try tcpRun();
 }
 
-
-fn run()!void{
+fn tcpRun()!void{
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     var allocator = gpa.allocator();
@@ -45,6 +44,7 @@ fn run()!void{
                 }
             }.run,@constCast(&{}));
             const s = data.schedule;
+            _ = s; // autofix
             var server = try nets.Tcp.init(data.allocator,co); 
             defer {
                 server.close();
@@ -63,16 +63,16 @@ fn run()!void{
                     server.allocator.destroy(client);
                 }
                 std.log.debug("accept a client",.{});
-                _ = try s.go(struct{
-                    fn run(coClient:*zco.Co,tcpClientPtr:?*nets.Tcp)!void{
+                _ = try client.go(struct{
+                    fn run(_client:*nets.Tcp,arg:?*anyopaque)!void{
+                        _ = arg; // autofix
                         std.log.debug("entry client co",.{});
-                        const _client = tcpClientPtr orelse unreachable;
-                        _client.co = coClient;
                         defer {
                             std.log.debug("client loop exited",.{});
                             _client.close();
                             _client.deinit();
-                            coClient.schedule.allocator.destroy(_client);
+                            var _allocator = _client.allocator;
+                            _allocator.destroy(_client);
                         }
                         std.log.debug("client co will loop",.{});
                         while(true){
@@ -82,7 +82,7 @@ fn run()!void{
                             std.log.debug("client read nread:{d} buf:{s}",.{nread,buf[0..nread]});
                         }
                     }
-                }.run,client);
+                }.run,null);
             }
         }
     }.run, &mainData);
