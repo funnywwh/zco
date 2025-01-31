@@ -133,7 +133,7 @@ fn httpHelloworld()!void{
             const address = try std.net.Address.parseIp4("127.0.0.1", 8080);
             std.log.debug("accept a listen@{d}",.{address.getPort()});
             try server.bind(address);
-            try server.listen(1);
+            try server.listen(10);
             while(true){
                 std.log.debug("acceptting",.{});
                 var client = try server.accept();
@@ -175,7 +175,7 @@ fn httpHelloworld()!void{
                                 const response = "HTTP/1.1 200 OK\r\nContext-type: text/plain\r\nConnection: keep-alive\r\nContent-length:10\r\n\r\nhelloworld";
 
                                 _ = try _client.write(response);
-                                break;
+                                // break;
                             }
                         }
                     }
