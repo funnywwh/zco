@@ -42,9 +42,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("nets",&lib.root_module);
-    exe.root_module.addImport("zco",b.dependency("zco",.{}).module("zco"));
+    exe.root_module.addImport("zco",zco);
     exe.root_module.addImport("xev",xev);
+    exe.root_module.addImport("nets",&lib.root_module);
     
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -81,6 +81,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    lib_unit_tests.root_module.addImport("zco",zco);
+    lib_unit_tests.root_module.addImport("xev",xev);
+    lib_unit_tests.root_module.addImport("nets",&lib.root_module);
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
@@ -89,6 +92,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe_unit_tests.root_module.addImport("zco",zco);
+    exe_unit_tests.root_module.addImport("xev",xev);
+    exe_unit_tests.root_module.addImport("nets",&lib.root_module);
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
