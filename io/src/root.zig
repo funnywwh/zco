@@ -6,6 +6,35 @@ pub fn CreateIo(IOType: type) type {
     return struct {
         const Self = IOType;
         const SelfName = @typeName(IOType);
+
+        pub fn close(self: *Self) void {
+            if (self.xobj) |xobj| {
+                const XObjType = @TypeOf(xobj);
+                const s = self.co.schedule;
+                const loop = &(s.xLoop orelse unreachable);
+                var c_close = xev.Completion{};
+                xobj.close(loop, &c_close, Self, self, struct {
+                    fn callback(
+                        ud: ?*Self,
+                        _: *xev.Loop,
+                        _: *xev.Completion,
+                        _: XObjType,
+                        r: xev.CloseError!void,
+                    ) xev.CallbackAction {
+                        _ = r catch unreachable;
+                        const owner = ud orelse unreachable;
+                        std.log.debug("io {s} closed", .{SelfName});
+                        owner.co.Resume() catch |e| {
+                            std.log.err("io {s} close ResumeCo error:{s}", .{ SelfName, @errorName(e) });
+                        };
+                        return .disarm;
+                    }
+                }.callback);
+                self.co.Suspend() catch |e| {
+                    std.log.err("io {s} close Suspend error:{s}", .{ SelfName, @errorName(e) });
+                };
+            }
+        }
         pub fn read(self: *Self, buffer: []u8) anyerror!usize {
             const xobj = self.xobj orelse return error.NotInit;
             const XObjType = @TypeOf(xobj);
