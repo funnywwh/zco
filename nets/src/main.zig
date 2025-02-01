@@ -2,19 +2,38 @@ const std = @import("std");
 const zco = @import("zco");
 const nets = @import("nets");
 const xev = @import("xev");
-
+const opts = @import("opts");
+const builtin = @import("builtin");
 const ZCo = zco;
 const ZCO_STACK_SIZE = 1024 * 100;
 pub const std_options = .{
     .log_level = .err,
 };
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var threads = std.mem.zeroes([opts.threads]?std.Thread);
+    var gpa = std.heap.GeneralPurposeAllocator(.{
+        .thread_safe = if (builtin.single_threaded) false else threads.len > 1,
+    }){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
     try zco.init(allocator);
     defer zco.deinit();
-    try httpHelloworld();
+    defer {
+        for (threads, 0..) |_, i| {
+            // try httpHelloworld();
+            if (threads[i]) |t| {
+                t.join();
+            }
+        }
+    }
+    if (builtin.single_threaded == false) {
+        for (threads, 0..) |_, i| {
+            // try httpHelloworld();
+            threads[i] = try std.Thread.spawn(.{}, httpHelloworld, .{});
+        }
+    } else {
+        try httpHelloworld();
+    }
 }
 
 fn httpHelloworld() !void {

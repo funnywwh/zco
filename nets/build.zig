@@ -46,12 +46,22 @@ pub fn build(b: *std.Build) void {
     // running `zig build`).
     b.installArtifact(lib);
 
+    const threads_option = b.addOptions();
+    const threads = b.option(usize, "threads", "threads") orelse 1;
+
+    const single_thread = b.option(bool, "single_thread", "single_thread");
+    threads_option.addOption(usize, "threads", threads);
+
     const exe = b.addExecutable(.{
         .name = "nets",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .single_threaded = single_thread,
     });
+
+    exe.root_module.addOptions("opts", threads_option);
+
     exe.root_module.addImport("zco", zco);
     exe.root_module.addImport("xev", xev);
     exe.root_module.addImport("nets", nets);
