@@ -15,9 +15,9 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-
-    const zco = b.dependency("zco",.{}).module("zco");
+    const zco = b.dependency("zco", .{}).module("zco");
     const xev = b.dependency("libxev", .{ .target = target, .optimize = optimize }).module("xev");
+    const io = b.dependency("io", .{ .target = target, .optimize = optimize }).module("io");
 
     const lib = b.addStaticLibrary(.{
         .name = "nets",
@@ -28,15 +28,18 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    lib.root_module.addImport("zco",zco);
-    lib.root_module.addImport("xev",xev);
+    lib.root_module.addImport("zco", zco);
+    lib.root_module.addImport("xev", xev);
+    lib.root_module.addImport("io", io);
 
-    const nets = b.addModule("nets",.{
+    const nets = b.addModule("nets", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
-    nets.addImport("file",&lib.root_module);
+    nets.addImport("zco", zco);
+    nets.addImport("xev", xev);
+    nets.addImport("io", io);
 
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
@@ -49,10 +52,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("zco",zco);
-    exe.root_module.addImport("xev",xev);
-    exe.root_module.addImport("nets",&lib.root_module);
-    
+    exe.root_module.addImport("zco", zco);
+    exe.root_module.addImport("xev", xev);
+    exe.root_module.addImport("nets", nets);
+    exe.root_module.addImport("io", io);
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
@@ -88,9 +92,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    lib_unit_tests.root_module.addImport("zco",zco);
-    lib_unit_tests.root_module.addImport("xev",xev);
-    lib_unit_tests.root_module.addImport("nets",&lib.root_module);
+    lib_unit_tests.root_module.addImport("zco", zco);
+    lib_unit_tests.root_module.addImport("xev", xev);
+    lib_unit_tests.root_module.addImport("nets", &lib.root_module);
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
@@ -99,9 +103,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe_unit_tests.root_module.addImport("zco",zco);
-    exe_unit_tests.root_module.addImport("xev",xev);
-    exe_unit_tests.root_module.addImport("nets",&lib.root_module);
+    exe_unit_tests.root_module.addImport("zco", zco);
+    exe_unit_tests.root_module.addImport("xev", xev);
+    exe_unit_tests.root_module.addImport("nets", &lib.root_module);
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

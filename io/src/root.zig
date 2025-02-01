@@ -41,7 +41,7 @@ pub fn CreateIo(IOType: type) type {
             var c_read = xev.Completion{};
             const Result = struct {
                 self: *Self,
-                size: anyerror!usize = undefined,
+                size: anyerror!usize = 0,
             };
             var result: Result = .{
                 .self = self,

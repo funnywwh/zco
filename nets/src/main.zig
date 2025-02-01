@@ -4,7 +4,7 @@ const nets = @import("nets");
 const xev = @import("xev");
 
 const ZCo = zco;
-const ZCO_STACK_SIZE = 1024 * 4;
+const ZCO_STACK_SIZE = 1024 * 100;
 pub const std_options = .{
     .log_level = .err,
 };
@@ -39,9 +39,9 @@ fn httpHelloworld() !void {
                 server.deinit();
             }
             const address = try std.net.Address.parseIp4("127.0.0.1", 8080);
-            std.log.debug("accept a listen@{d}", .{address.getPort()});
+            std.log.err("accept a listen@{d}", .{address.getPort()});
             try server.bind(address);
-            try server.listen(10);
+            try server.listen(200);
             while (true) {
                 const _s = server.co.schedule;
                 var client = try server.accept();
@@ -60,27 +60,21 @@ fn httpHelloworld() !void {
                             _client.deinit();
                         }
                         std.log.debug("client co will loop", .{});
-                        const anyReader = std.io.AnyReader{
-                            .context = _client,
-                            .readFn = struct {
-                                fn read(context: *const anyopaque, buffer: []u8) anyerror!usize {
-                                    const _tcp: *nets.Tcp = @constCast(@alignCast(@ptrCast(context)));
-                                    return _tcp.read(buffer);
-                                }
-                            }.read,
-                        };
-                        var bufferReader = std.io.bufferedReader(anyReader);
-                        var reader = bufferReader.reader();
-                        _ = &reader; // autofix
-                        while (true) {
-                            var buf: [1024]u8 = undefined;
-                            const line = try reader.readUntilDelimiter(&buf, '\n');
-                            std.log.debug("line:{d}", .{line.len});
-                            if (line.len <= 1) {
-                                const response = "HTTP/1.1 200 OK\r\nContext-type: text/plain\r\nConnection: keep-alive\r\nContent-length:10\r\n\r\nhelloworld";
+                        var keepalive = false;
+                        var buf: [1024]u8 = undefined;
 
+                        while (true) {
+                            const n = try _client.read(&buf);
+                            const line = buf[0..n];
+                            if (std.mem.indexOf(u8, line, "Keep-Alive") != null) {
+                                keepalive = true;
+                            }
+                            if (std.mem.lastIndexOf(u8, line, "\r\n\r\n") != null) {
+                                const response = "HTTP/1.1 200 OK\r\nContext-type: text/plain\r\nConnection: keep-alive\r\nContent-length:10\r\n\r\nhelloworld";
                                 _ = try _client.write(response);
-                                // break;
+                                if (!keepalive) {
+                                    break;
+                                }
                             }
                         }
                     }

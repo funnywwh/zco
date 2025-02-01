@@ -258,7 +258,9 @@ pub const Schedule = struct {
             std.log.debug("coid:{d} will running readyQueue.count:{d}", .{ nextCo.id, self.readyQueue.count() });
             try nextCo.Resume();
         } else {
+            const xLoop = &(self.xLoop orelse unreachable);
             // std.log.debug("Schedule no co",.{});
+            try xLoop.run(.once);
         }
     }
 };
