@@ -22,7 +22,8 @@ pub const Tcp = struct {
         };
     }
     pub fn deinit(self: *Self) void {
-        _ = self; // autofix
+        const allocator = self.allocator;
+        allocator.destroy(self);
     }
     pub fn close(self: *Self) void {
         if (self.xtcp) |xtcp| {

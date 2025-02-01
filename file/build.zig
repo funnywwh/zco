@@ -15,18 +15,14 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const zco = b.dependency("zco", .{}).module("zco");
     const xev = b.dependency("libxev", .{ .target = target, .optimize = optimize }).module("xev");
+    const io = b.dependency("io", .{}).module("io");
 
-    const zco = b.addModule("zco", .{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = b.path("./src/root.zig"),
-    });
-    zco.link_libc = true;
-    zco.addImport("xev", xev);
+    // file.addImport("zco",zco);
 
     const lib = b.addStaticLibrary(.{
-        .name = "zco",
+        .name = "file",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = b.path("src/root.zig"),
@@ -34,6 +30,17 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     lib.root_module.addImport("zco", zco);
+    lib.root_module.addImport("xev", xev);
+    lib.root_module.addImport("io", io);
+
+    const file = b.addModule("file", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    file.addImport("zco", zco);
+    file.addImport("xev", xev);
+    file.addImport("io", io);
 
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
@@ -41,13 +48,14 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(lib);
 
     const exe = b.addExecutable(.{
-        .name = "zco",
+        .name = "file",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    exe.linkLibC();
-    exe.linkSystemLibrary("rt");
+
+    exe.root_module.addImport("file", file);
+    exe.root_module.addImport("io", io);
     exe.root_module.addImport("zco", zco);
     exe.root_module.addImport("xev", xev);
 
@@ -86,7 +94,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    lib_unit_tests.linkSystemLibrary("rt");
+
+    lib_unit_tests.root_module.addImport("file", file);
+    lib_unit_tests.root_module.addImport("io", io);
     lib_unit_tests.root_module.addImport("zco", zco);
     lib_unit_tests.root_module.addImport("xev", xev);
 
@@ -97,7 +107,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe_unit_tests.linkSystemLibrary("rt");
+    exe_unit_tests.root_module.addImport("file", file);
+    exe_unit_tests.root_module.addImport("io", io);
     exe_unit_tests.root_module.addImport("zco", zco);
     exe_unit_tests.root_module.addImport("xev", xev);
 

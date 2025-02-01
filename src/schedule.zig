@@ -77,7 +77,6 @@ pub const Schedule = struct {
         };
         errdefer {
             schedule.deinit();
-            allocator.destroy(schedule);
         }
 
         schedule.xLoop = try xev.Loop.init(.{
@@ -143,6 +142,9 @@ pub const Schedule = struct {
             self.allocator.destroy(kv.value);
         }
         self.allCoMap.deinit();
+
+        const allocator = self.allocator;
+        allocator.destroy(self);
     }
     pub fn go(self: *Schedule, func: anytype, args: ?*anyopaque) !*Co {
         const co = try self.allocator.create(Co);
@@ -159,7 +161,9 @@ pub const Schedule = struct {
     }
 
     const IOGoFunc = *const fn (ioObj: *anyopaque, arg: ?*anyopaque) anyerror!void;
-    pub fn iogo(self: *Schedule, io: anytype, func: anytype, arg: ?*anyopaque) !void {
+    pub fn iogo(self: *Schedule, _ioObj: anytype, func: anytype, arg: ?*anyopaque) !void {
+        var ioObj = @constCast(_ioObj);
+        std.log.debug("iogo ioObj:{*}", .{ioObj});
         const Data = struct {
             ioObj: *anyopaque,
             func: IOGoFunc,
@@ -167,7 +171,7 @@ pub const Schedule = struct {
         };
         const data = try self.allocator.create(Data);
         data.* = .{
-            .ioObj = io,
+            .ioObj = @alignCast(@ptrCast(ioObj)),
             .func = @alignCast(@ptrCast(&func)),
             .arg = arg,
         };
@@ -184,7 +188,7 @@ pub const Schedule = struct {
                 try runData.func(runData.ioObj, runData.arg);
             }
         }.run, data);
-        io.co = co;
+        ioObj.co = co;
     }
     fn queueCompare(_: void, a: *Co, b: *Co) std.math.Order {
         return std.math.order(a.priority, b.priority);
@@ -228,7 +232,9 @@ pub const Schedule = struct {
     }
     pub fn loop(self: *Schedule) !void {
         const xLoop = &(self.xLoop orelse unreachable);
-        defer xLoop.deinit();
+        defer {
+            xLoop.stop();
+        }
         while (!self.exit) {
             try xLoop.run(.no_wait);
             self.checkNextCo() catch |e| {
