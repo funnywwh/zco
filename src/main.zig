@@ -121,7 +121,6 @@ pub fn coRun1(baseIdx: u32) !void {
     var schedule = try zco.Schedule.init(allocator);
     defer {
         schedule.deinit();
-        allocator.destroy(schedule);
     }
     var chn1 = zco.Chan.init(schedule, 10);
     defer chn1.deinit();
