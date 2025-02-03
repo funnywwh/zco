@@ -83,7 +83,6 @@ pub fn main() !void {
     }.run, .{});
 }
 ```
-
 ### 复杂点的示例代码
 
 以下是一个简单的示例，展示如何使用 `zco` 创建和运行协程：
@@ -122,7 +121,11 @@ pub fn main() anyerror!void {
 ```bash
 zig build run
 ```
-
+### 自定义堆栈大小
+在root包下定义
+```zig
+pub const ZCO_STACK_SIZE = 1024 * 32;
+```
 ## API 文档
 ###  zco
 
