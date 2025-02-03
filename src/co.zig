@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("./c.zig");
+const xev = @import("xev");
 const Context = c.ucontext_t;
 const Schedule = @import("./schedule.zig").Schedule;
 const root = @import("root");
@@ -88,7 +89,7 @@ pub const Co = struct {
     const DEFAULT_STACK_SZIE = blk: {
         if (@hasDecl(root, "ZCO_STACK_SIZE")) {
             if (builtin.mode == .Debug) {
-                if (root.ZCO_STACK_SIZE < 1024 * 12) {
+                if (root.ZCO_STACK_SIZE < 1024 * 32) {
                     @compileError("root.ZCO_STACK_SIZE < 1024*12");
                 }
             } else {
@@ -113,7 +114,8 @@ pub const Co = struct {
         const schedule = self.schedule;
         if (schedule.runningCo) |co| {
             if (co != self) {
-                unreachable;
+                std.log.err("Co Suspend co:{d} != self:{d}", .{ co.id, self.id });
+                return error.RunningCo;
             }
             co.state = .SUSPEND;
             self.schedule.runningCo = null;
@@ -122,17 +124,49 @@ pub const Co = struct {
             }
             return;
         }
-        unreachable;
+        std.log.err("Co Suspend RunningCoNull", .{});
+        return error.RunningCoNull;
     }
     pub fn Resume(self: *Co) !void {
         try self.schedule.ResumeCo(self);
     }
 
     pub fn Sleep(self: *Self, ns: usize) !void {
-        _ = ns; // autofix
-        const schedule = self.schedule;
-        try schedule.readyQueue.add(self);
-        _ = try self.Suspend();
+        const ms = ns / std.time.ns_per_ms;
+        std.log.debug("Co Sleep ms:{d}", .{ms});
+        const w = try xev.Timer.init();
+        defer w.deinit();
+        const _co = try self.schedule.getCurrentCo();
+        const Result = struct {
+            co: *Co,
+            result: xev.Timer.RunError!void = undefined,
+            ns: usize,
+        };
+
+        var result: Result = .{
+            .co = _co,
+            .ns = ns,
+        };
+
+        var _c: xev.Completion = undefined;
+        w.run(&(self.schedule.xLoop.?), &_c, ms, Result, &result, struct {
+            fn callback(
+                userdata: ?*Result,
+                loop: *xev.Loop,
+                __c: *xev.Completion,
+                _result: xev.Timer.RunError!void,
+            ) xev.CallbackAction {
+                _ = __c; // autofix
+                _ = loop; // autofix
+                const _ud = userdata orelse unreachable;
+                _ud.result = _result;
+                _ud.co.Resume() catch |e| {
+                    std.log.err("Co Sleep ns:{d} Resume error:{s}", .{ _ud.ns, @errorName(e) });
+                };
+                return .disarm;
+            }
+        }.callback);
+        try _co.Suspend();
     }
     fn contextEntry(self: *Self) callconv(.C) void {
         const args = self.args orelse unreachable;

@@ -108,7 +108,7 @@ pub fn main() anyerror!void {
             var i: u32 = 0;
             while (i < 5) : (i += 1) {
                 std.log.info("Coroutine running: {}", .{i});
-                try co.sleep(1000); // Sleep for 1 second
+                try co.Sleep(1*std.time.ns_per_s); // Sleep for 1 second
             }
         }
     }.run, .{schedule});

@@ -49,9 +49,11 @@ pub fn loop(f: anytype, args: anytype) !void {
     defer deinit();
 
     const s = try newSchedule();
-    defer s.deinit();
     mainSchedule = s;
-    defer mainSchedule = null;
+    defer {
+        s.deinit();
+        mainSchedule = null;
+    }
     _ = try s.go(f, args);
     try s.loop();
 }

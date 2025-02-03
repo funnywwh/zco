@@ -93,7 +93,7 @@ pub const Chan = struct {
     }
     pub fn recv(self: *Self) !?*anyopaque {
         const schedule = self.schedule;
-        const recvCo = schedule.runningCo orelse unreachable;
+        const recvCo = try schedule.getCurrentCo();
 
         while (self.valueQueue.items.len <= 0) {
             //没有数据可读
