@@ -85,23 +85,44 @@ fn httpHelloworld() !void {
                             const n = try _client.read(buf);
 
                             var leftBuf = buf[0..n];
+                            var versionCheck = false;
                             //从剩下的字符串中分行处理
                             while (leftBuf.len > 0) {
                                 const found = std.mem.indexOfPos(u8, leftBuf, 0, "\r\n") orelse break;
                                 offset += found + 2;
                                 const line = leftBuf[0..found];
                                 leftBuf = leftBuf[found + 2 ..];
-
-                                // std.log.err("line:{s}", .{line});
-                                if (keepalive == false) {
-                                    if (std.mem.indexOfPos(u8, line, offset, "Keep-Alive") != null) {
+                                if (versionCheck == false) {
+                                    if (std.ascii.indexOfIgnoreCasePos(line, 0, "HTTP/1.0") != null) {
+                                        keepalive = false;
+                                    } else {
                                         keepalive = true;
+                                    }
+                                    versionCheck = true;
+                                }
+                                std.log.debug("line:{s}", .{line});
+                                if (keepalive == true) {
+                                    if (std.ascii.indexOfIgnoreCasePos(line, 0, "connection")) |pos| {
+                                        if (std.ascii.indexOfIgnoreCasePos(line, pos + "connection".len, "close") != null) {
+                                            keepalive = false;
+                                        }
+                                    }
+                                } else {
+                                    if (std.ascii.indexOfIgnoreCasePos(line, 0, "connection")) |pos| {
+                                        if (std.ascii.indexOfIgnoreCasePos(line, pos + "connection".len, "keep-alive") != null) {
+                                            keepalive = true;
+                                        }
                                     }
                                 }
                                 if (line.len <= 0) {
                                     //找到body分割
-                                    const response = "HTTP/1.1 200 OK\r\nContext-type: text/plain\r\nConnection: keep-alive\r\nContent-length:10\r\n\r\nhelloworld";
-                                    _ = try _client.write(response);
+                                    if (keepalive) {
+                                        const response = "HTTP/1.1 200 OK\r\nContext-type: text/plain\r\nConnection: keep-alive\r\nContent-length:10\r\n\r\nhelloworld";
+                                        _ = try _client.write(response);
+                                    } else {
+                                        const response = "HTTP/1.1 200 OK\r\nContext-type: text/plain\r\nConnection: close\r\nContent-length:10\r\n\r\nhelloworld";
+                                        _ = try _client.write(response);
+                                    }
                                     if (!keepalive) {
                                         return;
                                     }
