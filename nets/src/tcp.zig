@@ -7,14 +7,14 @@ pub const Tcp = struct {
     const Self = @This();
 
     xobj: ?xev.TCP = null,
-    co: *zco.Co,
+    schedule: *zco.Schedule,
     allocator: std.mem.Allocator,
 
     pub const Error = anyerror;
 
-    pub fn init(allocator: std.mem.Allocator, co: *zco.Co) !Tcp {
+    pub fn init(allocator: std.mem.Allocator, schedule: *zco.Schedule) !Tcp {
         return .{
-            .co = co,
+            .schedule = schedule,
             .allocator = allocator,
         };
     }
@@ -30,14 +30,16 @@ pub const Tcp = struct {
     pub fn accept(self: *Self) !*Tcp {
         const xobj = self.xobj orelse return error.NotInit;
         var c_accept = xev.Completion{};
+        const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
         const Result = struct {
-            self: *Self,
+            co: *zco.Co,
             clientConn: xev.AcceptError!xev.TCP = undefined,
         };
+
         var result: Result = .{
-            .self = self,
+            .co = co,
         };
-        xobj.accept(&(self.co.schedule.xLoop.?), &c_accept, Result, &result, (struct {
+        xobj.accept(&(self.schedule.xLoop.?), &c_accept, Result, &result, (struct {
             fn callback(
                 ud: ?*Result,
                 _: *xev.Loop,
@@ -46,18 +48,18 @@ pub const Tcp = struct {
             ) xev.CallbackAction {
                 const _r = ud orelse unreachable;
                 _r.clientConn = r;
-                _r.self.co.Resume() catch |e| {
+                _r.co.Resume() catch |e| {
                     std.log.err("nets tcp accept ResumeCo error:{s}", .{@errorName(e)});
                 };
                 return .disarm;
             }
         }).callback);
-        try self.co.Suspend();
+        try co.Suspend();
         const clientConn = try result.clientConn;
         const retTcp = try self.allocator.create(Tcp);
         retTcp.* = .{
             .xobj = clientConn,
-            .co = self.co,
+            .schedule = co.schedule,
             .allocator = self.allocator,
         };
         return retTcp;

@@ -7,7 +7,7 @@ const builtin = @import("builtin");
 const ZCo = zco;
 const ZCO_STACK_SIZE = 1024 * 100;
 pub const std_options = .{
-    .log_level = .err,
+    .log_level = .debug,
 };
 pub fn main() !void {
     var threads = std.mem.zeroes([opts.threads]?std.Thread);
@@ -40,19 +40,9 @@ fn httpHelloworld() !void {
     const schedule = try zco.newSchedule();
     defer schedule.deinit();
 
-    const MainData = struct {
-        schedule: *zco.Schedule,
-    };
-    var mainData = MainData{
-        .schedule = schedule,
-    };
-    _ = &mainData; // autofix
-
     _ = try schedule.go(struct {
-        fn run(co: *zco.Co, _data: ?*MainData) !void {
-            _ = co; // autofix
-            const data = _data orelse unreachable;
-            var server = try nets.Tcp.init(data.schedule.allocator, data.schedule.runningCo.?);
+        fn run(s: *zco.Schedule) !void {
+            var server = try nets.Tcp.init(s.allocator, s);
             defer {
                 server.close();
                 server.deinit();
@@ -62,16 +52,15 @@ fn httpHelloworld() !void {
             try server.bind(address);
             try server.listen(200);
             while (true) {
-                const _s = server.co.schedule;
+                const _s = server.schedule;
                 var client = try server.accept();
                 errdefer {
                     client.close();
                     client.deinit();
                 }
                 std.log.debug("accept a client", .{});
-                _ = try _s.iogo(client, struct {
-                    fn run(_client: *nets.Tcp, arg: ?*anyopaque) !void {
-                        _ = arg; // autofix
+                _ = try _s.go(struct {
+                    fn run(_client: *nets.Tcp) !void {
                         std.log.debug("entry client co", .{});
                         defer {
                             std.log.debug("client loop exited", .{});
@@ -120,10 +109,10 @@ fn httpHelloworld() !void {
                             }
                         }
                     }
-                }.run, null);
+                }.run, .{client});
             }
         }
-    }.run, &mainData);
+    }.run, .{schedule});
 
     try schedule.loop();
 }

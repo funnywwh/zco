@@ -1,10 +1,11 @@
 const std = @import("std");
 const c = @import("./c.zig");
 const Context = c.ucontext_t;
-const Co = @import("./co.zig").Co;
+const cozig = @import("./co.zig");
 const SwitchTimer = @import("./switch_timer.zig").SwitchTimer;
 const builtin = @import("builtin");
 const xev = @import("xev");
+const Co = cozig.Co;
 
 pub const Schedule = struct {
     ctx: Context = std.mem.zeroes(Context),
@@ -117,10 +118,10 @@ pub const Schedule = struct {
             co.state = .SUSPEND;
             schedule.runningCo = null;
             _ = c.setcontext(&schedule.ctx);
-            // co.SuspendInSigHandler() catch |e| {
-            //     std.log.err("Schedule user2SigHandler SuspendInSigHandler error:{s}",.{@errorName(e)});
-            //     return;
-            // };
+            cozig.SuspendInSigHandler(co) catch |e| {
+                std.log.err("Schedule user2SigHandler SuspendInSigHandler error:{s}", .{@errorName(e)});
+                return;
+            };
         } else {
             std.log.err("Schedule user2SigHandler localSchedule.runningCo == null tid:{d}", .{std.Thread.getCurrentId()});
         }
@@ -146,11 +147,47 @@ pub const Schedule = struct {
         const allocator = self.allocator;
         allocator.destroy(self);
     }
-    pub fn go(self: *Schedule, func: anytype, args: ?*anyopaque) !*Co {
-        const co = try self.allocator.create(Co);
+    test "go" {
+        const s = Schedule{};
+        s.go(struct {
+            fn run(_: *Schedule) !void {}
+        }.run, (&s));
+        try s.loop();
+    }
+    pub fn go(self: *Schedule, comptime func: anytype, args: anytype) !*Co {
+        const allocator = self.allocator;
+        const co = try allocator.create(Co);
+        errdefer allocator.destroy(co);
+        const FuncType = @TypeOf(func);
+        const FuncArgsTupleType = @TypeOf(args);
+        const WrapArgs = struct {
+            func: *const FuncType,
+            args: FuncArgsTupleType,
+            allocator: std.mem.Allocator,
+        };
+        const wrapArgs = try allocator.create(WrapArgs);
+        errdefer allocator.destroy(wrapArgs);
+
+        wrapArgs.args = args;
+        wrapArgs.func = &func;
+        wrapArgs.allocator = allocator;
+
         co.* = .{
-            .arg = args,
-            .func = @ptrCast(&func),
+            .args = wrapArgs,
+            .argsFreeFunc = struct {
+                fn free(_co: *Co, p: *anyopaque) void {
+                    const _args: *WrapArgs = @alignCast(@ptrCast(p));
+                    const _allocator = _co.schedule.allocator;
+                    _allocator.destroy(_args);
+                }
+            }.free,
+            .func = &struct {
+                fn run(_argsTupleOpt: ?*anyopaque) !void {
+                    const _argsTuple: *WrapArgs = @alignCast(@ptrCast(_argsTupleOpt orelse unreachable));
+                    defer {}
+                    try @call(.auto, _argsTuple.func, _argsTuple.args);
+                }
+            }.run,
             .id = Co.nextId,
             .schedule = self,
         };
@@ -160,36 +197,6 @@ pub const Schedule = struct {
         return co;
     }
 
-    const IOGoFunc = *const fn (ioObj: *anyopaque, arg: ?*anyopaque) anyerror!void;
-    pub fn iogo(self: *Schedule, _ioObj: anytype, func: anytype, arg: ?*anyopaque) !void {
-        var ioObj = @constCast(_ioObj);
-        std.log.debug("iogo ioObj:{*}", .{ioObj});
-        const Data = struct {
-            ioObj: *anyopaque,
-            func: IOGoFunc,
-            arg: ?*anyopaque,
-        };
-        const data = try self.allocator.create(Data);
-        data.* = .{
-            .ioObj = @alignCast(@ptrCast(ioObj)),
-            .func = @alignCast(@ptrCast(&func)),
-            .arg = arg,
-        };
-        errdefer {
-            self.allocator.destroy(data);
-        }
-        const co = try self.go(struct {
-            fn run(_co: *Co, _data: ?*Data) !void {
-                const runData = _data orelse unreachable;
-                const allocator: std.mem.Allocator = _co.schedule.allocator;
-                defer {
-                    allocator.destroy(runData);
-                }
-                try runData.func(runData.ioObj, runData.arg);
-            }
-        }.run, data);
-        ioObj.co = co;
-    }
     fn queueCompare(_: void, a: *Co, b: *Co) std.math.Order {
         return std.math.order(a.priority, b.priority);
     }
@@ -204,6 +211,7 @@ pub const Schedule = struct {
         std.log.debug("Schedule freeCo coid:{}", .{co.id});
         var sleepIt = self.sleepQueue.iterator();
         var i: usize = 0;
+        cozig.freeArgs(co);
         while (sleepIt.next()) |_co| {
             if (_co == co) {
                 _ = self.sleepQueue.removeIndex(i);
@@ -256,7 +264,7 @@ pub const Schedule = struct {
         if (count > 0) {
             const nextCo = self.readyQueue.remove();
             std.log.debug("coid:{d} will running readyQueue.count:{d}", .{ nextCo.id, self.readyQueue.count() });
-            try nextCo.Resume();
+            try cozig.Resume(nextCo);
         } else {
             const xLoop = &(self.xLoop orelse unreachable);
             // std.log.debug("Schedule no co",.{});

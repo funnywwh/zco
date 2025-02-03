@@ -5,12 +5,73 @@ const Schedule = @import("./schedule.zig").Schedule;
 const root = @import("root");
 const builtin = @import("builtin");
 
+pub fn freeArgs(self: *Co) void {
+    if (self.args) |args| {
+        self.args = null;
+        self.argsFreeFunc(self, args);
+    }
+}
+
+pub fn Resume(self: *Co) !void {
+    const schedule = self.schedule;
+    std.debug.assert(schedule.runningCo == null);
+    std.log.debug("coid:{d} Resume state:{any}", .{ self.id, self.state });
+    switch (self.state) {
+        .INITED => {
+            if (c.getcontext(&self.ctx) != 0) {
+                return error.getcontext;
+            }
+            self.ctx.uc_stack.ss_sp = &self.stack;
+            self.ctx.uc_stack.ss_size = self.stack.len;
+            self.ctx.uc_flags = 0;
+            self.ctx.uc_link = &schedule.ctx;
+            std.log.debug("coid:{d} Resume makecontext", .{self.id});
+            c.makecontext(&self.ctx, @ptrCast(&Co.contextEntry), 1, self);
+            std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
+            self.state = .RUNNING;
+            schedule.runningCo = self;
+            if (c.swapcontext(&schedule.ctx, &self.ctx) != 0) {
+                return error.swapcontext;
+            }
+        },
+        .SUSPEND, .READY => {
+            std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
+            self.state = .RUNNING;
+            schedule.runningCo = self;
+            if (c.swapcontext(&schedule.ctx, &self.ctx) != 0) {
+                return error.swapcontext;
+            }
+        },
+        else => {},
+    }
+    if (self.state == .STOP) {
+        schedule.freeCo(self);
+    }
+}
+
+pub fn SuspendInSigHandler(self: *Co) !void {
+    const schedule = self.schedule;
+    if (schedule.runningCo) |co| {
+        if (co != self) {
+            return error.runningCoNotSelf;
+        }
+        co.state = .SUSPEND;
+        self.schedule.runningCo = null;
+        if (c.setcontext(&schedule.ctx) != 0) {
+            return error.swapcontext;
+        }
+        return;
+    }
+    return error.runningCoNull;
+}
+
 pub const Co = struct {
     const Self = @This();
     id: usize = 0,
     ctx: Context = std.mem.zeroes(Context),
     func: Func = undefined,
-    arg: ?*anyopaque = null,
+    args: ?*anyopaque = null,
+    argsFreeFunc: *const fn (*Co, *anyopaque) void,
     state: State = .INITED,
     priority: usize = 0,
     schedule: *Schedule = undefined,
@@ -46,7 +107,7 @@ pub const Co = struct {
     };
     pub var nextId: usize = 0;
 
-    pub const Func = *const fn (self: *Co, args: ?*anyopaque) anyerror!void;
+    pub const Func = *const fn (args: ?*anyopaque) anyerror!void;
 
     pub fn Suspend(self: *Self) !void {
         const schedule = self.schedule;
@@ -63,57 +124,10 @@ pub const Co = struct {
         }
         unreachable;
     }
-    pub fn SuspendInSigHandler(self: *Self) !void {
-        const schedule = self.schedule;
-        if (schedule.runningCo) |co| {
-            if (co != self) {
-                return error.runningCoNotSelf;
-            }
-            co.state = .SUSPEND;
-            self.schedule.runningCo = null;
-            if (c.setcontext(&schedule.ctx) != 0) {
-                return error.swapcontext;
-            }
-            return;
-        }
-        return error.runningCoNull;
+    pub fn Resume(self: *Co) !void {
+        try self.schedule.ResumeCo(self);
     }
-    pub fn Resume(self: *Self) !void {
-        const schedule = self.schedule;
-        std.debug.assert(schedule.runningCo == null);
-        std.log.debug("coid:{d} Resume state:{any}", .{ self.id, self.state });
-        switch (self.state) {
-            .INITED => {
-                if (c.getcontext(&self.ctx) != 0) {
-                    return error.getcontext;
-                }
-                self.ctx.uc_stack.ss_sp = &self.stack;
-                self.ctx.uc_stack.ss_size = self.stack.len;
-                self.ctx.uc_flags = 0;
-                self.ctx.uc_link = &schedule.ctx;
-                std.log.debug("coid:{d} Resume makecontext", .{self.id});
-                c.makecontext(&self.ctx, @ptrCast(&contextEntry), 1, self);
-                std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
-                self.state = .RUNNING;
-                schedule.runningCo = self;
-                if (c.swapcontext(&schedule.ctx, &self.ctx) != 0) {
-                    return error.swapcontext;
-                }
-            },
-            .SUSPEND, .READY => {
-                std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
-                self.state = .RUNNING;
-                schedule.runningCo = self;
-                if (c.swapcontext(&schedule.ctx, &self.ctx) != 0) {
-                    return error.swapcontext;
-                }
-            },
-            else => {},
-        }
-        if (self.state == .STOP) {
-            schedule.freeCo(self);
-        }
-    }
+
     pub fn Sleep(self: *Self, ns: usize) !void {
         _ = ns; // autofix
         const schedule = self.schedule;
@@ -121,10 +135,15 @@ pub const Co = struct {
         _ = try self.Suspend();
     }
     fn contextEntry(self: *Self) callconv(.C) void {
+        const args = self.args orelse unreachable;
         std.log.debug("Co contextEntry coid:{d} schedule{*}", .{ self.id, self.schedule });
         defer std.log.debug("Co contextEntry coid:{d} exited", .{self.id});
         const schedule = self.schedule;
-        self.func(self, self.arg) catch {
+        defer {
+            freeArgs(self);
+        }
+
+        self.func(args) catch {
             // std.log.err("contextEntry coid:{d} error:{s}",.{self.id,@errorName(e)});
         };
         schedule.runningCo = null;

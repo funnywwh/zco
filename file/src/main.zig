@@ -19,8 +19,9 @@ fn testFile() !void {
         s.deinit();
     }
     _ = try s.go(struct {
-        fn run(co: *zco.Co) !void {
-            var testfile = try File.init(co);
+        fn run(_s: *zco.Schedule) !void {
+            const co = _s.runningCo orelse undefined;
+            var testfile = try File.init(_s);
             defer {
                 testfile.deinit();
             }
@@ -39,7 +40,7 @@ fn testFile() !void {
 
             co.schedule.stop();
         }
-    }.run, null);
+    }.run, .{s});
     try s.loop();
 }
 test "simple test" {}

@@ -30,29 +30,31 @@ fn testIo() !void {
     }
     const MyIo = struct {
         const Self = @This();
-        co: *zco.Co = undefined,
+        schedule: *zco.Schedule,
         xobj: ?xev.File = null,
         pub usingnamespace io.CreateIo(Self);
     };
-    var myio = MyIo{};
+    var myio = MyIo{
+        .schedule = schedule,
+    };
     myio.xobj = try xev.File.init(buildFile);
 
     _ = try schedule.go(struct {
-        fn run(_co: *zco.Co, _myio: *MyIo) !void {
-            std.log.debug("testIO schedule:{*} _myio:{*}", .{ _co.schedule, _myio });
-            try _co.schedule.iogo(_myio, struct {
+        fn run(s: *zco.Schedule, _myio: *MyIo) !void {
+            std.log.debug("testIO schedule:{*} _myio:{*}", .{ s, _myio });
+            _ = try s.go(struct {
                 fn run(_io: *MyIo) !void {
                     var buf: [100]u8 = undefined;
                     const out = try std.fmt.bufPrint(&buf, "hello", .{});
                     _ = try _io.write(out);
                     const npread = try _io.pread(&buf, 0);
                     std.log.debug("testIo read:{s}", .{buf[0..npread]});
-                    _io.co.schedule.stop();
+                    _io.schedule.stop();
                 }
-            }.run, null);
+            }.run, .{_myio});
             // _co.schedule.stop();
         }
-    }.run, &myio);
+    }.run, .{ schedule, &myio });
 
     try schedule.loop();
 }

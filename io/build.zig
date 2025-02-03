@@ -34,8 +34,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    io.addImport("io", &lib.root_module);
     io.addImport("xev", xev);
+    io.addImport("zco", zco);
 
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when

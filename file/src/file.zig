@@ -9,11 +9,11 @@ pub const File = struct {
     pub const Error = anyerror;
 
     xobj: ?XFile = null,
-    co: *zco.Co,
+    schedule: *zco.Schedule,
 
-    pub fn init(co: *zco.Co) !File {
+    pub fn init(schedule: *zco.Schedule) !File {
         return .{
-            .co = co,
+            .schedule = schedule,
         };
     }
     pub fn deinit(self: *Self) void {
