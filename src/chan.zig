@@ -117,4 +117,54 @@ pub const Chan = struct {
         }
         return error.recvClosed;
     }
+    pub fn len(self: *Chan) !usize {
+        if (self.closed) return error.closed;
+        return self.valueQueue.items.len;
+    }
 };
+
+pub fn CreateChan(DataType: type) type {
+    return struct {
+        const Self = @This();
+        chan: ?*Chan = null,
+        pub fn init(s: *Schedule, bufCap: usize) !*Self {
+            const allocator = s.allocator;
+            const ch = try Chan.init(s, bufCap);
+            errdefer ch.deinit();
+            const o = try allocator.create(Self);
+            o.* = .{
+                .chan = ch,
+            };
+            return o;
+        }
+        pub fn deinit(self: *Self) void {
+            const ch = self.chan orelse {
+                std.log.err("chan not init", .{});
+                return;
+            };
+            const allocator = ch.schedule.allocator;
+            ch.deinit();
+            allocator.destroy(self);
+        }
+        pub fn close(self: *Self) void {
+            const chan = self.chan orelse {
+                std.log.err("chan closed", .{});
+                return;
+            };
+            chan.close();
+        }
+        pub fn send(self: *Self, data: DataType) !void {
+            const ch = self.chan orelse return error.NotInit;
+            try ch.send(@constCast(@ptrCast(&data)));
+        }
+        pub fn recv(self: *Self) !DataType {
+            const ch = self.chan orelse return error.NotInit;
+            const d = try ch.recv();
+            const data: *DataType = @alignCast(@ptrCast(d));
+            return data.*;
+        }
+        pub fn len(self: *Self) !usize {
+            return self.len();
+        }
+    };
+}

@@ -255,6 +255,7 @@ pub const Schedule = struct {
                 std.log.err("Schedule loop exit resumeAll error:{s}", .{@errorName(e)});
             };
             xLoop.stop();
+            std.log.debug("schedule loop exited", .{});
         }
         while (!self.exit) {
             try xLoop.run(.no_wait);

@@ -3,9 +3,9 @@ const zco = @import("zco");
 
 pub const ZCO_STACK_SIZE = 1024 * 12;
 
-pub const std_options = .{
-    .log_level = .err,
-};
+// pub const std_options = .{
+//     .log_level = .err,
+// };
 pub fn main() !void {
     // const t1 = try std.Thread.spawn(.{}, coRun, .{1});
     // defer t1.join();
@@ -16,8 +16,42 @@ pub fn main() !void {
     // const t3 = try std.Thread.spawn(.{}, ctxSwithBench, .{});
     // defer t3.join();
 
-    const t4 = try std.Thread.spawn(.{}, coNest, .{});
-    defer t4.join();
+    // const t4 = try std.Thread.spawn(.{}, coNest, .{});
+    // defer t4.join();
+
+    const t5 = try std.Thread.spawn(.{}, testDataChan, .{});
+    defer t5.join();
+}
+
+pub fn testDataChan() !void {
+    _ = try zco.loop(struct {
+        fn run() !void {
+            const s = try zco.getSchedule();
+            const DataType = struct {
+                name: []const u8,
+                id: u32,
+                age: u32,
+            };
+            const Chan = zco.CreateChan(DataType);
+            const exitCh = try Chan.init(try zco.getSchedule(), 1);
+            defer {
+                exitCh.close();
+                exitCh.deinit();
+            }
+            _ = try s.go(struct {
+                fn run(ch: *Chan) !void {
+                    const v = try ch.recv();
+                    std.log.debug("recved:{any}", .{v});
+                }
+            }.run, .{exitCh});
+            try exitCh.send(.{
+                .name = "test",
+                .age = 45,
+                .id = 1,
+            });
+            s.stop();
+        }
+    }.run, .{});
 }
 
 pub fn coNest() !void {
