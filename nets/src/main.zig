@@ -5,7 +5,7 @@ const xev = @import("xev");
 const opts = @import("opts");
 const builtin = @import("builtin");
 const ZCo = zco;
-// const ZCO_STACK_SIZE = 1024 * 12;
+// pub const ZCO_STACK_SIZE = 1024 * 32;
 // pub const std_options = .{
 //     .log_level = .debug,
 // };
@@ -70,18 +70,10 @@ fn httpHelloworld() !void {
                         std.log.debug("client co will loop", .{});
                         var keepalive = true;
 
-                        var listBuf = try std.ArrayList(u8).initCapacity(_client.allocator, 1024);
-                        defer {
-                            listBuf.clearAndFree();
-                            listBuf.deinit();
-                        }
+                        var buffer: [1024]u8 = undefined;
                         var offset: usize = 0;
                         while (true) {
-                            var buf = listBuf.items[offset..];
-                            if (buf.len < 1024) {
-                                try listBuf.appendNTimes(0, 1024);
-                                buf = listBuf.items[offset..];
-                            }
+                            var buf = buffer[offset..];
                             const n = try _client.read(buf);
 
                             var leftBuf = buf[0..n];
@@ -115,6 +107,7 @@ fn httpHelloworld() !void {
                                     }
                                 }
                                 if (line.len <= 0) {
+                                    offset = 0;
                                     //找到body分割
                                     if (keepalive) {
                                         const response = "HTTP/1.1 200 OK\r\nContext-type: text/plain\r\nConnection: keep-alive\r\nContent-length:10\r\n\r\nhelloworld";
