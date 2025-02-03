@@ -73,7 +73,7 @@ pub fn main() !void {
     _ = try zco.loop(struct {
         fn run() !void {
             const s = try zco.getSchedule();
-			std.log.debug("helloword!",.{});
+            std.log.debug("helloword!",.{});
             s.stop();
         }
     }.run, .{});
@@ -100,7 +100,7 @@ pub fn main() anyerror!void {
 
     _ = try schedule.go(struct {
         fn run(schedule: *zco.Schedule) !void {
-			const co = try schedule.getCurrentCo();
+            const co = try schedule.getCurrentCo();
             var i: u32 = 0;
             while (i < 5) : (i += 1) {
                 std.log.info("Coroutine running: {}", .{i});
@@ -158,23 +158,150 @@ zig build run
 ```
 
 ## API 文档
+###  zco
 
-### `zco.newSchedule()`
+#### `fn loop(f: anytype, args: anytype) !void`
+
+单协程模式简单创建一个主协程循环.
+
+*   `func`：协程的入口函数。
+*   `args`：传递给协程的参数。
+
+#### `fn init(_allocator: std.mem.Allocator) !void`
+
+初始化zco
+
+#### `fn deinit() void`
+
+退出前销毁zco数据
+
+
+#### `fn newSchedule() !*Schedule`
 
 创建一个新的协程调度器。
 
-### `schedule.go(func, args)`
+#### `fn getSchedule() !*Schedule`
+
+获取主调度器
+
+### Schedule
+
+#### `fn init(allocator: std.mem.Allocator) !*Schedule`
+
+调度器初始化
+
+
+#### `fn go(self: *Schedule, comptime func: anytype, args: anytype) !*Co`
 
 启动一个新的协程。
 
 *   `func`：协程的入口函数。
 *   `args`：传递给协程的参数。
 
-
-
-### `schedule.loop()`
+#### `fn loop(self: *Schedule) !void `
 
 启动调度器的事件循环，开始处理协程。
+
+#### `fn stop(self: *Schedule) void`
+
+退出调度器
+
+#### `fn getCurrentCo(self: *Schedule) !*Co`
+
+获取当前调度器下的当前协程
+
+### io 
+
+异步io，只能在协程里用
+
+#### `fn CreateIo(IOType: type) type`
+
+创建异步io的通用方法
+
+*   `type`：io类
+
+```zig
+    const MyIo = struct {
+        const Self = @This();
+        schedule: *zco.Schedule,
+        xobj: ?xev.File = null,
+        pub usingnamespace io.CreateIo(Self);
+    };
+```
+
+io的子类里必须要有的字段
+
+* `xobj` 的libxev异步对象
+* `schedule` 关联的调度器
+
+#### `fn close(self: *Self) void`
+关闭io
+
+#### `fn read(self: *Self, buffer: []u8) anyerror!usize`
+
+读取数据
+
+* `buffer`: 数据缓冲区
+
+* 返回读到的数据长度
+
+
+#### `fn write(self: *Self, buffer: []const u8) !usize`
+
+写数据
+* `buffer`: 数据缓冲区
+* 返回写成功的数据长度
+
+#### `fn pread(self: *Self, buffer: []u8, offset: usize) anyerror!usize`
+
+从offset开始读写，可以seek的io,如File
+* `buffer`: 数据缓冲区
+* `offset`：从0开始的偏移量
+* 返回读到的长度
+
+#### `fn pwrite(self: *Self, buffer: []const u8, offset: usize) !usize`
+
+从指定位置开始写
+
+* `buffer`: 数据缓冲区
+* `offset`：从0开始的偏移量
+* 返回写成功的长度
+
+### Tcp
+
+异步Tcp，继承CreateIo的方法
+
+示例参考nets/src/main.zig
+
+#### `fn bind(self: *Self, address: std.net.Address) !void`
+
+绑定指定的ip,port
+
+#### `fn listen(self: *Self, backlog: u31) !void`
+
+开始监听链接
+
+#### `fn accept(self: *Self) !*Tcp`
+
+接收链接
+
+### File 
+
+异步文件，继承CreateIo的方法
+
+示例参考nets/src/main.zig
+
+#### `pub fn init(schedule: *zco.Schedule) !File`
+
+初始化
+
+#### `fn deinit(self: *Self) void`
+
+销毁
+
+#### `fn open(self: *Self, file: std.fs.File) !void`
+
+打开文件
 
 ## 贡献
 
@@ -193,7 +320,10 @@ zig build run
 ## 联系方式
 
 *   GitHub: <https://github.com/funnywwh/zco>
-*   Email: <your-email@example.com>
+*   Email: <funnywwh@qq.com>
+
+## 感谢
+*   Libxev: <https://github.com/mitchellh/libxev>
 
 ***
 
