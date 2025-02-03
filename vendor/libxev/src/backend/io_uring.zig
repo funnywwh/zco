@@ -96,7 +96,9 @@ pub const Loop = struct {
 
     /// Update the cached time.
     pub fn update_now(self: *Loop) void {
-        posix.clock_gettime(posix.CLOCK.MONOTONIC, &self.cached_now) catch {};
+        self.cached_now = posix.clock_gettime(posix.CLOCK.MONOTONIC) catch {
+            return;
+        };
         self.flags.now_outdated = false;
     }
 
@@ -290,8 +292,8 @@ pub const Loop = struct {
         // There are lots of failure scenarios here in math. If we see any
         // of them we just use the maximum value.
         const max: linux.kernel_timespec = .{
-            .tv_sec = std.math.maxInt(isize),
-            .tv_nsec = std.math.maxInt(isize),
+            .sec = std.math.maxInt(isize),
+            .nsec = std.math.maxInt(isize),
         };
 
         const next_s = std.math.cast(isize, next_ms / std.time.ms_per_s) orelse
@@ -304,9 +306,9 @@ pub const Loop = struct {
         if (self.flags.now_outdated) self.update_now();
 
         return .{
-            .tv_sec = std.math.add(isize, self.cached_now.tv_sec, next_s) catch
+            .sec = std.math.add(isize, self.cached_now.sec, next_s) catch
                 return max,
-            .tv_nsec = std.math.add(isize, self.cached_now.tv_nsec, next_ns) catch
+            .nsec = std.math.add(isize, self.cached_now.nsec, next_ns) catch
                 return max,
         };
     }

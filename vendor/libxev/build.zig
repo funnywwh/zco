@@ -30,6 +30,7 @@ pub fn build(b: *std.Build) !void {
         "bench",
         "Install the benchmark binaries to zig-out/bench",
     ) orelse (bench_name != null);
+    _ = bench_install; // autofix
 
     const example_name = b.option(
         []const u8,
@@ -42,6 +43,7 @@ pub fn build(b: *std.Build) !void {
         "example",
         "Install the example binaries to zig-out/example",
     ) orelse (example_name != null);
+    _ = example_install; // autofix
 
     const test_install = b.option(
         bool,
@@ -111,6 +113,7 @@ pub fn build(b: *std.Build) !void {
 
         break :lib static_lib;
     } else null;
+    _ = static_c_lib; // autofix
 
     // Dynamic C lib. We only build this if this is the native target so we
     // can link to libxml2 on our native system.
@@ -180,10 +183,10 @@ pub fn build(b: *std.Build) !void {
     }
 
     // Benchmarks
-    _ = try benchTargets(b, target, optimize, bench_install, bench_name);
+    // _ = try benchTargets(b, target, optimize, bench_install, bench_name);
 
     // Examples
-    _ = try exampleTargets(b, target, optimize, static_c_lib, example_install, example_name);
+    // _ = try exampleTargets(b, target, optimize, static_c_lib, example_install, example_name);
 
     // Man pages
     if (man_pages) {
