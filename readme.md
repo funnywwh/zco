@@ -23,6 +23,10 @@
 
 ## 安装
 
+### zig version
+
+0.14.0-dev.3028+cdc9d65b0
+
 ### 依赖
 
 *   [Zig](https://ziglang.org/)：确保已安装最新版本的 Zig 编译器。
