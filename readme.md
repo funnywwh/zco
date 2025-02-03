@@ -1,6 +1,10 @@
 ***
 
-# Zco: Zig 协程，带时间片，优先级
+# zco: Zig 协程库
+
+类golang的channel
+
+时间片和优先级尚未实现
 
 [![GitHub](https://img.shields.io/github/stars/funnywwh/zco.svg?style=social)](https://github.com/funnywwh/zco)
 [![License](https://img.shields.io/github/license/funnywwh/zco)](https://github.com/funnywwh/zco/blob/main/LICENSE)
@@ -113,44 +117,6 @@ pub fn main() anyerror!void {
 }
 ```
 
-### Chan通道实例
-
-```zig
-const std = @import("std");
-const zco = @import("zco");
-
-pub fn main() !void {
-    _ = try zco.loop(struct {
-        fn run() !void {
-            const s = try zco.getSchedule();
-            const DataType = struct {
-                name: []const u8,
-                id: u32,
-                age: u32,
-            };
-            const Chan = zco.CreateChan(DataType);
-            const exitCh = try Chan.init(try zco.getSchedule(), 1);
-            defer {
-                exitCh.close();
-                exitCh.deinit();
-            }
-            _ = try s.go(struct {
-                fn run(ch: *Chan) !void {
-                    const v = try ch.recv();
-                    std.log.debug("recved:{any}", .{v});
-                }
-            }.run, .{exitCh});
-            try exitCh.send(.{
-                .name = "test",
-                .age = 45,
-                .id = 1,
-            });
-            s.stop();
-        }
-    }.run, .{});
-}
-```
-
 ### 构建和运行示例
 
 ```bash
@@ -209,6 +175,109 @@ zig build run
 #### `fn getCurrentCo(self: *Schedule) !*Co`
 
 获取当前调度器下的当前协程
+
+### Co 协程对象
+#### `fn Suspend(self: *Self) !void`
+
+睡眠主动让出cpu，只有外面才能唤醒
+
+#### `fn Resume(self: *Co) !void`
+
+其它协程中唤醒指定的协程,被唤醒的协程不是立即执行，只有放入调度器的就绪队列
+
+当前协程Suspend后才可能被执行
+
+#### `fn Sleep(self: *Self, ns: usize) !void`
+
+休眠多少纳秒后被放入调度器的就绪队列
+
+* `ns`: 休眠的纳秒数
+
+
+### Chan
+
+用于协程间通讯
+
+支持多读多写
+
+Chan关闭后 send,recv 回收到异常
+
+send 只有等recv的协程成接受并休眠后，send 才会返回,因此可以发送局部变量
+
+```zig
+const std = @import("std");
+const zco = @import("zco");
+
+pub fn main() !void {
+    _ = try zco.loop(struct {
+        fn run() !void {
+            const s = try zco.getSchedule();
+            const DataType = struct {
+                name: []const u8,
+                id: u32,
+                age: u32,
+            };
+            const Chan = zco.CreateChan(DataType);
+            const exitCh = try Chan.init(try zco.getSchedule(), 1);
+            defer {
+                exitCh.close();
+                exitCh.deinit();
+            }
+            _ = try s.go(struct {
+                fn run(ch: *Chan) !void {
+                    const v = try ch.recv();
+                    std.log.debug("recved:{any}", .{v});
+                }
+            }.run, .{exitCh});
+            try exitCh.send(.{
+                .name = "test",
+                .age = 45,
+                .id = 1,
+            });
+            s.stop();
+        }
+    }.run, .{});
+}
+```
+#### `fn CreateChan(DataType: type) type`
+
+创建指定类型DataType的通道类型
+
+#### `fn init(s: *Schedule, bufCap: usize) !*Self`
+
+初始化化通道
+
+* `bufCap`: 通道缓冲区大小，缓冲区满时send阻塞，空时recv阻塞
+* `s`: 关联的调度器,不要混用
+
+#### `fn deinit(self: *Self) void`
+
+销毁通道,销毁前要close
+
+#### `fn close(self: *Self) void `
+
+关闭通道
+
+send,recv，会返回异常,阻塞的协程会被唤醒
+
+#### `fn send(self: *Self, data: DataType) !void`
+
+发送数据,直到数据被接受协程处理完并Suspend
+
+没有接收协程时，阻塞
+
+
+* `data` 要发送的数据
+
+#### `fn recv(self: *Self) !DataType`
+
+接收数据，没有数据时阻塞
+
+
+#### `fn len(self: *Self) !usize`
+
+返回通道缓冲区数据长度(DataType的个数)
+
 
 ### io 
 
