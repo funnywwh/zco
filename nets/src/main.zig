@@ -5,10 +5,10 @@ const xev = @import("xev");
 const opts = @import("opts");
 const builtin = @import("builtin");
 const ZCo = zco;
-const ZCO_STACK_SIZE = 1024 * 100;
-pub const std_options = .{
-    .log_level = .debug,
-};
+// const ZCO_STACK_SIZE = 1024 * 12;
+// pub const std_options = .{
+//     .log_level = .debug,
+// };
 pub fn main() !void {
     var threads = std.mem.zeroes([opts.threads]?std.Thread);
     var gpa = std.heap.GeneralPurposeAllocator(.{

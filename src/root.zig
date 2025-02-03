@@ -11,8 +11,8 @@ pub usingnamespace chan;
 const SwitchTimer = switch_timer.SwitchTimer;
 const Schedule = schedule.Schedule;
 
-// pub const ZCo = struct {
-var allocator: std.mem.Allocator = undefined;
+var mainSchedule: ?*Schedule = null;
+var allocator: ?std.mem.Allocator = null;
 
 const Self = @This();
 pub fn init(_allocator: std.mem.Allocator) !void {
@@ -22,11 +22,35 @@ pub fn init(_allocator: std.mem.Allocator) !void {
 }
 
 pub fn deinit() void {
-    SwitchTimer.deinit(allocator);
+    if (allocator) |_allocator| {
+        SwitchTimer.deinit(_allocator);
+    }
 }
 
 pub fn newSchedule() !*Schedule {
-    const s = try Schedule.init(allocator);
+    const _allocator = allocator orelse return error.NotInit;
+    const s = try Schedule.init(_allocator);
     return s;
 }
-// };
+
+pub fn getSchedule() !*Schedule {
+    const s = mainSchedule orelse return error.NotLoop;
+    return s;
+}
+pub fn loop(f: anytype, args: anytype) !void {
+    if (mainSchedule != null) {
+        std.log.err("The loop can only be called once.", .{});
+        return error.HasLooped;
+    }
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const _allocator = gpa.allocator();
+    try init(_allocator);
+    defer deinit();
+
+    const s = try newSchedule();
+    defer s.deinit();
+    mainSchedule = s;
+    _ = try s.go(f, args);
+    try s.loop();
+}

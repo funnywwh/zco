@@ -126,16 +126,23 @@ pub const Schedule = struct {
             std.log.err("Schedule user2SigHandler localSchedule.runningCo == null tid:{d}", .{std.Thread.getCurrentId()});
         }
     }
+    pub fn resumeAll(self: *Schedule) !void {
+        var it = self.allCoMap.iterator();
+        while (it.next()) |kv| {
+            const co = kv.value_ptr.*;
+            try cozig.Resume(co);
+        }
+    }
     pub fn deinit(self: *Schedule) void {
         std.log.debug("Schedule deinit readyQueue count:{}", .{self.readyQueue.count()});
         std.log.debug("Schedule deinit sleepQueue count:{}", .{self.sleepQueue.count()});
-        var readyIt = self.readyQueue.iterator();
-        while (readyIt.next()) |co| {
-            std.log.debug("Schedule deinit resume ready coid:{}", .{co.id});
-            co.Resume() catch {};
-        }
+
+        self.resumeAll() catch |e| {
+            std.log.err("Schedule deinit resumeAll error:{s}", .{@errorName(e)});
+        };
         if (self.xLoop) |*xLoop| {
             xLoop.deinit();
+            self.xLoop = null;
         }
         self.sleepQueue.deinit();
         self.readyQueue.deinit();
@@ -153,6 +160,10 @@ pub const Schedule = struct {
             fn run(_: *Schedule) !void {}
         }.run, (&s));
         try s.loop();
+    }
+    pub fn getCurrentCo(self: *Schedule) !*Co {
+        const _co = self.runningCo orelse return error.NotInCo;
+        return _co;
     }
     pub fn go(self: *Schedule, comptime func: anytype, args: anytype) !*Co {
         const allocator = self.allocator;
@@ -184,7 +195,6 @@ pub const Schedule = struct {
             .func = &struct {
                 fn run(_argsTupleOpt: ?*anyopaque) !void {
                     const _argsTuple: *WrapArgs = @alignCast(@ptrCast(_argsTupleOpt orelse unreachable));
-                    defer {}
                     try @call(.auto, _argsTuple.func, _argsTuple.args);
                 }
             }.run,
@@ -241,6 +251,9 @@ pub const Schedule = struct {
     pub fn loop(self: *Schedule) !void {
         const xLoop = &(self.xLoop orelse unreachable);
         defer {
+            self.resumeAll() catch |e| {
+                std.log.err("Schedule loop exit resumeAll error:{s}", .{@errorName(e)});
+            };
             xLoop.stop();
         }
         while (!self.exit) {
