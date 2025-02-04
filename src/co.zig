@@ -24,14 +24,14 @@ pub fn Resume(self: *Co) !void {
     std.log.debug("coid:{d} Resume state:{any}", .{ self.id, self.state });
     switch (self.state) {
         .INITED => {
-            if (c.getcontext(&self.ctx) != 0) {
-                return error.getcontext;
-            }
             if (USE_ZIG_CORO) {
                 self.state = .RUNNING;
                 schedule.runningCo = self;
                 self.coro.resumeFrom(&schedule.coro);
             } else {
+                if (c.getcontext(&self.ctx) != 0) {
+                    return error.getcontext;
+                }
                 self.ctx.uc_stack.ss_sp = &self.stack;
                 self.ctx.uc_stack.ss_size = self.stack.len;
                 self.ctx.uc_flags = 0;

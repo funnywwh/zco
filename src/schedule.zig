@@ -128,18 +128,18 @@ pub const Schedule = struct {
             .entries = 1024 * 4,
         });
 
-        var sa = c.struct_sigaction{};
-        sa.__sigaction_handler.sa_sigaction = @ptrCast(&user2SigHandler);
-        sa.sa_flags = 0;
-        _ = c.sigemptyset(&sa.sa_mask);
-        _ = c.sigaddset(&sa.sa_mask, SwitchTimer.SIGNO);
-        if (c.sigaction(SwitchTimer.SIGNO, &sa, null) == -1) {
-            return error.sigaction;
-        }
-        var set = c.sigset_t{};
-        _ = c.sigemptyset(&set);
-        _ = c.sigaddset(&set, SwitchTimer.SIGNO);
-        _ = c.pthread_sigmask(c.SIG_UNBLOCK, &set, null);
+        // var sa = c.struct_sigaction{};
+        // sa.__sigaction_handler.sa_sigaction = @ptrCast(&user2SigHandler);
+        // sa.sa_flags = 0;
+        // _ = c.sigemptyset(&sa.sa_mask);
+        // _ = c.sigaddset(&sa.sa_mask, SwitchTimer.SIGNO);
+        // if (c.sigaction(SwitchTimer.SIGNO, &sa, null) == -1) {
+        //     return error.sigaction;
+        // }
+        // var set = c.sigset_t{};
+        // _ = c.sigemptyset(&set);
+        // _ = c.sigaddset(&set, SwitchTimer.SIGNO);
+        // _ = c.pthread_sigmask(c.SIG_UNBLOCK, &set, null);
 
         localSchedule = schedule;
         schedule.tid = std.Thread.getCurrentId();

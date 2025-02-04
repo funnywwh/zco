@@ -1,13 +1,11 @@
 const root = @import("root");
 const builtin = @import("builtin");
 
-pub const USE_ZIG_CORO = blk: {
-    if (@hasDecl(root, "USE_ZIG_CORO")) {
-        break :blk root.USE_ZIG_CORO;
-    } else {
-        break :blk false;
-    }
-};
+pub const USE_ZIG_CORO =
+    if (@hasDecl(root, "USE_ZIG_CORO"))
+    root.USE_ZIG_CORO
+else
+    true;
 
 pub const DEFAULT_ZCO_STACK_SZIE = blk: {
     if (@hasDecl(root, "DEFAULT_ZCO_STACK_SZIE")) {

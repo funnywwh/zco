@@ -38,28 +38,28 @@ pub const SwitchTimer = struct {
             .listSchedule = List.init(allocator),
         };
 
-        var sa = c.struct_sigaction{};
-        sa.__sigaction_handler.sa_sigaction = @ptrCast(&timerHandler);
-        sa.sa_flags = 0;
-        _ = c.sigemptyset(&sa.sa_mask);
-        _ = c.sigaddset(&sa.sa_mask, c.SIGALRM);
+        // var sa = c.struct_sigaction{};
+        // sa.__sigaction_handler.sa_sigaction = @ptrCast(&timerHandler);
+        // sa.sa_flags = 0;
+        // _ = c.sigemptyset(&sa.sa_mask);
+        // _ = c.sigaddset(&sa.sa_mask, c.SIGALRM);
 
-        if (c.sigaction(c.SIGALRM, &sa, null) == -1) {
-            return error.sigaction;
-        }
+        // if (c.sigaction(c.SIGALRM, &sa, null) == -1) {
+        //     return error.sigaction;
+        // }
 
-        var set = c.sigset_t{};
-        _ = c.sigemptyset(&set);
-        _ = c.sigaddset(&set, SIGNO);
-        _ = c.pthread_sigmask(c.SIG_BLOCK, &set, null);
+        // var set = c.sigset_t{};
+        // _ = c.sigemptyset(&set);
+        // _ = c.sigaddset(&set, SIGNO);
+        // _ = c.pthread_sigmask(c.SIG_BLOCK, &set, null);
 
-        var timer = c.itimerval{};
-        timer.it_value.tv_sec = 1;
-        timer.it_value.tv_usec = CO_SWITCH_TIME;
-        timer.it_interval.tv_sec = 0;
-        timer.it_interval.tv_usec = CO_SWITCH_TIME;
+        // var timer = c.itimerval{};
+        // timer.it_value.tv_sec = 1;
+        // timer.it_value.tv_usec = CO_SWITCH_TIME;
+        // timer.it_interval.tv_sec = 0;
+        // timer.it_interval.tv_usec = CO_SWITCH_TIME;
 
-        // _ = c.setitimer(c.ITIMER_REAL,&timer,null);
+        // // _ = c.setitimer(c.ITIMER_REAL,&timer,null);
 
         localSwitchTimer = switchTimer;
 
