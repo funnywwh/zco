@@ -47,7 +47,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.linkLibC();
-    exe.linkSystemLibrary("rt");
+    // exe.linkSystemLibrary("rt");
     exe.root_module.addImport("zco", zco);
     exe.root_module.addImport("xev", xev);
 
@@ -86,7 +86,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    lib_unit_tests.linkSystemLibrary("rt");
+    // lib_unit_tests.linkSystemLibrary("rt");
     lib_unit_tests.root_module.addImport("zco", zco);
     lib_unit_tests.root_module.addImport("xev", xev);
 
@@ -97,7 +97,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe_unit_tests.linkSystemLibrary("rt");
+    // exe_unit_tests.linkSystemLibrary("rt");
     exe_unit_tests.root_module.addImport("zco", zco);
     exe_unit_tests.root_module.addImport("xev", xev);
 
