@@ -2,22 +2,24 @@ const std = @import("std");
 const zco = @import("zco");
 
 pub const ZCO_STACK_SIZE = 1024 * 32;
+// pub const USE_ZIG_CORO = true;
 
 // pub const std_options = .{
 //     .log_level = .err,
 // };
+
 pub fn main() !void {
-    const t1 = try std.Thread.spawn(.{}, coRun, .{1});
-    t1.join();
+    // const t1 = try std.Thread.spawn(.{}, coRun, .{1});
+    // t1.join();
 
-    const t2 = try std.Thread.spawn(.{}, testChan, .{2});
-    t2.join();
+    // const t2 = try std.Thread.spawn(.{}, testChan, .{2});
+    // t2.join();
 
-    const t3 = try std.Thread.spawn(.{}, ctxSwithBench, .{});
-    t3.join();
+    // const t3 = try std.Thread.spawn(.{}, ctxSwithBench, .{});
+    // t3.join();
 
-    const t4 = try std.Thread.spawn(.{}, coNest, .{});
-    t4.join();
+    // const t4 = try std.Thread.spawn(.{}, coNest, .{});
+    // t4.join();
 
     const t5 = try std.Thread.spawn(.{}, testDataChan, .{});
     t5.join();
@@ -79,7 +81,9 @@ pub fn ctxSwithBench() !void {
             const _co = try s.getCurrentCo();
             const start = std.time.nanoTimestamp();
             for (0..num_bounces) |_| {
-                try _co.Sleep(1);
+                // try _co.Sleep(1);
+                try _co.Resume();
+                try _co.Suspend();
             }
             const end = std.time.nanoTimestamp();
             const duration = end - start;

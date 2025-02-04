@@ -21,6 +21,13 @@
 *   **轻量级**：协程的创建和切换开销极小，适合高并发场景。
 *   **灵活的 API**：提供简单易用的 API，方便开发者快速上手。
 
+
+## 协程切换引擎
+* ucontext
+* zigcoro
+  
+通过USE_ZIG_CORO 配置
+
 ## 安装
 
 ### zig version
@@ -128,7 +135,7 @@ zig build run
 ### 自定义堆栈大小
 在root包下定义
 ```zig
-pub const ZCO_STACK_SIZE = 1024 * 32;
+pub const DEFAULT_ZCO_STACK_SZIE = 1024 * 32;
 ```
 ## API 文档
 ###  zco

@@ -5,6 +5,11 @@ const Context = c.ucontext_t;
 const Schedule = @import("./schedule.zig").Schedule;
 const root = @import("root");
 const builtin = @import("builtin");
+const coro = @import("./coro_base.zig");
+
+const cfg = @import("./config.zig");
+const USE_ZIG_CORO = cfg.USE_ZIG_CORO;
+const DEFAULT_ZCO_STACK_SZIE = cfg.DEFAULT_ZCO_STACK_SZIE;
 
 pub fn freeArgs(self: *Co) void {
     if (self.args) |args| {
@@ -22,25 +27,35 @@ pub fn Resume(self: *Co) !void {
             if (c.getcontext(&self.ctx) != 0) {
                 return error.getcontext;
             }
-            self.ctx.uc_stack.ss_sp = &self.stack;
-            self.ctx.uc_stack.ss_size = self.stack.len;
-            self.ctx.uc_flags = 0;
-            self.ctx.uc_link = &schedule.ctx;
-            std.log.debug("coid:{d} Resume makecontext", .{self.id});
-            c.makecontext(&self.ctx, @ptrCast(&Co.contextEntry), 1, self);
-            std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
-            self.state = .RUNNING;
-            schedule.runningCo = self;
-            if (c.swapcontext(&schedule.ctx, &self.ctx) != 0) {
-                return error.swapcontext;
+            if (USE_ZIG_CORO) {
+                self.state = .RUNNING;
+                schedule.runningCo = self;
+                self.coro.resumeFrom(&schedule.coro);
+            } else {
+                self.ctx.uc_stack.ss_sp = &self.stack;
+                self.ctx.uc_stack.ss_size = self.stack.len;
+                self.ctx.uc_flags = 0;
+                self.ctx.uc_link = &schedule.ctx;
+                std.log.debug("coid:{d} Resume makecontext", .{self.id});
+                c.makecontext(&self.ctx, @ptrCast(&Co.contextEntry), 1, self);
+                std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
+                self.state = .RUNNING;
+                schedule.runningCo = self;
+                if (c.swapcontext(&schedule.ctx, &self.ctx) != 0) {
+                    return error.swapcontext;
+                }
             }
         },
         .SUSPEND, .READY => {
             std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
             self.state = .RUNNING;
             schedule.runningCo = self;
-            if (c.swapcontext(&schedule.ctx, &self.ctx) != 0) {
-                return error.swapcontext;
+            if (USE_ZIG_CORO) {
+                self.coro.resumeFrom(&schedule.coro);
+            } else {
+                if (c.swapcontext(&schedule.ctx, &self.ctx) != 0) {
+                    return error.swapcontext;
+                }
             }
         },
         else => {},
@@ -70,13 +85,26 @@ pub const Co = struct {
     const Self = @This();
     id: usize = 0,
     ctx: Context = std.mem.zeroes(Context),
+    coro: brk: {
+        if (USE_ZIG_CORO) {
+            break :brk coro.Coro;
+        } else {
+            break :brk void;
+        }
+    } = brk: {
+        if (USE_ZIG_CORO) {
+            break :brk undefined;
+        } else {
+            break :brk {};
+        }
+    },
     func: Func = undefined,
     args: ?*anyopaque = null,
     argsFreeFunc: *const fn (*Co, *anyopaque) void,
     state: State = .INITED,
     priority: usize = 0,
     schedule: *Schedule = undefined,
-    stack: [DEFAULT_STACK_SZIE]u8 = std.mem.zeroes([DEFAULT_STACK_SZIE]u8),
+    stack: [DEFAULT_ZCO_STACK_SZIE]u8 align(16) = std.mem.zeroes([DEFAULT_ZCO_STACK_SZIE]u8),
     wakeupTimestampNs: usize = 0, //纳秒
     const State = enum {
         INITED,
@@ -85,26 +113,6 @@ pub const Co = struct {
         RUNNING,
         STOP,
         FREED,
-    };
-    const DEFAULT_STACK_SZIE = blk: {
-        if (@hasDecl(root, "ZCO_STACK_SIZE")) {
-            if (builtin.mode == .Debug) {
-                if (root.ZCO_STACK_SIZE < 1024 * 32) {
-                    @compileError("root.ZCO_STACK_SIZE < 1024*12");
-                }
-            } else {
-                if (root.ZCO_STACK_SIZE < 1024 * 4) {
-                    @compileError("root.ZCO_STACK_SIZE < 1024*4");
-                }
-            }
-            break :blk root.ZCO_STACK_SIZE;
-        } else {
-            if (builtin.mode == .Debug) {
-                break :blk 1024 * 32;
-            } else {
-                break :blk 1024 * 8;
-            }
-        }
     };
     pub var nextId: usize = 0;
 
@@ -119,8 +127,12 @@ pub const Co = struct {
             }
             co.state = .SUSPEND;
             self.schedule.runningCo = null;
-            if (c.swapcontext(&co.ctx, &schedule.ctx) != 0) {
-                return error.swapcontext;
+            if (USE_ZIG_CORO) {
+                schedule.coro.resumeFrom(&self.coro);
+            } else {
+                if (c.swapcontext(&co.ctx, &schedule.ctx) != 0) {
+                    return error.swapcontext;
+                }
             }
             return;
         }

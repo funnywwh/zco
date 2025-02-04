@@ -6,9 +6,40 @@ const SwitchTimer = @import("./switch_timer.zig").SwitchTimer;
 const builtin = @import("builtin");
 const xev = @import("xev");
 const Co = cozig.Co;
+const coro = @import("./coro_base.zig");
+const cfg = @import("./config.zig");
+
+const USE_ZIG_CORO = cfg.USE_ZIG_CORO;
+const DEFAULT_ZCO_STACK_SZIE = cfg.DEFAULT_ZCO_STACK_SZIE;
 
 pub const Schedule = struct {
     ctx: Context = std.mem.zeroes(Context),
+    coro: brk: {
+        if (USE_ZIG_CORO) {
+            break :brk coro.Coro;
+        } else {
+            break :brk void;
+        }
+    } = brk: {
+        if (USE_ZIG_CORO) {
+            break :brk undefined;
+        } else {
+            break :brk {};
+        }
+    },
+    stack: brk: {
+        if (USE_ZIG_CORO) {
+            break :brk [DEFAULT_ZCO_STACK_SZIE]u8;
+        } else {
+            break :brk void;
+        }
+    } align(16) = brk: {
+        if (USE_ZIG_CORO) {
+            break :brk undefined;
+        } else {
+            break :brk {};
+        }
+    },
     runningCo: ?*Co = null,
     sleepQueue: PriorityQueue,
     readyQueue: PriorityQueue,
@@ -78,6 +109,19 @@ pub const Schedule = struct {
         };
         errdefer {
             schedule.deinit();
+        }
+        if (USE_ZIG_CORO) {
+            schedule.coro = try coro.Coro.init(struct {
+                fn run(
+                    from: *coro.Coro,
+                    self: *coro.Coro,
+                ) callconv(.C) noreturn {
+                    _ = from; // autofix
+                    const s: *Schedule = @alignCast(@fieldParentPtr("coro", self));
+                    s.loop() catch unreachable;
+                    unreachable;
+                }
+            }.run, @alignCast(&schedule.stack));
         }
 
         schedule.xLoop = try xev.Loop.init(.{
@@ -202,6 +246,19 @@ pub const Schedule = struct {
             .schedule = self,
         };
         Co.nextId +%= 1;
+        if (USE_ZIG_CORO) {
+            co.coro = try coro.Coro.init(struct {
+                fn run(
+                    from: *coro.Coro,
+                    _self: *coro.Coro,
+                ) callconv(.C) noreturn {
+                    const _co: *Co = @alignCast(@fieldParentPtr("coro", _self));
+                    _co.func(_co.args) catch unreachable;
+                    from.resumeFrom(&_co.coro);
+                    unreachable;
+                }
+            }.run, @alignCast(&co.stack));
+        }
         try self.allCoMap.put(co.id, co);
         try self.ResumeCo(co);
         return co;
