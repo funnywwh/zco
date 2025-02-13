@@ -191,7 +191,9 @@ pub const Schedule = struct {
         self.sleepQueue.deinit();
         self.readyQueue.deinit();
         while (self.allCoMap.popOrNull()) |kv| {
-            self.allocator.destroy(kv.value);
+            const co: *Co = kv.value;
+            cozig.freeArgs(co);
+            self.allocator.destroy(co);
         }
         self.allCoMap.deinit();
 
@@ -278,7 +280,6 @@ pub const Schedule = struct {
         std.log.debug("Schedule freeCo coid:{}", .{co.id});
         var sleepIt = self.sleepQueue.iterator();
         var i: usize = 0;
-        cozig.freeArgs(co);
         while (sleepIt.next()) |_co| {
             if (_co == co) {
                 _ = self.sleepQueue.removeIndex(i);
@@ -299,6 +300,7 @@ pub const Schedule = struct {
         if (self.allCoMap.get(co.id)) |_| {
             std.log.debug("Schedule destroy coid:{} co:{*}", .{ co.id, co });
             _ = self.allCoMap.swapRemove(co.id);
+            cozig.freeArgs(co);
             self.allocator.destroy(co);
         }
     }

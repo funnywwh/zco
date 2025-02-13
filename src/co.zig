@@ -185,9 +185,6 @@ pub const Co = struct {
         std.log.debug("Co contextEntry coid:{d} schedule{*}", .{ self.id, self.schedule });
         defer std.log.debug("Co contextEntry coid:{d} exited", .{self.id});
         const schedule = self.schedule;
-        defer {
-            freeArgs(self);
-        }
 
         self.func(args) catch {
             // std.log.err("contextEntry coid:{d} error:{s}",.{self.id,@errorName(e)});
