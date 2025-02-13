@@ -42,6 +42,7 @@ pub fn CreateIo(IOType: type) type {
                 co.Suspend() catch |e| {
                     std.log.err("io {s} close Suspend error:{s}", .{ SelfName, @errorName(e) });
                 };
+                self.xobj = null;
             }
         }
         pub fn read(self: *Self, buffer: []u8) anyerror!usize {
