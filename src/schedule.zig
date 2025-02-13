@@ -241,7 +241,9 @@ pub const Schedule = struct {
             .func = &struct {
                 fn run(_argsTupleOpt: ?*anyopaque) !void {
                     const _argsTuple: *WrapArgs = @alignCast(@ptrCast(_argsTupleOpt orelse unreachable));
-                    try @call(.auto, _argsTuple.func, _argsTuple.args);
+                    @call(.auto, _argsTuple.func, _argsTuple.args) catch |err| {
+                        std.log.debug("schedule wrap func error:{any}", .{err});
+                    };
                 }
             }.run,
             .id = Co.nextId,
