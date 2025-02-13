@@ -24,9 +24,6 @@
 
 ## 协程切换引擎
 * ucontext
-* zigcoro
-  
-通过USE_ZIG_CORO 配置
 
 ## 安装
 

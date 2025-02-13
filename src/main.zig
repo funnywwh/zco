@@ -2,7 +2,6 @@ const std = @import("std");
 const zco = @import("zco");
 
 pub const ZCO_STACK_SIZE = 1024 * 32;
-// pub const USE_ZIG_CORO = true;
 
 // pub const std_options = .{
 //     .log_level = .err,
