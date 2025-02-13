@@ -8,18 +8,18 @@ pub const Tcp = struct {
 
     xobj: ?xev.TCP = null,
     schedule: *zco.Schedule,
-    allocator: std.mem.Allocator,
 
     pub const Error = anyerror;
 
-    pub fn init(allocator: std.mem.Allocator, schedule: *zco.Schedule) !Tcp {
-        return .{
+    pub fn init(schedule: *zco.Schedule) !*Tcp {
+        const tcp = try schedule.allocator.create(Tcp);
+        tcp.* = .{
             .schedule = schedule,
-            .allocator = allocator,
         };
+        return tcp;
     }
     pub fn deinit(self: *Self) void {
-        const allocator = self.allocator;
+        const allocator = self.schedule.allocator;
         allocator.destroy(self);
     }
     pub fn bind(self: *Self, address: std.net.Address) !void {
@@ -48,6 +48,7 @@ pub const Tcp = struct {
             ) xev.CallbackAction {
                 const _r = ud orelse unreachable;
                 _r.clientConn = r;
+                std.log.debug("tcp accept callback", .{});
                 _r.co.Resume() catch |e| {
                     std.log.err("nets tcp accept ResumeCo error:{s}", .{@errorName(e)});
                 };
@@ -56,11 +57,10 @@ pub const Tcp = struct {
         }).callback);
         try co.Suspend();
         const clientConn = try result.clientConn;
-        const retTcp = try self.allocator.create(Tcp);
+        const retTcp = try self.schedule.allocator.create(Tcp);
         retTcp.* = .{
             .xobj = clientConn,
             .schedule = co.schedule,
-            .allocator = self.allocator,
         };
         return retTcp;
     }
