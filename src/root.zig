@@ -3,10 +3,12 @@ const switch_timer = @import("./switch_timer.zig");
 const schedule = @import("./schedule.zig");
 const co = @import("./co.zig");
 const chan = @import("./chan.zig");
+const wg = @import("./wg.zig");
 pub usingnamespace switch_timer;
 pub usingnamespace schedule;
 pub usingnamespace co;
 pub usingnamespace chan;
+pub usingnamespace wg;
 
 const SwitchTimer = switch_timer.SwitchTimer;
 const Schedule = schedule.Schedule;
