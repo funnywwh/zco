@@ -42,7 +42,7 @@ fn httpHelloworld() !void {
 
     _ = try schedule.go(struct {
         fn run(s: *zco.Schedule) !void {
-            var server = try nets.Tcp.init(s.allocator, s);
+            var server = try nets.Tcp.init(s);
             defer {
                 server.close();
                 server.deinit();
@@ -53,7 +53,10 @@ fn httpHelloworld() !void {
             try server.listen(200);
             while (true) {
                 const _s = server.schedule;
-                var client = try server.accept();
+                var client = server.accept() catch |e| {
+                    std.log.debug("server accept error:{any}", .{e});
+                    break;
+                };
                 errdefer {
                     client.close();
                     client.deinit();
@@ -61,11 +64,19 @@ fn httpHelloworld() !void {
                 std.log.debug("accept a client", .{});
                 _ = try _s.go(struct {
                     fn run(_client: *nets.Tcp) !void {
-                        std.log.debug("entry client co", .{});
+                        var shutdown = false;
                         defer {
                             std.log.debug("client loop exited", .{});
+                        }
+
+                        defer std.log.debug("entry client co", .{});
+                        defer {
+                            var s1 = _client.schedule;
                             _client.close();
                             _client.deinit();
+                            if (shutdown) {
+                                s1.stop();
+                            }
                         }
                         std.log.debug("client co will loop", .{});
                         var keepalive = true;
@@ -91,6 +102,10 @@ fn httpHelloworld() !void {
                                         keepalive = true;
                                     }
                                     versionCheck = true;
+                                }
+                                if (std.ascii.indexOfIgnoreCasePos(line, 0, "/shutdown") != null) {
+                                    shutdown = true;
+                                    return;
                                 }
                                 std.log.debug("line:{s}", .{line});
                                 if (keepalive == true) {

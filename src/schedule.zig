@@ -132,6 +132,7 @@ pub const Schedule = struct {
         var it = self.allCoMap.iterator();
         while (it.next()) |kv| {
             const co = kv.value_ptr.*;
+            std.log.debug("Schedule resumeAll will resume coid:{d}", .{co.id});
             try cozig.Resume(co);
         }
     }
@@ -257,9 +258,6 @@ pub const Schedule = struct {
     pub fn loop(self: *Schedule) !void {
         const xLoop = &(self.xLoop orelse unreachable);
         defer {
-            self.resumeAll() catch |e| {
-                std.log.err("Schedule loop exit resumeAll error:{s}", .{@errorName(e)});
-            };
             xLoop.stop();
             std.log.debug("schedule loop exited", .{});
         }

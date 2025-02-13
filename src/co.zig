@@ -100,10 +100,18 @@ pub const Co = struct {
                 std.log.err("Co Suspend co:{d} != self:{d}", .{ co.id, self.id });
                 return error.RunningCo;
             }
+            if (self.schedule.exit) {
+                std.log.debug("Co Suspend schedule.exit", .{});
+                return error.ScheduleExited;
+            }
             co.state = .SUSPEND;
             self.schedule.runningCo = null;
             if (c.swapcontext(&co.ctx, &schedule.ctx) != 0) {
                 return error.swapcontext;
+            }
+            if (self.schedule.exit) {
+                std.log.debug("Co Suspend schedule.exit", .{});
+                return error.ScheduleExited;
             }
             return;
         }
@@ -111,6 +119,9 @@ pub const Co = struct {
         return error.RunningCoNull;
     }
     pub fn Resume(self: *Co) !void {
+        if (self.schedule.exit) {
+            return error.ScheduleExited;
+        }
         try self.schedule.ResumeCo(self);
     }
 
