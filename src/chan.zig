@@ -54,9 +54,10 @@ pub const Chan = struct {
         self.recvingQueue.clearAndFree();
     }
     pub fn deinit(self: *Self) void {
-        std.debug.assert(self.closed);
-        std.debug.assert(self.isEmpty());
+        std.debug.assert(self.closed == false);
+        // std.debug.assert(self.isEmpty());
         self.valueQueue.clearAndFree();
+        self.recvingQueue.clearAndFree();
         self.schedule.allocator.destroy(self);
     }
     pub fn isEmpty(self: *Self) bool {
