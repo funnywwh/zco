@@ -213,7 +213,51 @@ pub const DEFAULT_ZCO_STACK_SZIE = 1024 * 32;
 
 Chan关闭后 send,recv 回收到异常
 
-send 只有等recv的协程成接受并休眠后，send 才会返回,因此可以发送局部变量
+send
+
+非缓冲管道（bufferCap==0），只有等recv的协程成接受并休眠后才唤醒
+
+缓冲管道，缓冲区满会阻塞，recv一个唤醒一个co
+
+
+#### 无缓冲管道
+
+```zig
+const std = @import("std");
+const zco = @import("zco");
+
+pub fn main() !void {
+    _ = try zco.loop(struct {
+        fn run() !void {
+            const s = try zco.getSchedule();
+            const DataType = struct {
+                name: []const u8,
+                id: u32,
+                age: u32,
+            };
+            const Chan = zco.CreateChan(DataType);
+            const exitCh = try Chan.init(try zco.getSchedule(), 0);
+            defer {
+                exitCh.close();
+                exitCh.deinit();
+            }
+            _ = try s.go(struct {
+                fn run(ch: *Chan) !void {
+                    const v = try ch.recv();
+                    std.log.debug("recved:{any}", .{v});
+                }
+            }.run, .{exitCh});
+            try exitCh.send(.{
+                .name = "test",
+                .age = 45,
+                .id = 1,
+            });
+            s.stop();
+        }
+    }.run, .{});
+}
+```
+#### 缓冲管道
 
 ```zig
 const std = @import("std");
@@ -236,42 +280,53 @@ pub fn main() !void {
             }
             _ = try s.go(struct {
                 fn run(ch: *Chan) !void {
-                    const v = try ch.recv();
-                    std.log.debug("recved:{any}", .{v});
+                    try ch.send(.{
+                        .name = "test",
+                        .age = 45,
+                        .id = 1,
+                    });
                 }
             }.run, .{exitCh});
-            try exitCh.send(.{
-                .name = "test",
-                .age = 45,
-                .id = 1,
-            });
+            const v = try exitCh.recv();
+            std.log.debug("recved:{any}", .{v});
             s.stop();
         }
     }.run, .{});
 }
 ```
-#### `fn CreateChan(DataType: type) type`
+
+```zig
+fn CreateChan(DataType: type) type
+```
 
 创建指定类型DataType的通道类型
 
-#### `fn init(s: *Schedule, bufCap: usize) !*Self`
+```zig
+fn init(s: *Schedule, bufCap: usize) !*Self
+```
 
 初始化化通道
 
 * `bufCap`: 通道缓冲区大小，缓冲区满时send阻塞，空时recv阻塞
 * `s`: 关联的调度器,不要混用
 
-#### `fn deinit(self: *Self) void`
+```zig
+fn deinit(self: *Self) void
+```
 
 销毁通道,销毁前要close
 
-#### `fn close(self: *Self) void `
+```zig
+fn close(self: *Self) void
+```
 
 关闭通道
 
 send,recv，会返回异常,阻塞的协程会被唤醒
 
-#### `fn send(self: *Self, data: DataType) !void`
+```zig
+fn send(self: *Self, data: DataType) !void
+```
 
 发送数据,直到数据被接受协程处理完并Suspend
 
@@ -280,12 +335,16 @@ send,recv，会返回异常,阻塞的协程会被唤醒
 
 * `data` 要发送的数据
 
-#### `fn recv(self: *Self) !DataType`
+```zig
+fn recv(self: *Self) !DataType
+```
 
 接收数据，没有数据时阻塞
 
 
-#### `fn len(self: *Self) !usize`
+```zig
+fn len(self: *Self) !usize
+```
 
 返回通道缓冲区数据长度(DataType的个数)
 
@@ -294,7 +353,9 @@ send,recv，会返回异常,阻塞的协程会被唤醒
 
 异步io，只能在协程里用
 
-#### `fn CreateIo(IOType: type) type`
+```zig
+fn CreateIo(IOType: type) type
+```
 
 创建异步io的通用方法
 
@@ -314,10 +375,14 @@ io的子类里必须要有的字段
 * `xobj` 的libxev异步对象
 * `schedule` 关联的调度器
 
-#### `fn close(self: *Self) void`
+```zig
+fn close(self: *Self) void
+```
 关闭io
 
-#### `fn read(self: *Self, buffer: []u8) anyerror!usize`
+```zig
+fn read(self: *Self, buffer: []u8) anyerror!usize
+```
 
 读取数据
 
@@ -326,20 +391,26 @@ io的子类里必须要有的字段
 * 返回读到的数据长度
 
 
-#### `fn write(self: *Self, buffer: []const u8) !usize`
+```zig
+fn write(self: *Self, buffer: []const u8) !usize
+```
 
 写数据
 * `buffer`: 数据缓冲区
 * 返回写成功的数据长度
 
-#### `fn pread(self: *Self, buffer: []u8, offset: usize) anyerror!usize`
+```zig
+fn pread(self: *Self, buffer: []u8, offset: usize) anyerror!usize
+```
 
 从offset开始读写，可以seek的io,如File
 * `buffer`: 数据缓冲区
 * `offset`：从0开始的偏移量
 * 返回读到的长度
 
-#### `fn pwrite(self: *Self, buffer: []const u8, offset: usize) !usize`
+```zig
+fn pwrite(self: *Self, buffer: []const u8, offset: usize) !usize
+```
 
 从指定位置开始写
 
@@ -353,15 +424,21 @@ io的子类里必须要有的字段
 
 示例参考nets/src/main.zig
 
-#### `fn bind(self: *Self, address: std.net.Address) !void`
+```zig
+fn bind(self: *Self, address: std.net.Address) !void
+```
 
 绑定指定的ip,port
 
-#### `fn listen(self: *Self, backlog: u31) !void`
+```zig
+fn listen(self: *Self, backlog: u31) !void
+```
 
 开始监听链接
 
-#### `fn accept(self: *Self) !*Tcp`
+```zig
+fn accept(self: *Self) !*Tcp
+```
 
 接收链接
 
@@ -371,15 +448,21 @@ io的子类里必须要有的字段
 
 示例参考nets/src/main.zig
 
-#### `pub fn init(schedule: *zco.Schedule) !File`
+```zig
+pub fn init(schedule: *zco.Schedule) !File
+```
 
 初始化
 
-#### `fn deinit(self: *Self) void`
+```zig
+fn deinit(self: *Self) void
+```
 
 销毁
 
-#### `fn open(self: *Self, file: std.fs.File) !void`
+```zig
+fn open(self: *Self, file: std.fs.File) !void
+```
 
 打开文件
 

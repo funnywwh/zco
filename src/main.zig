@@ -41,15 +41,15 @@ pub fn testDataChan() !void {
             }
             _ = try s.go(struct {
                 fn run(ch: *Chan) !void {
-                    const v = try ch.recv();
-                    std.log.debug("recved:{any}", .{v});
+                    try ch.send(.{
+                        .name = "test",
+                        .age = 45,
+                        .id = 1,
+                    });
                 }
             }.run, .{exitCh});
-            try exitCh.send(.{
-                .name = "test",
-                .age = 45,
-                .id = 1,
-            });
+            const v = try exitCh.recv();
+            std.log.debug("recved:{any}", .{v});
             s.stop();
         }
     }.run, .{});
