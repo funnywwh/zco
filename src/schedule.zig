@@ -149,7 +149,7 @@ pub const Schedule = struct {
         }
         self.sleepQueue.deinit();
         self.readyQueue.deinit();
-        while (self.allCoMap.popOrNull()) |kv| {
+        while (self.allCoMap.pop()) |kv| {
             const co: *Co = kv.value;
             cozig.freeArgs(co);
             self.allocator.destroy(co);
