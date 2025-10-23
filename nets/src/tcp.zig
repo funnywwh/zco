@@ -1,12 +1,11 @@
 const std = @import("std");
 const zco = @import("zco");
-const xev = @import("xev");
 const io = @import("io");
 
 pub const Tcp = struct {
     const Self = @This();
 
-    xobj: ?xev.TCP = null,
+    xobj: ?zco.xev.TCP = null,
     schedule: *zco.Schedule,
 
     pub const Error = anyerror;
@@ -23,17 +22,17 @@ pub const Tcp = struct {
         allocator.destroy(self);
     }
     pub fn bind(self: *Self, address: std.net.Address) !void {
-        const xobj = try xev.TCP.init(address);
+        const xobj = try zco.xev.TCP.init(address);
         try xobj.bind(address);
         self.xobj = xobj;
     }
     pub fn accept(self: *Self) !*Tcp {
         const xobj = self.xobj orelse return error.NotInit;
-        var c_accept = xev.Completion{};
+        var c_accept = zco.xev.Completion{};
         const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
         const Result = struct {
             co: *zco.Co,
-            clientConn: xev.AcceptError!xev.TCP = undefined,
+            clientConn: zco.xev.AcceptError!zco.xev.TCP = undefined,
         };
 
         var result: Result = .{
@@ -42,10 +41,10 @@ pub const Tcp = struct {
         xobj.accept(&(self.schedule.xLoop.?), &c_accept, Result, &result, (struct {
             fn callback(
                 ud: ?*Result,
-                _: *xev.Loop,
-                _: *xev.Completion,
-                r: xev.AcceptError!xev.TCP,
-            ) xev.CallbackAction {
+                _: *zco.xev.Loop,
+                _: *zco.xev.Completion,
+                r: zco.xev.AcceptError!zco.xev.TCP,
+            ) zco.xev.CallbackAction {
                 const _r = ud orelse unreachable;
                 _r.clientConn = r;
                 std.log.debug("tcp accept callback", .{});
