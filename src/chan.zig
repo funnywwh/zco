@@ -54,7 +54,8 @@ pub const Chan = struct {
         self.recvingQueue.clearAndFree();
     }
     pub fn deinit(self: *Self) void {
-        std.debug.assert(self.closed == false);
+        // 允许关闭的通道被销毁
+        // std.debug.assert(self.closed == false);
         // std.debug.assert(self.isEmpty());
         self.valueQueue.clearAndFree();
         self.recvingQueue.clearAndFree();
