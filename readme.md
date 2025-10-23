@@ -45,11 +45,11 @@
 
 ### zig version
 
-0.14.0-dev.3028+cdc9d65b0
+0.14.0
 
 ### 依赖
 
-*   [Zig](https://ziglang.org/)：确保已安装最新版本的 Zig 编译器。
+*   [Zig](https://ziglang.org/)：确保已安装 Zig 0.14.0 或更高版本。
 
 ### 获取代码
 
