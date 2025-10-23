@@ -16,7 +16,6 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const zco = b.dependency("zco", .{}).module("zco");
-    const xev = b.dependency("libxev", .{ .target = target, .optimize = optimize }).module("xev");
 
     const lib = b.addStaticLibrary(.{
         .name = "io",
@@ -27,14 +26,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     lib.root_module.addImport("zco", zco);
-    lib.root_module.addImport("xev", xev);
 
     const io = b.addModule("io", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
-    io.addImport("xev", xev);
     io.addImport("zco", zco);
 
     // This declares intent for the library to be installed into the standard
@@ -50,7 +47,6 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("io", io);
     exe.root_module.addImport("zco", zco);
-    exe.root_module.addImport("xev", xev);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -89,7 +85,6 @@ pub fn build(b: *std.Build) void {
     });
     lib_unit_tests.root_module.addImport("io", io);
     lib_unit_tests.root_module.addImport("zco", zco);
-    lib_unit_tests.root_module.addImport("xev", xev);
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
@@ -100,7 +95,6 @@ pub fn build(b: *std.Build) void {
     });
     exe_unit_tests.root_module.addImport("io", io);
     exe_unit_tests.root_module.addImport("zco", zco);
-    exe_unit_tests.root_module.addImport("xev", xev);
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

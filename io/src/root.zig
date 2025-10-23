@@ -1,5 +1,4 @@
 const std = @import("std");
-const xev = @import("xev");
 const zco = @import("zco");
 
 pub fn CreateIo(IOType: type) type {
@@ -13,7 +12,7 @@ pub fn CreateIo(IOType: type) type {
                 const XObjType = @TypeOf(xobj);
                 const s = self.schedule;
                 const loop = &(s.xLoop orelse unreachable);
-                var c_close = xev.Completion{};
+                var c_close = zco.xev.Completion{};
                 const co: *zco.Co = self.schedule.runningCo orelse unreachable;
                 const Result = struct {
                     co: *zco.Co,
@@ -25,11 +24,11 @@ pub fn CreateIo(IOType: type) type {
                 xobj.close(loop, &c_close, Result, &result, struct {
                     fn callback(
                         ud: ?*Result,
-                        _: *xev.Loop,
-                        _: *xev.Completion,
+                        _: *zco.xev.Loop,
+                        _: *zco.xev.Completion,
                         _: XObjType,
-                        r: xev.CloseError!void,
-                    ) xev.CallbackAction {
+                        r: zco.xev.CloseError!void,
+                    ) zco.xev.CallbackAction {
                         _ = r catch unreachable;
                         const _result = ud orelse unreachable;
                         std.log.debug("io {s} closed", .{SelfName});
@@ -48,7 +47,7 @@ pub fn CreateIo(IOType: type) type {
         pub fn read(self: *Self, buffer: []u8) anyerror!usize {
             const xobj = self.xobj orelse return error.NotInit;
             const XObjType = @TypeOf(xobj);
-            var c_read = xev.Completion{};
+            var c_read = zco.xev.Completion{};
             const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
             const Result = struct {
                 co: *zco.Co,
@@ -60,12 +59,12 @@ pub fn CreateIo(IOType: type) type {
             xobj.read(&(self.schedule.xLoop.?), &c_read, .{ .slice = buffer }, Result, &result, (struct {
                 fn callback(
                     ud: ?*Result,
-                    _: *xev.Loop,
-                    _: *xev.Completion,
+                    _: *zco.xev.Loop,
+                    _: *zco.xev.Completion,
                     _: XObjType,
-                    _: xev.ReadBuffer,
-                    r: xev.ReadError!usize,
-                ) xev.CallbackAction {
+                    _: zco.xev.ReadBuffer,
+                    r: zco.xev.ReadError!usize,
+                ) zco.xev.CallbackAction {
                     const _result = ud orelse unreachable;
                     _result.size = r;
                     _result.co.Resume() catch |e| {
@@ -82,7 +81,7 @@ pub fn CreateIo(IOType: type) type {
         pub fn write(self: *Self, buffer: []const u8) !usize {
             const xobj = self.xobj orelse return error.NotInit;
             const XObjType = @TypeOf(xobj);
-            var c_write = xev.Completion{};
+            var c_write = zco.xev.Completion{};
             const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
             const Result = struct {
                 co: *zco.Co,
@@ -94,12 +93,12 @@ pub fn CreateIo(IOType: type) type {
             xobj.write(&self.schedule.xLoop.?, &c_write, .{ .slice = buffer }, Result, &result, (struct {
                 fn callback(
                     ud: ?*Result,
-                    _: *xev.Loop,
-                    _: *xev.Completion,
+                    _: *zco.xev.Loop,
+                    _: *zco.xev.Completion,
                     _: XObjType,
-                    _: xev.WriteBuffer,
-                    r: xev.WriteError!usize,
-                ) xev.CallbackAction {
+                    _: zco.xev.WriteBuffer,
+                    r: zco.xev.WriteError!usize,
+                ) zco.xev.CallbackAction {
                     const _result = ud orelse unreachable;
                     _result.size = r;
                     _result.co.Resume() catch |e| {
@@ -115,7 +114,7 @@ pub fn CreateIo(IOType: type) type {
         pub fn pread(self: *Self, buffer: []u8, offset: usize) anyerror!usize {
             const xobj = self.xobj orelse return error.NotInit;
             const XObjType = @TypeOf(xobj);
-            var c_read = xev.Completion{};
+            var c_read = zco.xev.Completion{};
             const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
             const Result = struct {
                 co: *zco.Co,
@@ -127,12 +126,12 @@ pub fn CreateIo(IOType: type) type {
             xobj.pread(&(self.schedule.xLoop.?), &c_read, .{ .slice = buffer }, offset, Result, &result, (struct {
                 fn callback(
                     ud: ?*Result,
-                    _: *xev.Loop,
-                    _: *xev.Completion,
+                    _: *zco.xev.Loop,
+                    _: *zco.xev.Completion,
                     _: XObjType,
-                    _: xev.ReadBuffer,
-                    r: xev.ReadError!usize,
-                ) xev.CallbackAction {
+                    _: zco.xev.ReadBuffer,
+                    r: zco.xev.ReadError!usize,
+                ) zco.xev.CallbackAction {
                     const _result = ud orelse unreachable;
                     _result.size = r;
                     _result.co.Resume() catch |e| {
@@ -149,7 +148,7 @@ pub fn CreateIo(IOType: type) type {
         pub fn pwrite(self: *Self, buffer: []const u8, offset: usize) !usize {
             const xobj = self.xobj orelse return error.NotInit;
             const XObjType = @TypeOf(xobj);
-            var c_write = xev.Completion{};
+            var c_write = zco.xev.Completion{};
             const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
 
             const Result = struct {
@@ -162,12 +161,12 @@ pub fn CreateIo(IOType: type) type {
             xobj.pwrite(&self.schedule.xLoop.?, &c_write, .{ .slice = buffer }, offset, Result, &result, (struct {
                 fn callback(
                     ud: ?*Result,
-                    _: *xev.Loop,
-                    _: *xev.Completion,
+                    _: *zco.xev.Loop,
+                    _: *zco.xev.Completion,
                     _: XObjType,
-                    _: xev.WriteBuffer,
-                    r: xev.WriteError!usize,
-                ) xev.CallbackAction {
+                    _: zco.xev.WriteBuffer,
+                    r: zco.xev.WriteError!usize,
+                ) zco.xev.CallbackAction {
                     const _result = ud orelse unreachable;
                     _result.size = r;
                     _result.co.Resume() catch |e| {

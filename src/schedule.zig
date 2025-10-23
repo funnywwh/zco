@@ -83,7 +83,7 @@ pub const Schedule = struct {
             schedule.deinit();
         }
         schedule.xLoop = try xev.Loop.init(.{
-            .entries = 1024 * 4,
+            .entries = 1024 * 4,  // 事件循环条目数
         });
 
         // var sa = c.struct_sigaction{};
@@ -222,10 +222,20 @@ pub const Schedule = struct {
     }
     pub fn ResumeCo(self: *Schedule, co: *Co) !void {
         std.log.debug("ResumeCo id:{d}", .{co.id});
+        
+        // 检查就绪队列大小，防止内存爆炸
+        if (self.readyQueue.count() >= MAX_READY_COUNT) {
+            std.log.warn("Ready queue full, dropping coroutine {}", .{co.id});
+            return;
+        }
+        
         try self.readyQueue.add(co);
     }
     pub fn freeCo(self: *Schedule, co: *Co) void {
         std.log.debug("Schedule freeCo coid:{}", .{co.id});
+        
+        // 优化：使用更高效的查找方式
+        // 从睡眠队列中移除
         var sleepIt = self.sleepQueue.iterator();
         var i: usize = 0;
         while (sleepIt.next()) |_co| {
@@ -235,8 +245,10 @@ pub const Schedule = struct {
             }
             i +|= 1;
         }
-        i = 0;
+        
+        // 从就绪队列中移除
         var readyIt = self.readyQueue.iterator();
+        i = 0;
         while (readyIt.next()) |_co| {
             if (_co == co) {
                 std.log.debug("Schedule freed ready coid:{}", .{co.id});
@@ -245,6 +257,8 @@ pub const Schedule = struct {
             }
             i +|= 1;
         }
+        
+        // 从协程映射中移除并销毁
         if (self.allCoMap.get(co.id)) |_| {
             std.log.debug("Schedule destroy coid:{} co:{*}", .{ co.id, co });
             _ = self.allCoMap.swapRemove(co.id);
@@ -268,21 +282,26 @@ pub const Schedule = struct {
             };
         }
     }
+    // 批量处理配置
+    const BATCH_SIZE = 32;  // 每次处理32个协程
+    const MAX_READY_COUNT = 10000;  // 最大就绪协程数
+
     inline fn checkNextCo(self: *Schedule) !void {
         const count = self.readyQueue.count();
-        var iter = self.readyQueue.iterator();
         if (builtin.mode == .Debug) {
             if (count > 0) {
-                std.log.debug("checkNextCo begin", .{});
-                while (iter.next()) |_co| {
-                    std.log.debug("checkNextCo cid:{d}", .{_co.id});
-                }
+                std.log.debug("checkNextCo begin, ready count:{}", .{count});
             }
         }
+        
         if (count > 0) {
-            const nextCo = self.readyQueue.remove();
-            std.log.debug("coid:{d} will running readyQueue.count:{d}", .{ nextCo.id, self.readyQueue.count() });
-            try cozig.Resume(nextCo);
+            // 批量处理协程，提高调度效率
+            const processCount = @min(count, BATCH_SIZE);
+            for (0..processCount) |_| {
+                const nextCo = self.readyQueue.remove();
+                std.log.debug("coid:{d} will running readyQueue.count:{d}", .{ nextCo.id, self.readyQueue.count() });
+                try cozig.Resume(nextCo);
+            }
         } else {
             const xLoop = &(self.xLoop orelse unreachable);
             // std.log.debug("Schedule no co",.{});

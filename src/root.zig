@@ -4,11 +4,13 @@ const schedule = @import("./schedule.zig");
 const co = @import("./co.zig");
 const chan = @import("./chan.zig");
 const wg = @import("./wg.zig");
+const xev_module = @import("xev");
 pub usingnamespace switch_timer;
 pub usingnamespace schedule;
 pub usingnamespace co;
 pub usingnamespace chan;
 pub usingnamespace wg;
+pub const xev = xev_module;
 
 const SwitchTimer = switch_timer.SwitchTimer;
 const Schedule = schedule.Schedule;

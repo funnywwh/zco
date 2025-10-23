@@ -49,7 +49,6 @@ pub fn build(b: *std.Build) void {
     exe.linkLibC();
     // exe.linkSystemLibrary("rt");
     exe.root_module.addImport("zco", zco);
-    exe.root_module.addImport("xev", xev);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -88,7 +87,6 @@ pub fn build(b: *std.Build) void {
     });
     // lib_unit_tests.linkSystemLibrary("rt");
     lib_unit_tests.root_module.addImport("zco", zco);
-    lib_unit_tests.root_module.addImport("xev", xev);
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
@@ -99,7 +97,6 @@ pub fn build(b: *std.Build) void {
     });
     // exe_unit_tests.linkSystemLibrary("rt");
     exe_unit_tests.root_module.addImport("zco", zco);
-    exe_unit_tests.root_module.addImport("xev", xev);
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

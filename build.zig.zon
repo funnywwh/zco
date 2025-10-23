@@ -1,12 +1,12 @@
 .{
-    .name = "zco",
-
+    .name = .zco,
     .version = "0.2.2",
-
-    .dependencies = .{ .libxev = .{
-        .path = "./vendor/libxev",
-    } },
-
+    .fingerprint = 0x35fa7039e09ecfab,
+    .dependencies = .{ 
+        .libxev = .{
+            .path = "./vendor/libxev",
+        } 
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

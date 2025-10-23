@@ -1,11 +1,10 @@
 const std = @import("std");
 const zco = @import("zco");
-const xev = @import("xev");
 const io = @import("io");
 
 pub const File = struct {
     const Self = @This();
-    const XFile = xev.File;
+    const XFile = zco.xev.File;
     pub const Error = anyerror;
 
     xobj: ?XFile = null,
@@ -22,7 +21,7 @@ pub const File = struct {
         }
     }
     pub fn open(self: *Self, file: std.fs.File) !void {
-        const xobj = try xev.File.init(file);
+        const xobj = try zco.xev.File.init(file);
         self.xobj = xobj;
     }
 

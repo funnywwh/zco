@@ -1,7 +1,7 @@
 const std = @import("std");
 const zco = @import("zco");
 
-pub const ZCO_STACK_SIZE = 1024 * 32;
+pub const ZCO_STACK_SIZE = 1024 * 8;  // 减少栈大小，从32KB降到8KB，提高内存效率
 
 // pub const std_options = .{
 //     .log_level = .err,
