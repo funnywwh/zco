@@ -23,7 +23,7 @@ pub const Schedule = struct {
     xLoop: ?xev.Loop = null,
 
     // 抢占缓冲区
-    preempted_buffer: [256]*Co = undefined,
+    preempted_buffer: [1024]*Co = undefined,
     preempted_head: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     preempted_tail: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
@@ -38,41 +38,51 @@ pub const Schedule = struct {
 
     threadlocal var localSchedule: ?*Schedule = null;
 
-    // 抢占信号处理器
+    // 抢占信号处理器 - 使用关中断方式，彻底解决竞态条件
     fn preemptSigHandler(_: c_int, _: [*c]c.siginfo_t, uctx_ptr: ?*anyopaque) callconv(.C) void {
         const schedule = localSchedule orelse {
-            std.log.debug("抢占信号处理器：localSchedule 为空", .{});
-            return;
+            return; // 静默返回，避免日志洪水
         };
+
+        // 立即屏蔽SIGALRM信号，防止嵌套调用
+        var sigset: c.sigset_t = undefined;
+        var oldset: c.sigset_t = undefined;
+        _ = c.sigemptyset(&sigset);
+        _ = c.sigaddset(&sigset, c.SIGALRM);
+        _ = c.sigprocmask(c.SIG_BLOCK, &sigset, &oldset);
+
+        // 在关中断状态下安全地获取runningCo
         const co = schedule.runningCo orelse {
-            std.log.debug("抢占信号处理器：runningCo 为空", .{});
+            _ = c.sigprocmask(c.SIG_SETMASK, &oldset, null);
             return;
         };
 
-        std.log.debug("抢占信号处理器：抢占协程 {}", .{co.id});
-        
-        // 增加抢占计数
-        _ = schedule.preemption_count.fetchAdd(1, .monotonic);
-        
+        // 增加抢占计数（在关中断状态下安全）
+        schedule.preemption_count.raw += 1;
+
+        // 检查协程状态，确保它是正在运行的
+        if (co.state != .RUNNING) {
+            _ = c.sigprocmask(c.SIG_SETMASK, &oldset, null);
+            return;
+        }
+
         const interrupted_ctx: *c.ucontext_t = @ptrCast(@alignCast(uctx_ptr.?));
 
         // 保存被中断的上下文
         co.ctx = interrupted_ctx.*;
 
-        // 清除 runningCo
+        // 清除runningCo
         schedule.runningCo = null;
 
-        // 加入抢占缓冲区（内部有 release 屏障）
+        // 尝试加入抢占缓冲区
         if (!schedule.pushPreempted(co)) {
-            // 缓冲区满，不抢占
-            std.log.debug("抢占信号处理器：缓冲区满，不抢占", .{});
-            // 如果缓冲区满，恢复 runningCo
+            // 缓冲区满，不抢占，恢复runningCo
             schedule.runningCo = co;
+            _ = c.sigprocmask(c.SIG_SETMASK, &oldset, null);
             return;
         }
 
         // 使用 setcontext 切换到调度器
-        std.log.debug("抢占信号处理器：切换到调度器", .{});
         _ = c.setcontext(&schedule.ctx);
     }
 
@@ -161,6 +171,11 @@ pub const Schedule = struct {
         }
         schedule.timer_id = timerid;
 
+        // 初始化调度器上下文，确保信号处理器可以安全使用
+        if (c.getcontext(&schedule.ctx) != 0) {
+            return error.getcontext;
+        }
+
         // 暂时不启动定时器，等到第一次 Resume 之后再启动
         // 这样可以确保 schedule.ctx 已经被正确初始化
 
@@ -212,7 +227,21 @@ pub const Schedule = struct {
         try s.loop();
     }
     pub fn getCurrentCo(self: *Schedule) !*Co {
-        const _co = self.runningCo orelse return error.NotInCo;
+        // === 关键区开始：屏蔽信号 ===
+        var sigset: c.sigset_t = undefined;
+        var oldset: c.sigset_t = undefined;
+        _ = c.sigemptyset(&sigset);
+        _ = c.sigaddset(&sigset, c.SIGALRM);
+        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+
+        const _co = self.runningCo orelse {
+            // 恢复信号屏蔽
+            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            return error.NotInCo;
+        };
+
+        // === 关键区结束：恢复信号屏蔽 ===
+        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
         return _co;
     }
     pub fn go(self: *Schedule, comptime func: anytype, args: anytype) !*Co {
@@ -254,7 +283,19 @@ pub const Schedule = struct {
             .schedule = self,
         };
         Co.nextId +%= 1;
+
+        // === 关键区开始：屏蔽信号 ===
+        var sigset: c.sigset_t = undefined;
+        var oldset: c.sigset_t = undefined;
+        _ = c.sigemptyset(&sigset);
+        _ = c.sigaddset(&sigset, c.SIGALRM);
+        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+
         try self.allCoMap.put(co.id, co);
+
+        // === 关键区结束：恢复信号屏蔽 ===
+        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+
         try self.ResumeCo(co);
         return co;
     }
@@ -263,27 +304,34 @@ pub const Schedule = struct {
         return std.math.order(a.priority, b.priority);
     }
 
-    // 抢占缓冲区操作
+    // 抢占缓冲区操作 - 使用关中断方式
     fn pushPreempted(self: *Schedule, co: *Co) bool {
-        const head = self.preempted_head.load(.monotonic);
+        // 在关中断状态下安全地操作缓冲区
+        const head = self.preempted_head.raw;
         const next_head = (head + 1) % self.preempted_buffer.len;
-        const tail = self.preempted_tail.load(.acquire);
+        const tail = self.preempted_tail.raw;
 
         if (next_head == tail) {
             return false; // 缓冲区满，降级处理
         }
 
+        // 再次检查协程状态，确保它仍然是运行状态
+        if (co.state != .RUNNING) {
+            return false; // 协程状态已改变，不进行抢占
+        }
+
         // 写入数据
         self.preempted_buffer[head] = co;
 
-        // 确保数据写入完成后再更新 head（release 语义）
-        self.preempted_head.store(next_head, .release);
+        // 更新 head
+        self.preempted_head.raw = next_head;
         return true;
     }
 
     fn popPreempted(self: *Schedule) ?*Co {
-        const tail = self.preempted_tail.load(.monotonic);
-        const head = self.preempted_head.load(.acquire); // 同步 push 的 release
+        // 在关中断状态下安全地操作缓冲区
+        const tail = self.preempted_tail.raw;
+        const head = self.preempted_head.raw;
 
         if (tail == head) {
             return null; // 缓冲区空
@@ -291,25 +339,60 @@ pub const Schedule = struct {
 
         const co = self.preempted_buffer[tail];
         const next_tail = (tail + 1) % self.preempted_buffer.len;
-        self.preempted_tail.store(next_tail, .release);
+        self.preempted_tail.raw = next_tail;
         return co;
     }
     fn sleepCo(self: *Schedule, co: *Co) !void {
+        // === 关键区开始：屏蔽信号 ===
+        var sigset: c.sigset_t = undefined;
+        var oldset: c.sigset_t = undefined;
+        _ = c.sigemptyset(&sigset);
+        _ = c.sigaddset(&sigset, c.SIGALRM);
+        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+
         try self.sleepQueue.add(co);
+
+        // === 关键区结束：恢复信号屏蔽 ===
+        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
     }
     pub fn ResumeCo(self: *Schedule, co: *Co) !void {
         std.log.debug("ResumeCo id:{d}", .{co.id});
 
+        // === 关键区开始：屏蔽信号 ===
+        var sigset: c.sigset_t = undefined;
+        var oldset: c.sigset_t = undefined;
+        _ = c.sigemptyset(&sigset);
+        _ = c.sigaddset(&sigset, c.SIGALRM);
+        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+
         // 检查就绪队列大小，防止内存爆炸
-        if (self.readyQueue.count() >= MAX_READY_COUNT) {
-            std.log.warn("Ready queue full, dropping coroutine {}", .{co.id});
+        const currentCount = self.readyQueue.count();
+        if (currentCount >= MAX_READY_COUNT) {
+            std.log.warn("Ready queue full ({}), dropping coroutine {}", .{ currentCount, co.id });
+            // 恢复信号屏蔽
+            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
             return;
         }
 
+        // 当队列接近满时发出警告
+        if (currentCount >= MAX_READY_COUNT * 0.8) {
+            std.log.warn("Ready queue nearly full: {}/{}", .{ currentCount, MAX_READY_COUNT });
+        }
+
         try self.readyQueue.add(co);
+
+        // === 关键区结束：恢复信号屏蔽 ===
+        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
     }
     pub fn freeCo(self: *Schedule, co: *Co) void {
         std.log.debug("Schedule freeCo coid:{}", .{co.id});
+
+        // === 关键区开始：屏蔽信号 ===
+        var sigset: c.sigset_t = undefined;
+        var oldset: c.sigset_t = undefined;
+        _ = c.sigemptyset(&sigset);
+        _ = c.sigaddset(&sigset, c.SIGALRM);
+        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
 
         // 优化：使用更高效的查找方式
         // 从睡眠队列中移除
@@ -342,43 +425,48 @@ pub const Schedule = struct {
             cozig.freeArgs(co);
             self.allocator.destroy(co);
         }
+
+        // === 关键区结束：恢复信号屏蔽 ===
+        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
     }
     fn startTimer(self: *Schedule) !void {
         if (self.timer_started) return;
 
         const timerid = self.timer_id orelse return error.NoTimer;
 
-        // 设置定时器（10ms）
+        // 设置定时器（10ms，平衡性能和公平性）
         var its: c.struct_itimerspec = undefined;
         its.it_value.tv_sec = 0;
-        its.it_value.tv_nsec = 10 * std.time.ns_per_ms;
+        its.it_value.tv_nsec = 10 * std.time.ns_per_ms; // 10ms
         its.it_interval.tv_sec = 0;
-        its.it_interval.tv_nsec = 10 * std.time.ns_per_ms;
+        its.it_interval.tv_nsec = 10 * std.time.ns_per_ms; // 10ms
 
         if (c.timer_settime(timerid, 0, &its, null) != 0) {
             return error.timer_settime;
         }
 
         self.timer_started = true;
-        std.log.debug("定时器已启动", .{});
+        std.log.debug("定时器已启动 (10ms)", .{});
     }
 
     pub fn stop(self: *Schedule) void {
         self.exit = true;
     }
-    
+
     pub fn printStats(self: *Schedule) void {
-        const preemptions = self.preemption_count.load(.monotonic);
-        const switches = self.total_switches.load(.monotonic);
-        
+        const preemptions = self.preemption_count.raw;
+        const switches = self.total_switches.raw;
+
         std.log.info("=== 调度器性能统计 ===", .{});
         std.log.info("总切换次数: {}", .{switches});
         std.log.info("抢占次数: {}", .{preemptions});
         if (switches > 0) {
             const preemption_rate = @as(f64, @floatFromInt(preemptions)) / @as(f64, @floatFromInt(switches)) * 100.0;
             std.log.info("抢占率: {d:.2}%", .{preemption_rate});
+        } else {
+            std.log.info("抢占率: 0.00% (无切换)", .{});
         }
-        
+
         if (self.start_time) |start| {
             const now = std.time.Instant.now() catch return;
             const elapsed = now.since(start);
@@ -397,10 +485,10 @@ pub const Schedule = struct {
             xLoop.stop();
             std.log.debug("schedule loop exited", .{});
         }
-        
+
         // 记录开始时间
         self.start_time = try std.time.Instant.now();
-        
+
         while (!self.exit) {
             try xLoop.run(.no_wait);
             self.checkNextCo() catch |e| {
@@ -410,9 +498,16 @@ pub const Schedule = struct {
     }
     // 批量处理配置
     const BATCH_SIZE = 32; // 每次处理32个协程
-    const MAX_READY_COUNT = 10000; // 最大就绪协程数
+    const MAX_READY_COUNT = 100000; // 最大就绪协程数，增加到10万
 
     inline fn checkNextCo(self: *Schedule) !void {
+        // === 关键区开始：屏蔽信号 ===
+        var sigset: c.sigset_t = undefined;
+        var oldset: c.sigset_t = undefined;
+        _ = c.sigemptyset(&sigset);
+        _ = c.sigaddset(&sigset, c.SIGALRM);
+        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+
         // 先处理被抢占的协程（acquire 屏障确保看到完整数据）
         while (self.popPreempted()) |co| {
             std.log.info("协程 {} 被抢占，重新加入就绪队列", .{co.id});
@@ -423,7 +518,8 @@ pub const Schedule = struct {
 
         // 在第一次调度协程后启动定时器
         // 此时 schedule.ctx 已经被 swapcontext 正确初始化
-        if (!self.timer_started and self.readyQueue.count() > 0) {
+        // 只有在有多个协程时才启动抢占，避免不必要的开销
+        if (!self.timer_started and self.readyQueue.count() > 1) {
             try self.startTimer();
         }
 
@@ -440,9 +536,19 @@ pub const Schedule = struct {
             for (0..processCount) |_| {
                 const nextCo = self.readyQueue.remove();
                 std.log.debug("coid:{d} will running readyQueue.count:{d}", .{ nextCo.id, self.readyQueue.count() });
+
+                // 恢复信号屏蔽，让 Resume 函数自己处理信号屏蔽
+                _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+
                 try cozig.Resume(nextCo);
+
+                // 重新屏蔽信号，继续处理下一个协程
+                _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
             }
         } else {
+            // 恢复信号屏蔽
+            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+
             if (self.xLoop) |*xLoop| {
                 // std.log.debug("Schedule no co",.{});
                 try xLoop.run(.once);
@@ -451,5 +557,8 @@ pub const Schedule = struct {
                 return;
             }
         }
+
+        // === 关键区结束：恢复信号屏蔽 ===
+        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
     }
 };

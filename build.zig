@@ -109,8 +109,8 @@ pub fn build(b: *std.Build) void {
 
     // 添加抢占演示程序
     const demo_exe = b.addExecutable(.{
-        .name = "demo_preemption",
-        .root_source_file = b.path("demo_visible_preemption.zig"),
+        .name = "example_preemption",
+        .root_source_file = b.path("example_preemption.zig"),
         .target = target,
         .optimize = optimize,
     });

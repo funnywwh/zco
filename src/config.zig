@@ -15,9 +15,9 @@ pub const DEFAULT_ZCO_STACK_SZIE = blk: {
         break :blk root.DEFAULT_ZCO_STACK_SZIE;
     } else {
         if (builtin.mode == .Debug) {
-            break :blk 1024 * 32;
+            break :blk 1024 * 64; // 增加到64KB
         } else {
-            break :blk 1024 * 8;
+            break :blk 1024 * 16; // 增加到16KB
         }
     }
 };
