@@ -256,10 +256,10 @@ pub fn testPreemption() !void {
             _ = try s.go(struct {
                 fn run(counter: *usize) !void {
                     std.log.info("协程1开始运行", .{});
-                    while (counter.* < 10000000) : (counter.* += 1) {
+                    while (counter.* < 1000000) : (counter.* += 1) {
                         // 简单的整数运算
                         _ = counter.* * 2;
-
+                        
                         // 每100000次输出一次进度
                         if (counter.* % 100000 == 0) {
                             std.log.info("协程1进度: {}", .{counter.*});
@@ -274,11 +274,11 @@ pub fn testPreemption() !void {
             _ = try s.go(struct {
                 fn run(counter: *usize) !void {
                     std.log.info("协程2开始运行", .{});
-                    while (counter.* < 10000000) : (counter.* += 1) {
+                    while (counter.* < 1000000) : (counter.* += 1) {
                         // 简化计算，避免浮点数操作
                         // _ = std.math.sqrt(@as(f64, @floatFromInt(counter.*)));
                         _ = counter.* * 2; // 简单的整数运算
-
+                        
                         // 每100000次输出一次进度
                         if (counter.* % 100000 == 0) {
                             std.log.info("协程2进度: {}", .{counter.*});
@@ -312,6 +312,9 @@ pub fn testPreemption() !void {
             std.log.info("测试完成！", .{});
             std.log.info("协程1最终计数: {}", .{counter1});
             std.log.info("协程2最终计数: {}", .{counter2});
+            
+            // 输出性能统计
+            s.printStats();
 
             s.stop();
         }

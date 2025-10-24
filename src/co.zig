@@ -43,6 +43,9 @@ pub fn Resume(self: *Co) !void {
             self.state = .RUNNING;
             schedule.runningCo = self;
 
+            // 增加切换计数
+            _ = schedule.total_switches.fetchAdd(1, .monotonic);
+
             const swap_result = c.swapcontext(&schedule.ctx, &self.ctx);
 
             // 恢复信号
@@ -63,6 +66,9 @@ pub fn Resume(self: *Co) !void {
 
             self.state = .RUNNING;
             schedule.runningCo = self;
+
+            // 增加切换计数
+            _ = schedule.total_switches.fetchAdd(1, .monotonic);
 
             const swap_result = c.swapcontext(&schedule.ctx, &self.ctx);
 

@@ -31,6 +31,11 @@ pub const Schedule = struct {
     timer_id: ?c.timer_t = null,
     timer_started: bool = false,
 
+    // 性能统计
+    preemption_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    total_switches: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    start_time: ?std.time.Instant = null,
+
     threadlocal var localSchedule: ?*Schedule = null;
 
     // 抢占信号处理器
@@ -45,7 +50,10 @@ pub const Schedule = struct {
         };
 
         std.log.debug("抢占信号处理器：抢占协程 {}", .{co.id});
-
+        
+        // 增加抢占计数
+        _ = schedule.preemption_count.fetchAdd(1, .monotonic);
+        
         const interrupted_ctx: *c.ucontext_t = @ptrCast(@alignCast(uctx_ptr.?));
 
         // 保存被中断的上下文
@@ -358,12 +366,41 @@ pub const Schedule = struct {
     pub fn stop(self: *Schedule) void {
         self.exit = true;
     }
+    
+    pub fn printStats(self: *Schedule) void {
+        const preemptions = self.preemption_count.load(.monotonic);
+        const switches = self.total_switches.load(.monotonic);
+        
+        std.log.info("=== 调度器性能统计 ===", .{});
+        std.log.info("总切换次数: {}", .{switches});
+        std.log.info("抢占次数: {}", .{preemptions});
+        if (switches > 0) {
+            const preemption_rate = @as(f64, @floatFromInt(preemptions)) / @as(f64, @floatFromInt(switches)) * 100.0;
+            std.log.info("抢占率: {d:.2}%", .{preemption_rate});
+        }
+        
+        if (self.start_time) |start| {
+            const now = std.time.Instant.now() catch return;
+            const elapsed = now.since(start);
+            const elapsed_ms = @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(std.time.ns_per_ms));
+            std.log.info("运行时间: {d:.2}ms", .{elapsed_ms});
+            if (elapsed_ms > 0) {
+                const switches_per_ms = @as(f64, @floatFromInt(switches)) / elapsed_ms;
+                std.log.info("切换频率: {d:.2} 次/ms", .{switches_per_ms});
+            }
+        }
+        std.log.info("===================", .{});
+    }
     pub fn loop(self: *Schedule) !void {
         const xLoop = &(self.xLoop orelse unreachable);
         defer {
             xLoop.stop();
             std.log.debug("schedule loop exited", .{});
         }
+        
+        // 记录开始时间
+        self.start_time = try std.time.Instant.now();
+        
         while (!self.exit) {
             try xLoop.run(.no_wait);
             self.checkNextCo() catch |e| {
