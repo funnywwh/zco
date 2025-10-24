@@ -47,7 +47,6 @@ pub const Tcp = struct {
             ) zco.xev.CallbackAction {
                 const _r = ud orelse unreachable;
                 _r.clientConn = r;
-                std.log.debug("tcp accept callback", .{});
                 _r.co.Resume() catch |e| {
                     std.log.err("nets tcp accept ResumeCo error:{s}", .{@errorName(e)});
                 };

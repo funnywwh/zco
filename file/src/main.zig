@@ -34,7 +34,6 @@ fn testFile() !void {
             _ = try testfile.write(data);
             var buf: [1024]u8 = undefined;
             const n = try testfile.pread(&buf, 0);
-            std.log.debug("File read:{s}", .{buf[0..n]});
             testfile.close();
             try std.fs.cwd().deleteFile(path);
 

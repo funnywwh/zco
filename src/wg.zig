@@ -26,7 +26,7 @@ pub const WaitGroup = struct {
         self.count -|= 1;
         if (self.count == 0) {
             _ = self.waitChn.recv() catch |e| {
-                std.log.debug("WaitGroup done send exit error:{any}", .{@errorName(e)});
+                std.log.err("wg recv error: {any}", .{e});
             };
         }
     }
@@ -36,8 +36,7 @@ pub const WaitGroup = struct {
             return;
         }
         _ = self.waitChn.send(true) catch |e| {
-            std.log.debug("WaitGroup done recv exit error:{any}", .{@errorName(e)});
-            return;
+            std.log.err("wg send error: {any}", .{e});
         };
     }
 };

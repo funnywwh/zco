@@ -63,25 +63,10 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("nets", nets);
     exe.root_module.addImport("io", io);
 
-    // 添加修复版本
-    const exe_fixed = b.addExecutable(.{
-        .name = "nets_fixed",
-        .root_source_file = b.path("src/main_fixed.zig"),
-        .target = target,
-        .optimize = optimize,
-        .single_threaded = single_thread,
-    });
-
-    exe_fixed.root_module.addOptions("opts", threads_option);
-    exe_fixed.root_module.addImport("zco", zco);
-    exe_fixed.root_module.addImport("nets", nets);
-    exe_fixed.root_module.addImport("io", io);
-
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
     b.installArtifact(exe);
-    b.installArtifact(exe_fixed);
 
     // This *creates* a Run step in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish

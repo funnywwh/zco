@@ -16,7 +16,6 @@ fn testIo() !void {
     defer zco.deinit();
 
     var schedule = try zco.newSchedule();
-    std.log.debug("main schedule inited", .{});
     defer {
         schedule.deinit();
     }
@@ -41,14 +40,12 @@ fn testIo() !void {
 
     _ = try schedule.go(struct {
         fn run(s: *zco.Schedule, _myio: *MyIo) !void {
-            std.log.debug("testIO schedule:{*} _myio:{*}", .{ s, _myio });
             _ = try s.go(struct {
                 fn run(_io: *MyIo) !void {
                     var buf: [100]u8 = undefined;
                     const out = try std.fmt.bufPrint(&buf, "hello", .{});
                     _ = try _io.write(out);
                     const npread = try _io.pread(&buf, 0);
-                    std.log.debug("testIo read:{s}", .{buf[0..npread]});
                     _io.schedule.stop();
                 }
             }.run, .{_myio});

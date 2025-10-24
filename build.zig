@@ -47,7 +47,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.linkLibC();
-    // exe.linkSystemLibrary("rt");
     exe.root_module.addImport("zco", zco);
 
     // This declares intent for the executable to be installed into the
@@ -106,23 +105,4 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
-
-    // 添加抢占演示程序
-    const demo_exe = b.addExecutable(.{
-        .name = "example_preemption",
-        .root_source_file = b.path("example_preemption.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    demo_exe.linkLibC();
-    demo_exe.root_module.addImport("zco", zco);
-    demo_exe.root_module.addImport("xev", xev);
-    b.installArtifact(demo_exe);
-
-    const demo_run_cmd = b.addRunArtifact(demo_exe);
-    demo_run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        demo_run_cmd.addArgs(args);
-    }
-    b.step("demo", "Run the preemption demo").dependOn(&demo_run_cmd.step);
 }

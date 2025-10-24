@@ -5,6 +5,19 @@
 
 ## 代码风格和约定
 
+### Zig 0.14.0 协程调度器与channel风格约定
+ 1. 主协程入口函数签名建议：`pub fn main() !void`
+ 2. 所有协程函数需带入 `*Schedule` 或相关上下文参数
+ 3. 协程创建统一使用 `try schedule.go(CoFn, .{args})`
+ 4. Channel 创建使用 `zco.CreateChan(T)`，需与具体调度器关联
+ 5. 异步 IO 对象需内含 `schedule: *zco.Schedule` 字段
+ 6. 全部资源分配必须手动回收 (建议用 defer)
+ 7. 错误处理加注释，推荐使用 Zig 原生 error 体系
+ 8. 公共 API 必须提供中文文档注释，复杂逻辑写英文行内注释
+ 9. 多并发协程和通道时，避免调用阻塞型API
+ 10. 调度器的 loop 必须在主协程结尾 `try schedule.loop();`
+
+
 ### Zig 代码规范
 - 使用 4 个空格缩进，不使用制表符
 - 函数名使用 camelCase，类型名使用 PascalCase

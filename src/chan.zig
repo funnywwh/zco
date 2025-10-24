@@ -104,7 +104,6 @@ pub const Chan = struct {
             //唤醒后要检测有没有可读数据
             //有可能已经被其它recver处理完了
             if (self.closed) {
-                std.log.debug("Chan recv closed", .{});
                 break;
             }
         }

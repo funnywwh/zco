@@ -19,7 +19,6 @@ pub fn freeArgs(self: *Co) void {
 pub fn Resume(self: *Co) !void {
     const schedule = self.schedule;
     std.debug.assert(schedule.runningCo == null);
-    std.log.debug("coid:{d} Resume state:{any}", .{ self.id, self.state });
     switch (self.state) {
         .INITED => {
             if (c.getcontext(&self.ctx) != 0) {
@@ -29,9 +28,7 @@ pub fn Resume(self: *Co) !void {
             self.ctx.uc_stack.ss_size = self.stack.len;
             self.ctx.uc_flags = 0;
             self.ctx.uc_link = &schedule.ctx;
-            std.log.debug("coid:{d} Resume makecontext", .{self.id});
             c.makecontext(&self.ctx, @ptrCast(&Co.contextEntry), 1, self);
-            std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
 
             // === 关键区开始：屏蔽信号 ===
             var sigset: c.sigset_t = undefined;
@@ -46,6 +43,13 @@ pub fn Resume(self: *Co) !void {
 
             // 增加切换计数（在关中断状态下安全）
             schedule.total_switches.raw += 1;
+
+            // 启动定时器（在协程开始运行前）
+            if (!schedule.timer_started) {
+                schedule.startTimer() catch |e| {
+                    std.log.err("启动定时器失败: {s}", .{@errorName(e)});
+                };
+            }
 
             // swapcontext 不会返回，所以不需要恢复信号屏蔽
             // 信号屏蔽会在协程被抢占时由信号处理器处理
@@ -55,7 +59,6 @@ pub fn Resume(self: *Co) !void {
             if (swap_result != 0) return error.swapcontext;
         },
         .SUSPEND, .READY => {
-            std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
 
             // === 关键区开始：屏蔽信号 ===
             var sigset: c.sigset_t = undefined;
@@ -70,6 +73,13 @@ pub fn Resume(self: *Co) !void {
 
             // 增加切换计数（在关中断状态下安全）
             schedule.total_switches.raw += 1;
+
+            // 启动定时器（在协程开始运行前）
+            if (!schedule.timer_started) {
+                schedule.startTimer() catch |e| {
+                    std.log.err("启动定时器失败: {s}", .{@errorName(e)});
+                };
+            }
 
             // swapcontext 不会返回，所以不需要恢复信号屏蔽
             // 信号屏蔽会在协程被抢占时由信号处理器处理
@@ -117,7 +127,6 @@ pub const Co = struct {
                 return error.RunningCo;
             }
             if (self.schedule.exit) {
-                std.log.debug("Co Suspend schedule.exit", .{});
                 return error.ScheduleExited;
             }
 
@@ -141,7 +150,6 @@ pub const Co = struct {
             if (swap_result != 0) return error.swapcontext;
 
             if (self.schedule.exit) {
-                std.log.debug("Co Suspend schedule.exit", .{});
                 return error.ScheduleExited;
             }
             return;
@@ -158,7 +166,6 @@ pub const Co = struct {
 
     pub fn Sleep(self: *Self, ns: usize) !void {
         const ms = ns / std.time.ns_per_ms;
-        std.log.debug("Co Sleep ms:{d}", .{ms});
         const w = try xev.Timer.init();
         defer w.deinit();
         const _co = try self.schedule.getCurrentCo();
@@ -195,8 +202,6 @@ pub const Co = struct {
     }
     fn contextEntry(self: *Self) callconv(.C) void {
         const args = self.args orelse unreachable;
-        std.log.debug("Co contextEntry coid:{d} schedule{*}", .{ self.id, self.schedule });
-        defer std.log.debug("Co contextEntry coid:{d} exited", .{self.id});
         const schedule = self.schedule;
 
         self.func(args) catch {

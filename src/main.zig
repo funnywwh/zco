@@ -44,8 +44,7 @@ pub fn testDataChan() !void {
             }
             _ = try s.go(struct {
                 fn run(ch: *Chan) !void {
-                    const v = try ch.recv();
-                    std.log.debug("recved:{any}", .{v});
+                    _ = try ch.recv();
                 }
             }.run, .{exitCh});
             try exitCh.send(.{
@@ -66,7 +65,6 @@ pub fn coNest() !void {
             _ = try _s.go(struct {
                 fn run(__s: *zco.Schedule) !void {
                     const __co = __s.runningCo orelse unreachable; // autofix
-                    std.log.debug("coNest co2 will Suspend", .{});
                     try __co.Sleep(2 * std.time.ns_per_s);
                     __s.stop();
                 }
@@ -96,7 +94,6 @@ pub fn ctxSwithBench() !void {
     }.run, .{});
 }
 pub fn coRun(baseIdx: u32) !void {
-    defer std.log.debug("coRun exited", .{});
     try zco.loop(struct {
         fn run(_baseIdx: u32) !void {
             const s = try zco.getSchedule();
@@ -108,7 +105,6 @@ pub fn coRun(baseIdx: u32) !void {
                         var maxSleep: usize = 0;
                         const _co = try (try zco.getSchedule()).getCurrentCo();
                         while (true) {
-                            std.log.debug("co{d} running v:{d}", .{ _co.id, v });
                             const start = try std.time.Instant.now();
                             try _co.Sleep(10 * std.time.ns_per_ms);
                             const end = try std.time.Instant.now();
@@ -166,14 +162,12 @@ pub fn testChan(baseIdx: u32) !void {
                         std.log.err("send1 exit", .{});
                     }
                     while (true) {
-                        std.log.debug("send1 sending", .{});
                         // try c.Sleep(10);
                         v +%= 1;
                         try _ch.send(v);
                         if (v == 1) {
                             break;
                         }
-                        std.log.debug("send1 sent", .{});
                     }
                     _ch.close();
                     _ = try _exitCh.recv();
@@ -183,20 +177,15 @@ pub fn testChan(baseIdx: u32) !void {
             _ = try schedule.go(struct {
                 fn run(_ch: *SendChan, _exitCh: *Chan) !void {
                     var v: usize = 100;
-                    defer {
-                        std.log.debug("send2 exit", .{});
-                    }
+                    defer {}
                     while (true) {
-                        std.log.debug("send2 sending", .{});
                         // try c.Sleep(10);
                         v +%= 1;
                         _ch.send(v) catch |e| {
-                            std.log.debug("send2 send error:{s}", .{@errorName(e)});
+                            std.log.err("send error: {any}", .{e});
                             break;
                         };
-                        std.log.debug("send2 sent v:{d}", .{v});
                     }
-                    std.log.debug("send2 exitch recving", .{});
                     _ = try _exitCh.recv();
                 }
             }.run, .{ chn1, exitCh2 });
@@ -206,14 +195,11 @@ pub fn testChan(baseIdx: u32) !void {
                         std.log.err("recv1 recv exit", .{});
                     }
                     while (true) {
-                        std.log.debug("recv1 recving", .{});
-                        const d: usize = _ch.recv() catch |e| {
+                        _ = _ch.recv() catch |e| {
                             std.log.err("recv1 recv exit error:{s}", .{@errorName(e)});
                             break;
                         };
-                        std.log.debug("recv1 recv:{d}", .{d});
                     }
-                    std.log.debug("recv1 exitch recving", .{});
                     _ = try _exitCh.recv();
                 }
             }.run, .{ chn1, exitCh3 });
@@ -223,25 +209,18 @@ pub fn testChan(baseIdx: u32) !void {
                         std.log.err("recv2 recv exit", .{});
                     }
                     while (true) {
-                        std.log.debug("recv2 recving", .{});
-                        const d: usize = _ch.recv() catch |e| {
+                        _ = _ch.recv() catch |e| {
                             std.log.err("recv2 recv exit error:{s}", .{@errorName(e)});
                             break;
                         };
-                        std.log.debug("recv2 recv:{d}", .{d});
                     }
                     _ = try _exitCh.recv();
                 }
             }.run, .{ chn1, exitCh4 });
-            std.log.debug("exitch1 send", .{});
             try exitCh1.send(true);
-            std.log.debug("exitch2 send", .{});
             try exitCh2.send(true);
-            std.log.debug("exitch3 send", .{});
             try exitCh3.send(true);
-            std.log.debug("exitch4 send", .{});
             try exitCh4.send(true);
-            std.log.debug("all co exited", .{});
         }
     }.run, .{baseIdx});
 }
@@ -256,12 +235,12 @@ pub fn testPreemption() !void {
             _ = try s.go(struct {
                 fn run(counter: *usize) !void {
                     std.log.info("协程1开始运行", .{});
-                    while (counter.* < 1000000) : (counter.* += 1) {
+                    while (counter.* < 100000000) : (counter.* += 1) {
                         // 简单的整数运算
                         _ = counter.* * 2;
-                        
-                        // 每100000次输出一次进度
-                        if (counter.* % 100000 == 0) {
+
+                        // 每1000000次输出一次进度
+                        if (counter.* % 1000000 == 0) {
                             std.log.info("协程1进度: {}", .{counter.*});
                         }
                     }
@@ -274,13 +253,13 @@ pub fn testPreemption() !void {
             _ = try s.go(struct {
                 fn run(counter: *usize) !void {
                     std.log.info("协程2开始运行", .{});
-                    while (counter.* < 1000000) : (counter.* += 1) {
+                    while (counter.* < 100000000) : (counter.* += 1) {
                         // 简化计算，避免浮点数操作
                         // _ = std.math.sqrt(@as(f64, @floatFromInt(counter.*)));
                         _ = counter.* * 2; // 简单的整数运算
-                        
-                        // 每100000次输出一次进度
-                        if (counter.* % 100000 == 0) {
+
+                        // 每1000000次输出一次进度
+                        if (counter.* % 1000000 == 0) {
                             std.log.info("协程2进度: {}", .{counter.*});
                         }
                     }
@@ -312,7 +291,7 @@ pub fn testPreemption() !void {
             std.log.info("测试完成！", .{});
             std.log.info("协程1最终计数: {}", .{counter1});
             std.log.info("协程2最终计数: {}", .{counter2});
-            
+
             // 输出性能统计
             s.printStats();
 

@@ -31,7 +31,6 @@ pub fn CreateIo(IOType: type) type {
                     ) zco.xev.CallbackAction {
                         _ = r catch unreachable;
                         const _result = ud orelse unreachable;
-                        std.log.debug("io {s} closed", .{SelfName});
                         _result.co.Resume() catch |e| {
                             std.log.err("io {s} close ResumeCo error:{s}", .{ SelfName, @errorName(e) });
                         };

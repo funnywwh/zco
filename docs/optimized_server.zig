@@ -51,7 +51,6 @@ fn runOptimizedServer(schedule: *zco.Schedule) !void {
     
     while (true) {
         const client = server.accept() catch |e| {
-            std.log.debug("Server accept error: {}", .{e});
             break;
         };
         
@@ -81,7 +80,6 @@ fn runOptimizedServer(schedule: *zco.Schedule) !void {
                 while (keepAlive) {
                     // 读取请求
                     const n = _client.read(buffer[0..]) catch |e| {
-                        std.log.debug("Client read error: {}", .{e});
                         break;
                     };
                     

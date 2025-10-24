@@ -90,7 +90,7 @@ fn httpHelloworld() !void {
             while (true) {
                 const _s = server.schedule;
                 var client = server.accept() catch |e| {
-                    std.log.debug("server accept error:{any}", .{e});
+                    std.log.err("server accept error: {any}", .{e});
                     break;
                 };
                 errdefer {
@@ -108,13 +108,11 @@ fn httpHelloworld() !void {
                 }
 
                 _ = connectionCount.fetchAdd(1, .monotonic);
-                std.log.debug("accept a client, total connections: {}", .{currentConnections + 1});
 
                 _ = try _s.go(struct {
                     fn run(_client: *nets.Tcp) !void {
                         defer {
                             _ = connectionCount.fetchSub(1, .monotonic);
-                            std.log.debug("client loop exited", .{});
                         }
 
                         defer {
