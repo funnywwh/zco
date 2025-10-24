@@ -1,7 +1,7 @@
 const std = @import("std");
 const zco = @import("zco");
 
-pub const ZCO_STACK_SIZE = 1024 * 8;  // 减少栈大小，从32KB降到8KB，提高内存效率
+pub const ZCO_STACK_SIZE = 1024 * 8; // 减少栈大小，从32KB降到8KB，提高内存效率
 
 // pub const std_options = .{
 //     .log_level = .err,
@@ -20,8 +20,11 @@ pub fn main() !void {
     // const t4 = try std.Thread.spawn(.{}, coNest, .{});
     // t4.join();
 
-    const t5 = try std.Thread.spawn(.{}, testDataChan, .{});
-    t5.join();
+    // const t5 = try std.Thread.spawn(.{}, testDataChan, .{});
+    // t5.join();
+
+    const t6 = try std.Thread.spawn(.{}, testPreemption, .{});
+    t6.join();
 }
 
 pub fn testDataChan() !void {
@@ -241,6 +244,78 @@ pub fn testChan(baseIdx: u32) !void {
             std.log.debug("all co exited", .{});
         }
     }.run, .{baseIdx});
+}
+
+pub fn testPreemption() !void {
+    _ = try zco.loop(struct {
+        fn run() !void {
+            const s = try zco.getSchedule();
+
+            // 协程1：长时间运行的计算，不主动让出CPU
+            var counter1: usize = 0;
+            _ = try s.go(struct {
+                fn run(counter: *usize) !void {
+                    std.log.info("协程1开始运行", .{});
+                    while (counter.* < 10000000) : (counter.* += 1) {
+                        // 简单的整数运算
+                        _ = counter.* * 2;
+
+                        // 每100000次输出一次进度
+                        if (counter.* % 100000 == 0) {
+                            std.log.info("协程1进度: {}", .{counter.*});
+                        }
+                    }
+                    std.log.info("协程1完成，计数: {}", .{counter.*});
+                }
+            }.run, .{&counter1});
+
+            // 协程2：另一个长时间运行的计算，不主动让出CPU
+            var counter2: usize = 0;
+            _ = try s.go(struct {
+                fn run(counter: *usize) !void {
+                    std.log.info("协程2开始运行", .{});
+                    while (counter.* < 10000000) : (counter.* += 1) {
+                        // 简化计算，避免浮点数操作
+                        // _ = std.math.sqrt(@as(f64, @floatFromInt(counter.*)));
+                        _ = counter.* * 2; // 简单的整数运算
+
+                        // 每100000次输出一次进度
+                        if (counter.* % 100000 == 0) {
+                            std.log.info("协程2进度: {}", .{counter.*});
+                        }
+                    }
+                    std.log.info("协程2完成，计数: {}", .{counter.*});
+                }
+            }.run, .{&counter2});
+
+            // 暂时禁用协程3，只测试协程1和协程2的抢占
+            // _ = try s.go(struct {
+            //     fn run() !void {
+            //         const schedule = try zco.getSchedule();
+            //         const co = try schedule.getCurrentCo();
+            //         var i: usize = 0;
+            //         while (i < 20) : (i += 1) {
+            //             try co.Sleep(100 * std.time.ns_per_ms); // 睡眠100ms
+            //             std.log.info("状态检查协程运行中... {} (观察抢占效果)", .{i});
+            //         }
+            //         std.log.info("状态检查协程完成", .{});
+            //     }
+            // }.run, .{});
+
+            std.log.info("开始运行调度器，测试时间片抢占...", .{});
+            std.log.info("如果时间片抢占正常工作，应该看到协程1和协程2交替输出进度", .{});
+
+            // 等待所有协程完成
+            const mainCo = try s.getCurrentCo();
+            try mainCo.Sleep(10 * std.time.ns_per_s);
+
+            std.log.info("测试完成！", .{});
+            std.log.info("协程1最终计数: {}", .{counter1});
+            std.log.info("协程2最终计数: {}", .{counter2});
+
+            s.stop();
+        }
+    }.run, .{});
 }
 
 test "simple test" {}

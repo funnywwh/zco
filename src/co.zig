@@ -32,41 +32,51 @@ pub fn Resume(self: *Co) !void {
             std.log.debug("coid:{d} Resume makecontext", .{self.id});
             c.makecontext(&self.ctx, @ptrCast(&Co.contextEntry), 1, self);
             std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
+
+            // === 关键区开始：屏蔽信号 ===
+            var sigset: c.sigset_t = undefined;
+            var oldset: c.sigset_t = undefined;
+            _ = c.sigemptyset(&sigset);
+            _ = c.sigaddset(&sigset, c.SIGALRM);
+            _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+
             self.state = .RUNNING;
             schedule.runningCo = self;
-            if (c.swapcontext(&schedule.ctx, &self.ctx) != 0) {
-                return error.swapcontext;
-            }
+
+            const swap_result = c.swapcontext(&schedule.ctx, &self.ctx);
+
+            // 恢复信号
+            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            // === 关键区结束 ===
+
+            if (swap_result != 0) return error.swapcontext;
         },
         .SUSPEND, .READY => {
             std.log.debug("coid:{d} Resume swapcontext state:{any}", .{ self.id, self.state });
+
+            // === 关键区开始：屏蔽信号 ===
+            var sigset: c.sigset_t = undefined;
+            var oldset: c.sigset_t = undefined;
+            _ = c.sigemptyset(&sigset);
+            _ = c.sigaddset(&sigset, c.SIGALRM);
+            _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+
             self.state = .RUNNING;
             schedule.runningCo = self;
-            if (c.swapcontext(&schedule.ctx, &self.ctx) != 0) {
-                return error.swapcontext;
-            }
+
+            const swap_result = c.swapcontext(&schedule.ctx, &self.ctx);
+
+            // 恢复信号
+            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            // === 关键区结束 ===
+
+            if (swap_result != 0) return error.swapcontext;
         },
         else => {},
     }
     if (self.state == .STOP) {
         schedule.freeCo(self);
     }
-}
-
-pub fn SuspendInSigHandler(self: *Co) !void {
-    const schedule = self.schedule;
-    if (schedule.runningCo) |co| {
-        if (co != self) {
-            return error.runningCoNotSelf;
-        }
-        co.state = .SUSPEND;
-        self.schedule.runningCo = null;
-        if (c.setcontext(&schedule.ctx) != 0) {
-            return error.swapcontext;
-        }
-        return;
-    }
-    return error.runningCoNull;
 }
 
 pub const Co = struct {
@@ -104,11 +114,25 @@ pub const Co = struct {
                 std.log.debug("Co Suspend schedule.exit", .{});
                 return error.ScheduleExited;
             }
+
+            // === 关键区开始：屏蔽信号 ===
+            var sigset: c.sigset_t = undefined;
+            var oldset: c.sigset_t = undefined;
+            _ = c.sigemptyset(&sigset);
+            _ = c.sigaddset(&sigset, c.SIGALRM);
+            _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+
             co.state = .SUSPEND;
             self.schedule.runningCo = null;
-            if (c.swapcontext(&co.ctx, &schedule.ctx) != 0) {
-                return error.swapcontext;
-            }
+
+            const swap_result = c.swapcontext(&co.ctx, &schedule.ctx);
+
+            // 恢复信号
+            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            // === 关键区结束 ===
+
+            if (swap_result != 0) return error.swapcontext;
+
             if (self.schedule.exit) {
                 std.log.debug("Co Suspend schedule.exit", .{});
                 return error.ScheduleExited;

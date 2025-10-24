@@ -1,18 +1,15 @@
 const std = @import("std");
-const switch_timer = @import("./switch_timer.zig");
 const schedule = @import("./schedule.zig");
 const co = @import("./co.zig");
 const chan = @import("./chan.zig");
 const wg = @import("./wg.zig");
 const xev_module = @import("xev");
-pub usingnamespace switch_timer;
 pub usingnamespace schedule;
 pub usingnamespace co;
 pub usingnamespace chan;
 pub usingnamespace wg;
 pub const xev = xev_module;
 
-const SwitchTimer = switch_timer.SwitchTimer;
 const Schedule = schedule.Schedule;
 
 var mainSchedule: ?*Schedule = null;
@@ -20,15 +17,11 @@ var allocator: ?std.mem.Allocator = null;
 
 const Self = @This();
 pub fn init(_allocator: std.mem.Allocator) !void {
-    try SwitchTimer.init(_allocator);
-    errdefer SwitchTimer.deinit(_allocator);
     allocator = _allocator;
 }
 
 pub fn deinit() void {
-    if (allocator) |_allocator| {
-        SwitchTimer.deinit(_allocator);
-    }
+    // 时间片抢占功能已集成到 Schedule 中，无需额外清理
 }
 
 pub fn newSchedule() !*Schedule {
