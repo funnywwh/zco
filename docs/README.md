@@ -9,6 +9,9 @@
 - **[PERFORMANCE_OPTIMIZATION_GUIDE.md](./PERFORMANCE_OPTIMIZATION_GUIDE.md)** - 性能优化指南
 - **[OPTIMIZATION_SUMMARY.md](./OPTIMIZATION_SUMMARY.md)** - 优化总结
 
+### 技术分析
+- **[analysis/TIMESLICE_PREEMPTION_DESIGN.md](./analysis/TIMESLICE_PREEMPTION_DESIGN.md)** - 协程时间片抢占调度设计文档
+
 ### 测试脚本
 - **[test_performance.sh](./test_performance.sh)** - ZCO性能测试脚本
 - **[compare_test.sh](./compare_test.sh)** - ZCO vs Go对比测试脚本
