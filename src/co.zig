@@ -44,12 +44,10 @@ pub fn Resume(self: *Co) !void {
             // 增加切换计数（在关中断状态下安全）
             schedule.total_switches.raw += 1;
 
-            // 启动定时器（在协程开始运行前）
-            if (!schedule.timer_started) {
-                schedule.startTimer() catch |e| {
-                    std.log.err("启动定时器失败: {s}", .{@errorName(e)});
-                };
-            }
+            // 启动定时器（在协程开始运行前，重置计时）
+            schedule.startTimer() catch |e| {
+                std.log.err("启动定时器失败: {s}", .{@errorName(e)});
+            };
 
             // swapcontext 不会返回，所以不需要恢复信号屏蔽
             // 信号屏蔽会在协程被抢占时由信号处理器处理
@@ -74,12 +72,10 @@ pub fn Resume(self: *Co) !void {
             // 增加切换计数（在关中断状态下安全）
             schedule.total_switches.raw += 1;
 
-            // 启动定时器（在协程开始运行前）
-            if (!schedule.timer_started) {
-                schedule.startTimer() catch |e| {
-                    std.log.err("启动定时器失败: {s}", .{@errorName(e)});
-                };
-            }
+            // 启动定时器（在协程开始运行前，重置计时）
+            schedule.startTimer() catch |e| {
+                std.log.err("启动定时器失败: {s}", .{@errorName(e)});
+            };
 
             // swapcontext 不会返回，所以不需要恢复信号屏蔽
             // 信号屏蔽会在协程被抢占时由信号处理器处理
@@ -139,6 +135,8 @@ pub const Co = struct {
 
             // 在关中断状态下安全地设置协程状态和runningCo
             co.state = .SUSPEND;
+            // 停止定时器（协程挂起时）
+            self.schedule.stopTimer();
             self.schedule.runningCo = null;
 
             const swap_result = c.swapcontext(&co.ctx, &schedule.ctx);
@@ -216,6 +214,7 @@ pub const Co = struct {
         _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
 
         // 在关中断状态下安全地设置协程状态和runningCo
+        // 协程结束时，定时器由调度器管理，不需要在这里停止
         schedule.runningCo = null;
         self.state = .STOP;
 

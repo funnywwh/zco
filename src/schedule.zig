@@ -24,7 +24,6 @@ pub const Schedule = struct {
 
     // 定时器
     timer_id: ?c.timer_t = null,
-    timer_started: bool = false,
 
     // 性能统计
     preemption_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
@@ -405,11 +404,10 @@ pub const Schedule = struct {
         _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
     }
     pub fn startTimer(self: *Schedule) !void {
-        if (self.timer_started) return;
-
         const timerid = self.timer_id orelse return error.NoTimer;
 
         // 设置定时器（10ms，平衡性能和公平性）
+        // 每次都重置定时器，确保协程获得完整时间片
         var its: c.struct_itimerspec = undefined;
         its.it_value.tv_sec = 0;
         its.it_value.tv_nsec = 10 * std.time.ns_per_ms; // 10ms
@@ -419,9 +417,19 @@ pub const Schedule = struct {
         if (c.timer_settime(timerid, 0, &its, null) != 0) {
             return error.timer_settime;
         }
+    }
 
-        self.timer_started = true;
-        std.log.info("定时器已启动 (10ms)", .{});
+    pub fn stopTimer(self: *Schedule) void {
+        const timerid = self.timer_id orelse return;
+
+        // 停止定时器：将 it_value 和 it_interval 都设置为0
+        var its: c.struct_itimerspec = undefined;
+        its.it_value.tv_sec = 0;
+        its.it_value.tv_nsec = 0;
+        its.it_interval.tv_sec = 0;
+        its.it_interval.tv_nsec = 0;
+
+        _ = c.timer_settime(timerid, 0, &its, null);
     }
 
     pub fn stop(self: *Schedule) void {
@@ -482,13 +490,8 @@ pub const Schedule = struct {
         _ = c.sigaddset(&sigset, c.SIGALRM);
         _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
 
-        // 在第一次调度协程后启动定时器
-        // 此时 schedule.ctx 已经被 swapcontext 正确初始化
-        // 只要有协程在运行就启动抢占
-        if (!self.timer_started and self.readyQueue.count() > 0) {
-            // 延迟启动定时器，确保协程已经开始运行
-            // 在协程 Resume 后再启动定时器
-        }
+        // 定时器现在完全由协程 Resume/Suspend 控制
+        // 不再需要在这里管理定时器状态
 
         const count = self.readyQueue.count();
         if (builtin.mode == .Debug) {
