@@ -43,6 +43,9 @@ pub fn Resume(self: *Co) !void {
 
             // 增加切换计数（在关中断状态下安全）
             schedule.total_switches.raw += 1;
+            // 恢复信号
+            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            // === 关键区结束 ===
 
             // 启动定时器（在协程开始运行前，重置计时）
             schedule.startTimer() catch |e| {
@@ -71,6 +74,9 @@ pub fn Resume(self: *Co) !void {
 
             // 增加切换计数（在关中断状态下安全）
             schedule.total_switches.raw += 1;
+            // 恢复信号
+            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            // === 关键区结束 ===
 
             // 启动定时器（在协程开始运行前，重置计时）
             schedule.startTimer() catch |e| {
@@ -138,12 +144,11 @@ pub const Co = struct {
             // 停止定时器（协程挂起时）
             self.schedule.stopTimer();
             self.schedule.runningCo = null;
-
-            const swap_result = c.swapcontext(&co.ctx, &schedule.ctx);
-
             // 恢复信号
             _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
             // === 关键区结束 ===
+
+            const swap_result = c.swapcontext(&co.ctx, &schedule.ctx);
 
             if (swap_result != 0) return error.swapcontext;
 

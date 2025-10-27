@@ -23,8 +23,9 @@ pub fn main() !void {
     // const t5 = try std.Thread.spawn(.{}, testDataChan, .{});
     // t5.join();
 
-    const t6 = try std.Thread.spawn(.{}, testTimerLifecycle, .{});
-    t6.join();
+    // const t6 = try std.Thread.spawn(.{}, testTimerLifecycle, .{});
+    // t6.join();
+    try testPreemption();
 }
 
 pub fn testDataChan() !void {
@@ -268,18 +269,18 @@ pub fn testPreemption() !void {
             }.run, .{&counter2});
 
             // 暂时禁用协程3，只测试协程1和协程2的抢占
-            // _ = try s.go(struct {
-            //     fn run() !void {
-            //         const schedule = try zco.getSchedule();
-            //         const co = try schedule.getCurrentCo();
-            //         var i: usize = 0;
-            //         while (i < 20) : (i += 1) {
-            //             try co.Sleep(100 * std.time.ns_per_ms); // 睡眠100ms
-            //             std.log.info("状态检查协程运行中... {} (观察抢占效果)", .{i});
-            //         }
-            //         std.log.info("状态检查协程完成", .{});
-            //     }
-            // }.run, .{});
+            _ = try s.go(struct {
+                fn run() !void {
+                    const schedule = try zco.getSchedule();
+                    const co = try schedule.getCurrentCo();
+                    var i: usize = 0;
+                    while (i < 20) : (i += 1) {
+                        try co.Sleep(100 * std.time.ns_per_ms); // 睡眠100ms
+                        std.log.info("状态检查协程运行中... {} (观察抢占效果)", .{i});
+                    }
+                    std.log.info("状态检查协程完成", .{});
+                }
+            }.run, .{});
 
             std.log.info("开始运行调度器，测试时间片抢占...", .{});
             std.log.info("如果时间片抢占正常工作，应该看到协程1和协程2交替输出进度", .{});
@@ -341,29 +342,31 @@ pub fn testTimerLifecycle() !void {
                 }
             }.run, .{&counter2});
 
-            // 协程3：短时间运行，用于观察调度效果
-            _ = try s.go(struct {
-                fn run() !void {
-                    const schedule = try zco.getSchedule();
-                    const co = try schedule.getCurrentCo();
-                    std.log.info("协程3开始运行（短时间，会主动让出CPU）", .{});
+            // // 协程3：短时间运行，用于观察调度效果
+            // _ = try s.go(struct {
+            //     fn run() !void {
+            //         const schedule = try zco.getSchedule();
+            //         const co = try schedule.getCurrentCo();
+            //         std.log.info("协程3开始运行（短时间，会主动让出CPU）", .{});
 
-                    for (0..10) |i| {
-                        std.log.info("协程3: 步骤 {}", .{i});
-                        try co.Suspend(); // 主动挂起
-                        try co.Sleep(50 * std.time.ns_per_ms); // 睡眠50ms
-                    }
+            //         for (0..10) |i| {
+            //             std.log.info("协程3: 步骤 {}", .{i});
+            //             try co.Suspend(); // 主动挂起
+            //             try co.Sleep(50 * std.time.ns_per_ms); // 睡眠50ms
+            //         }
 
-                    std.log.info("协程3完成", .{});
-                }
-            }.run, .{});
+            //         std.log.info("协程3完成", .{});
+            //     }
+            // }.run, .{});
 
             std.log.info("开始运行调度器，测试时间片抢占...", .{});
             std.log.info("如果时间片抢占正常工作，应该看到协程1和协程2交替输出进度", .{});
 
             // 主协程等待一段时间
-            const mainCo = try s.getCurrentCo();
-            try mainCo.Sleep(5 * std.time.ns_per_s);
+            // const mainCo = try s.getCurrentCo();
+            // try mainCo.Sleep(5 * std.time.ns_per_s);
+
+            std.time.sleep(10 * std.time.ns_per_s);
 
             std.log.info("测试完成！", .{});
             std.log.info("协程1最终计数: {}", .{counter1});

@@ -47,59 +47,20 @@ pub const Schedule = struct {
 
     // 抢占信号处理器 - 使用关中断方式，彻底解决竞态条件
     fn preemptSigHandler(_: c_int, _: [*c]c.siginfo_t, uctx_ptr: ?*anyopaque) callconv(.C) void {
+        _ = uctx_ptr;
         const schedule = localSchedule orelse return;
-
-        // 立即屏蔽SIGALRM信号，防止嵌套调用
-        var sigset: c.sigset_t = undefined;
-        var oldset: c.sigset_t = undefined;
-        _ = c.sigemptyset(&sigset);
-        _ = c.sigaddset(&sigset, c.SIGALRM);
-        _ = c.sigprocmask(c.SIG_BLOCK, &sigset, &oldset);
 
         // 在关中断状态下安全地获取runningCo
         const co = schedule.runningCo orelse {
-            _ = c.sigprocmask(c.SIG_SETMASK, &oldset, null);
+            // _ = c.sigprocmask(c.SIG_SETMASK, &oldset, null);
             return;
         };
 
         // 增加抢占计数（在关中断状态下安全）
         schedule.preemption_count.raw += 1;
 
-        // 检查协程状态，确保它是正在运行的
-        if (co.state != .RUNNING) {
-            _ = c.sigprocmask(c.SIG_SETMASK, &oldset, null);
-            return;
-        }
-
-        const interrupted_ctx: *c.ucontext_t = @ptrCast(@alignCast(uctx_ptr.?));
-
-        // 完整保存被中断的上下文到协程
-        co.ctx = interrupted_ctx.*;
-
-        // 为signalHandler配置新的栈
-        const new_rip = @intFromPtr(&signalHandler);
-
-        // 使用协程的栈作为signalHandler的栈，确保16字节对齐
-        const stack_top = co.stack[co.stack.len - 1 ..].ptr;
-        const aligned_stack = @as(*u8, @ptrFromInt(@intFromPtr(stack_top) & ~@as(usize, 15)));
-
-        // 设置正确的调用栈
-        // 1. 将返回地址压入栈中（这里我们设置一个假的返回地址，因为signalHandler不会返回）
-        const fake_return_addr = @intFromPtr(&signalHandler) + 1000; // 假的返回地址
-
-        // 2. 为返回地址预留空间，并确保16字节对齐
-        const stack_ptr = @as(*u8, @ptrFromInt(@intFromPtr(aligned_stack) - 16)); // 预留16字节空间
-        const return_addr_ptr = @as(*usize, @ptrFromInt(@intFromPtr(stack_ptr) + 8)); // 在栈顶+8的位置放置返回地址
-        return_addr_ptr.* = fake_return_addr;
-
-        // 3. 设置栈指针和指令指针
-        const rsp_ptr = @as(*u8, @ptrFromInt(@intFromPtr(stack_ptr) + 8)); // RSP指向返回地址
-        interrupted_ctx.uc_mcontext.gregs[c.REG_RSP] = @intCast(@intFromPtr(rsp_ptr));
-        interrupted_ctx.uc_mcontext.gregs[c.REG_RIP] = @intCast(new_rip);
-
-        // 恢复信号屏蔽并返回
-        // 内核恢复执行时会跳转到 signalHandler
-        _ = c.sigprocmask(c.SIG_SETMASK, &oldset, null);
+        co.Resume() catch return;
+        co.Suspend() catch return;
     }
 
     const CoMap = std.AutoArrayHashMap(usize, *Co);
