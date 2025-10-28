@@ -9,6 +9,103 @@ const cfg = @import("./config.zig");
 
 const DEFAULT_ZCO_STACK_SZIE = cfg.DEFAULT_ZCO_STACK_SZIE;
 
+// 协程池配置
+const CO_POOL_SIZE = 500; // 协程池大小
+
+// 内存池配置
+const MEMORY_POOL_SIZE = 1000; // 内存池大小
+const MEMORY_POOL_BLOCK_SIZE = 1024; // 内存块大小
+
+// 协程池结构
+const CoPool = struct {
+    co_list: [CO_POOL_SIZE]*Co,
+    free_co_list: std.ArrayList(usize),
+    allocator: std.mem.Allocator,
+    
+    pub fn init(allocator: std.mem.Allocator) !CoPool {
+        var pool = CoPool{
+            .co_list = undefined,
+            .free_co_list = std.ArrayList(usize).init(allocator),
+            .allocator = allocator,
+        };
+        
+        // 预分配协程
+        for (0..CO_POOL_SIZE) |i| {
+            pool.co_list[i] = try allocator.create(Co);
+            try pool.free_co_list.append(i);
+        }
+        
+        return pool;
+    }
+    
+    pub fn deinit(self: *CoPool) void {
+        for (0..CO_POOL_SIZE) |i| {
+            self.allocator.destroy(self.co_list[i]);
+        }
+        self.free_co_list.deinit();
+    }
+    
+    pub fn alloc(self: *CoPool) ?*Co {
+        if (self.free_co_list.items.len == 0) return null;
+        const index = self.free_co_list.pop();
+        return self.co_list[index];
+    }
+    
+    pub fn free(self: *CoPool, co: *Co) void {
+        for (0..CO_POOL_SIZE) |i| {
+            if (self.co_list[i] == co) {
+                self.free_co_list.append(i) catch return;
+                break;
+            }
+        }
+    }
+};
+
+// 内存池结构
+const MemoryPool = struct {
+    blocks: [MEMORY_POOL_SIZE][]u8,
+    free_blocks: std.ArrayList(usize),
+    allocator: std.mem.Allocator,
+    
+    pub fn init(allocator: std.mem.Allocator) !MemoryPool {
+        var pool = MemoryPool{
+            .blocks = undefined,
+            .free_blocks = std.ArrayList(usize).init(allocator),
+            .allocator = allocator,
+        };
+        
+        // 预分配内存块
+        for (0..MEMORY_POOL_SIZE) |i| {
+            pool.blocks[i] = try allocator.alloc(u8, MEMORY_POOL_BLOCK_SIZE);
+            try pool.free_blocks.append(i);
+        }
+        
+        return pool;
+    }
+    
+    pub fn deinit(self: *MemoryPool) void {
+        for (0..MEMORY_POOL_SIZE) |i| {
+            self.allocator.free(self.blocks[i]);
+        }
+        self.free_blocks.deinit();
+    }
+    
+    pub fn alloc(self: *MemoryPool) ?[]u8 {
+        if (self.free_blocks.items.len == 0) return null;
+        const index = self.free_blocks.pop();
+        return self.blocks[index];
+    }
+    
+    pub fn free(self: *MemoryPool, block: []u8) void {
+        for (0..MEMORY_POOL_SIZE) |i| {
+            if (self.blocks[i].ptr == block.ptr) {
+                self.free_blocks.append(i) catch return;
+                break;
+            }
+        }
+    }
+};
+
 pub const Schedule = struct {
     ctx: Context = std.mem.zeroes(Context),
     runningCo: ?*Co = null,
@@ -21,6 +118,8 @@ pub const Schedule = struct {
     tid: usize = 0,
 
     xLoop: ?xev.Loop = null,
+    memoryPool: MemoryPool, // 内存池
+    coPool: CoPool, // 协程池
 
     // 定时器
     timer_id: ?c.timer_t = null,
@@ -116,6 +215,8 @@ pub const Schedule = struct {
             .readyQueue = PriorityQueue.init(allocator, {}),
             .allocator = allocator,
             .allCoMap = CoMap.init(allocator),
+            .memoryPool = try MemoryPool.init(allocator),
+            .coPool = try CoPool.init(allocator),
         };
         errdefer {
             schedule.deinit();
@@ -176,6 +277,13 @@ pub const Schedule = struct {
         self.resumeAll() catch |e| {
             std.log.err("Schedule deinit resumeAll error:{s}", .{@errorName(e)});
         };
+        
+        // 清理内存池
+        self.memoryPool.deinit();
+        
+        // 清理协程池
+        self.coPool.deinit();
+        
         if (self.xLoop) |*xLoop| {
             xLoop.deinit();
             self.xLoop = null;
@@ -440,18 +548,18 @@ pub const Schedule = struct {
         }
     }
     // 批量处理配置 - 动态调整
-    const BATCH_SIZE_MIN = 8; // 最小批处理大小
-    const BATCH_SIZE_MAX = 64; // 最大批处理大小
-    const MAX_READY_COUNT = 100000; // 最大就绪协程数，增加到10万
+    const BATCH_SIZE_MIN = 16; // 最小批处理大小
+    const BATCH_SIZE_MAX = 128; // 最大批处理大小
+    const MAX_READY_COUNT = 200000; // 最大就绪协程数，增加到20万
 
     // 根据队列长度动态确定批处理大小
     fn getBatchSize(queue_len: usize) usize {
-        return if (queue_len < 50)
+        return if (queue_len < 100)
             BATCH_SIZE_MIN // 队列短，小批量处理
-        else if (queue_len < 200)
-            16 // 中等队列
         else if (queue_len < 500)
-            32 // 较大队列
+            32 // 中等队列
+        else if (queue_len < 1000)
+            64 // 较大队列
         else
             BATCH_SIZE_MAX; // 队列很长，大批量处理
     }
@@ -476,17 +584,16 @@ pub const Schedule = struct {
             // 动态调整批处理大小，根据队列长度优化调度效率
             const batch_size = getBatchSize(count);
             const processCount = @min(count, batch_size);
+            
+            // 批量处理：只在开始时恢复信号屏蔽，结束时重新屏蔽
+            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null); // 恢复信号屏蔽
+            
             for (0..processCount) |_| {
                 const nextCo = self.readyQueue.remove();
-
-                // 恢复信号屏蔽，让 Resume 函数自己处理信号屏蔽
-                _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
-
                 try cozig.Resume(nextCo);
-
-                // 重新屏蔽信号，继续处理下一个协程
-                _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
             }
+            
+            _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset); // 重新屏蔽信号
         } else {
             // 恢复信号屏蔽
             _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);

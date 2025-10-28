@@ -99,16 +99,35 @@ pub fn Resume(self: *Co) !void {
 
 pub const Co = struct {
     const Self = @This();
-    id: usize = 0,
-    ctx: Context = std.mem.zeroes(Context),
-    func: Func = undefined,
-    args: ?*anyopaque = null,
-    argsFreeFunc: *const fn (*Co, *anyopaque) void,
-    state: State = .INITED,
-    priority: usize = 0,
-    schedule: *Schedule = undefined,
+    
+    // 协程ID - 8字节对齐
+    id: usize align(8) = 0,
+    
+    // 协程上下文 - 16字节对齐
+    ctx: Context align(16) = std.mem.zeroes(Context),
+    
+    // 协程函数 - 8字节对齐
+    func: Func align(8) = undefined,
+    
+    // 协程参数 - 8字节对齐
+    args: ?*anyopaque align(8) = null,
+    argsFreeFunc: *const fn (*Co, *anyopaque) void align(8),
+    
+    // 协程状态 - 8字节对齐
+    state: State align(8) = .INITED,
+    priority: usize align(8) = 0,
+    
+    // 调度器引用 - 8字节对齐
+    schedule: *Schedule align(8) = undefined,
+    
+    // 协程栈 - 16字节对齐
     stack: [DEFAULT_ZCO_STACK_SZIE]u8 align(16) = std.mem.zeroes([DEFAULT_ZCO_STACK_SZIE]u8),
-    wakeupTimestampNs: usize = 0, //纳秒
+    
+    // 唤醒时间戳 - 8字节对齐
+    wakeupTimestampNs: usize align(8) = 0, //纳秒
+    
+    // 内存对齐填充
+    _padding: [8]u8 align(8) = std.mem.zeroes([8]u8),
     const State = enum {
         INITED,
         SUSPEND,

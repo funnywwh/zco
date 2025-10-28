@@ -4,6 +4,10 @@ const co = @import("./co.zig");
 const chan = @import("./chan.zig");
 const wg = @import("./wg.zig");
 const xev_module = @import("xev");
+
+// 协程栈大小配置 - 优化内存使用
+pub const DEFAULT_ZCO_STACK_SZIE = 4 * 1024; // 4KB栈大小，适合HTTP服务器
+
 pub usingnamespace schedule;
 pub usingnamespace co;
 pub usingnamespace chan;

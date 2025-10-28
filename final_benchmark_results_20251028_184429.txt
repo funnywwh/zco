@@ -1,0 +1,15 @@
+[0;34m=== ZCO vs Go HTTP Server Performance Benchmark ===[0m
+Timestamp: 20251028_184429
+Results will be saved to: results/
+
+[1;33mChecking dependencies...[0m
+[0;32mAll dependencies found[0m
+[1;33mBuilding servers...[0m
+Building ZCO server...
+Building Go server...
+[0;32mServers built successfully[0m
+[0;34m=== Testing ZCO Server ===[0m
+error: TooManyEntries
+Waiting for zig server to start...
+[0;31mzig server failed to start[0m
+[1;33mCleaning up...[0m
