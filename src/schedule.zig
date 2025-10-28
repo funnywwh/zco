@@ -9,6 +9,10 @@ const cfg = @import("./config.zig");
 
 const DEFAULT_ZCO_STACK_SZIE = cfg.DEFAULT_ZCO_STACK_SZIE;
 
+// 环形缓冲区+优先级位图配置
+const RING_BUFFER_SIZE = cfg.RING_BUFFER_SIZE;
+const MAX_PRIORITY_LEVELS = cfg.MAX_PRIORITY_LEVELS;
+
 // 协程池配置
 const CO_POOL_SIZE = 500; // 协程池大小
 
@@ -106,11 +110,221 @@ const MemoryPool = struct {
     }
 };
 
+// 环形缓冲区+优先级位图队列
+const RingBufferPriorityQueue = struct {
+    const RingBuffer = struct {
+        buffer: []?*Co,
+        head: usize,
+        tail: usize,
+        count: usize,
+        
+        pub fn init(allocator: std.mem.Allocator) !RingBuffer {
+            const buffer = try allocator.alloc(?*Co, RING_BUFFER_SIZE);
+            // 初始化为null
+            for (0..RING_BUFFER_SIZE) |i| {
+                buffer[i] = null;
+            }
+            return RingBuffer{
+                .buffer = buffer,
+                .head = 0,
+                .tail = 0,
+                .count = 0,
+            };
+        }
+        
+        pub fn deinit(self: *RingBuffer, allocator: std.mem.Allocator) void {
+            allocator.free(self.buffer);
+        }
+        
+        pub fn add(self: *RingBuffer, co: *Co) !void {
+            if (self.count >= RING_BUFFER_SIZE) {
+                return error.RingBufferFull;
+            }
+            self.buffer[self.tail] = co;
+            self.tail = (self.tail + 1) % RING_BUFFER_SIZE;
+            self.count += 1;
+        }
+        
+        pub fn remove(self: *RingBuffer) ?*Co {
+            if (self.count == 0) {
+                return null;
+            }
+            const co = self.buffer[self.head] orelse return null;
+            self.buffer[self.head] = null;
+            self.head = (self.head + 1) % RING_BUFFER_SIZE;
+            self.count -= 1;
+            return co;
+        }
+        
+        pub fn isEmpty(self: *const RingBuffer) bool {
+            return self.count == 0;
+        }
+        
+        pub fn isFull(self: *const RingBuffer) bool {
+            return self.count >= RING_BUFFER_SIZE;
+        }
+    };
+    
+    // 环形缓冲区数组
+    rings: [MAX_PRIORITY_LEVELS]RingBuffer,
+    
+    // 优先级位图 (32位，每位表示一个优先级级别是否有协程)
+    priority_bitmap: u32,
+    
+    allocator: std.mem.Allocator,
+    
+    pub fn init(allocator: std.mem.Allocator) !RingBufferPriorityQueue {
+        var queue = RingBufferPriorityQueue{
+            .rings = undefined,
+            .priority_bitmap = 0,
+            .allocator = allocator,
+        };
+        
+        // 初始化所有优先级的环形缓冲区
+        for (0..MAX_PRIORITY_LEVELS) |i| {
+            queue.rings[i] = try RingBuffer.init(allocator);
+        }
+        
+        return queue;
+    }
+    
+    pub fn deinit(self: *RingBufferPriorityQueue) void {
+        for (0..MAX_PRIORITY_LEVELS) |i| {
+            self.rings[i].deinit(self.allocator);
+        }
+    }
+    
+    pub fn add(self: *RingBufferPriorityQueue, co: *Co) !void {
+        const priority = @min(co.priority, MAX_PRIORITY_LEVELS - 1);
+        try self.rings[priority].add(co);
+        
+        // 设置对应优先级的位图位
+        self.priority_bitmap |= (@as(u32, 1) << @intCast(priority));
+    }
+    
+    pub fn remove(self: *RingBufferPriorityQueue) ?*Co {
+        if (self.priority_bitmap == 0) {
+            return null;
+        }
+        
+        // 使用 @clz() 快速找到最高优先级位 (O(1))
+        const highest_priority = 31 - @clz(self.priority_bitmap);
+        
+        // 从对应环形缓冲区头部取出协程
+        const co = self.rings[highest_priority].remove();
+        
+        // 如果该优先级队列为空，清除位图位
+        if (self.rings[highest_priority].isEmpty()) {
+            self.priority_bitmap &= ~(@as(u32, 1) << @intCast(highest_priority));
+        }
+        
+        return co;
+    }
+    
+    pub fn count(self: *const RingBufferPriorityQueue) usize {
+        var total: usize = 0;
+        for (0..MAX_PRIORITY_LEVELS) |i| {
+            total += self.rings[i].count;
+        }
+        return total;
+    }
+    
+    pub fn isEmpty(self: *const RingBufferPriorityQueue) bool {
+        return self.priority_bitmap == 0;
+    }
+    
+    // 获取指定优先级的协程数量
+    pub fn getPriorityCount(self: *const RingBufferPriorityQueue, priority: usize) usize {
+        if (priority >= MAX_PRIORITY_LEVELS) return 0;
+        return self.rings[priority].count;
+    }
+    
+    // 获取当前最高优先级
+    pub fn getHighestPriority(self: *const RingBufferPriorityQueue) ?usize {
+        if (self.priority_bitmap == 0) return null;
+        return 31 - @clz(self.priority_bitmap);
+    }
+    
+    // 迭代器支持（为了兼容现有代码）
+    const Iterator = struct {
+        queue: *RingBufferPriorityQueue,
+        current_priority: usize = 0,
+        current_index: usize = 0,
+        
+        fn next(self: *Iterator) ?*Co {
+            // 找到下一个有协程的优先级
+            while (self.current_priority < MAX_PRIORITY_LEVELS) {
+                const ring = &self.queue.rings[self.current_priority];
+                if (self.current_index < ring.count) {
+                    const buffer_index = (ring.head + self.current_index) % RING_BUFFER_SIZE;
+                    const co = ring.buffer[buffer_index];
+                    self.current_index += 1;
+                    return co;
+                } else {
+                    self.current_priority += 1;
+                    self.current_index = 0;
+                }
+            }
+            return null;
+        }
+    };
+    
+    pub fn iterator(self: *RingBufferPriorityQueue) Iterator {
+        return Iterator{
+            .queue = self,
+            .current_priority = 0,
+            .current_index = 0,
+        };
+    }
+    
+    // 移除指定索引的协程（为了兼容现有代码）
+    // 注意：这个方法效率不高，因为需要遍历所有优先级
+    pub fn removeIndex(self: *RingBufferPriorityQueue, idx: usize) ?*Co {
+        var current_idx: usize = 0;
+        
+        for (0..MAX_PRIORITY_LEVELS) |priority| {
+            const ring = &self.rings[priority];
+            if (current_idx + ring.count > idx) {
+                // 目标协程在这个优先级的环形缓冲区中
+                const local_idx = idx - current_idx;
+                const buffer_idx = (ring.head + local_idx) % RING_BUFFER_SIZE;
+                const co = ring.buffer[buffer_idx];
+                
+                if (co) |found_co| {
+                    // 移除协程（将后面的协程前移）
+                    var i = local_idx;
+                    while (i < ring.count - 1) {
+                        const current_buffer_idx = (ring.head + i) % RING_BUFFER_SIZE;
+                        const next_buffer_idx = (ring.head + i + 1) % RING_BUFFER_SIZE;
+                        ring.buffer[current_buffer_idx] = ring.buffer[next_buffer_idx];
+                        i += 1;
+                    }
+                    
+                    // 清除最后一个位置
+                    const last_buffer_idx = (ring.head + ring.count - 1) % RING_BUFFER_SIZE;
+                    ring.buffer[last_buffer_idx] = null;
+                    ring.count -= 1;
+                    
+                    // 如果该优先级队列为空，清除位图位
+                    if (ring.isEmpty()) {
+                        self.priority_bitmap &= ~(@as(u32, 1) << @intCast(priority));
+                    }
+                    
+                    return found_co;
+                }
+            }
+            current_idx += ring.count;
+        }
+        
+        return null;
+    }
+};
+
 pub const Schedule = struct {
     ctx: Context = std.mem.zeroes(Context),
     runningCo: ?*Co = null,
     sleepQueue: PriorityQueue,
-    readyQueue: PriorityQueue,
+    readyQueue: RingBufferPriorityQueue,
     allocator: std.mem.Allocator,
     exit: bool = false,
     allCoMap: CoMap,
@@ -212,7 +426,7 @@ pub const Schedule = struct {
         const schedule = try allocator.create(Schedule);
         schedule.* = .{
             .sleepQueue = PriorityQueue.init(allocator, {}),
-            .readyQueue = PriorityQueue.init(allocator, {}),
+            .readyQueue = try RingBufferPriorityQueue.init(allocator),
             .allocator = allocator,
             .allCoMap = CoMap.init(allocator),
             .memoryPool = try MemoryPool.init(allocator),
@@ -365,6 +579,67 @@ pub const Schedule = struct {
             }.run,
             .id = Co.nextId,
             .schedule = self,
+        };
+        Co.nextId +%= 1;
+
+        // === 关键区开始：屏蔽信号 ===
+        var sigset: c.sigset_t = undefined;
+        var oldset: c.sigset_t = undefined;
+        _ = c.sigemptyset(&sigset);
+        _ = c.sigaddset(&sigset, c.SIGALRM);
+        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+
+        try self.allCoMap.put(co.id, co);
+
+        // === 关键区结束：恢复信号屏蔽 ===
+        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+
+        try self.ResumeCo(co);
+        return co;
+    }
+
+    // 带优先级的协程创建方法
+    pub fn goWithPriority(self: *Schedule, comptime func: anytype, args: anytype, priority: usize) !*Co {
+        const allocator = self.allocator;
+        const co = try allocator.create(Co);
+        errdefer allocator.destroy(co);
+        const FuncType = @TypeOf(func);
+        const FuncArgsTupleType = @TypeOf(args);
+        const WrapArgs = struct {
+            func: *const FuncType,
+            args: FuncArgsTupleType,
+            allocator: std.mem.Allocator,
+        };
+        const wrapArgs = try allocator.create(WrapArgs);
+        errdefer allocator.destroy(wrapArgs);
+
+        wrapArgs.args = args;
+        wrapArgs.func = &func;
+        wrapArgs.allocator = allocator;
+
+        co.* = .{
+            .args = wrapArgs,
+            .argsFreeFunc = struct {
+                fn free(_co: *Co, p: *anyopaque) void {
+                    const _args: *WrapArgs = @alignCast(@ptrCast(p));
+                    const _allocator = _co.schedule.allocator;
+                    _allocator.destroy(_args);
+                }
+            }.free,
+            .func = &struct {
+                fn run(_argsTupleOpt: ?*anyopaque) !void {
+                    const _argsTuple: *WrapArgs = @alignCast(@ptrCast(_argsTupleOpt orelse unreachable));
+                    _ = @call(.auto, _argsTuple.func, _argsTuple.args) catch |err| {
+                        // EOF错误是正常的网络连接关闭，不需要记录为错误
+                        if (err != error.EOF) {
+                            std.log.err("schedule wrap func error: {any}", .{err});
+                        }
+                    };
+                }
+            }.run,
+            .id = Co.nextId,
+            .schedule = self,
+            .priority = priority,
         };
         Co.nextId +%= 1;
 
@@ -590,7 +865,11 @@ pub const Schedule = struct {
             
             for (0..processCount) |_| {
                 const nextCo = self.readyQueue.remove();
-                try cozig.Resume(nextCo);
+                if (nextCo) |co| {
+                    try cozig.Resume(co);
+                } else {
+                    break; // 队列为空，停止处理
+                }
             }
             
             _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset); // 重新屏蔽信号

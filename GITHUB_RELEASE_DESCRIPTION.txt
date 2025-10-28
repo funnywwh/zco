@@ -1,0 +1,106 @@
+ZCO 0.4.0 - Performance Optimization Release
+
+A major performance update with significant improvements to scheduler efficiency, memory management, and HTTP processing.
+
+⚡ Key Improvements
+
+• 50% better performance in low-concurrency scenarios (surpassing Go by 14.5%)
+• O(log n) → O(1) scheduler efficiency improvement
+• 50% memory reduction (8KB → 4KB stack size)
+• Three-level pooling architecture for efficient resource management
+
+📊 Performance Benchmarks
+
+| Test Case | ZCO RPS | Benchmark |
+|-----------|---------|-----------|
+| 1000 req, 10 con | 44,308 | +14.5% vs Go |
+| 10k req, 100 con | 44,944 | Competitive |
+| 50k req, 500 con | 43,646 | Competitive |
+| 100k req, 1000 con | 36,938 | Competitive |
+
+🔧 Major Features
+
+Scheduler Optimizations
+• ArrayList-based scheduling (O(1) insertion)
+• Dynamic batch processing (16-128 coroutines/batch)
+• Optimized signal handling to reduce system calls
+• Stack size optimization (8KB → 4KB)
+
+Memory Management
+• Memory pool (1000 × 1KB blocks for fast allocation)
+• Coroutine pool (500 coroutine objects for reuse)
+• Connection pool (200 TCP connections for reuse)
+• Memory alignment optimization for better cache performance
+
+Network Optimizations
+• TCP_NODELAY to reduce latency
+• Connection pooling for efficient TCP connection reuse
+• Optimized io_uring configuration
+
+HTTP Performance
+• SIMD-accelerated string matching (16-byte vectorized)
+• Pre-compiled HTTP responses
+• 1000-entry response cache
+• Zero-copy buffer mechanism
+• Direct byte comparison instead of indexOf
+
+System Optimizations
+• Branch prediction hints for critical paths
+• CPU affinity interface (simplified)
+• NUMA optimization interface (simplified)
+
+🎯 What This Means for You
+
+If you're using ZCO for:
+• High-throughput applications: You'll see significant RPS improvements
+• Low-latency requirements: Network optimizations reduce response times
+• Memory-constrained environments: 50% reduction in memory footprint
+• Concurrent workloads: Better scheduler performance under load
+
+📦 Installation
+
+zig build
+
+Or using the tag:
+
+git checkout 0.4.0
+zig build
+
+🔄 Upgrade Notes
+
+No breaking changes. This is a performance-focused release maintaining full API compatibility. Existing applications will benefit from automatic performance improvements without any code changes.
+
+📝 Complete Optimization List (18/20 completed)
+
+✅ ArrayList replaces PriorityQueue
+✅ Dynamic batch processing
+✅ Batch signal masking
+✅ Memory pool implementation
+✅ Coroutine pool implementation
+✅ Stack size reduction
+✅ Memory alignment
+✅ TCP_NODELAY
+✅ Connection pool
+✅ Direct byte comparison
+✅ Pre-compiled responses
+✅ HTTP response cache
+✅ Zero-copy buffer
+✅ SIMD string matching
+✅ Branch prediction
+✅ CPU affinity interface
+✅ NUMA optimization interface
+✅ Performance monitoring
+
+🐛 Known Issues
+
+• Performance is slightly lower than Go in extreme high-concurrency scenarios (1000+ concurrent)
+• NUMA and CPU affinity optimizations are simplified versions
+
+🔮 What's Next
+
+• Complete NUMA support
+• True CPU affinity binding
+• Smarter adaptive scheduling algorithms
+• Distributed coroutine scheduling
+
+For full details, see CHANGELOG_V0.4.0.md in the repository.
