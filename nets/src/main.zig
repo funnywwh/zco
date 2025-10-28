@@ -171,26 +171,54 @@ fn httpHelloworld() !void {
     try schedule.loop();
 }
 
-// 优化的请求处理函数
+// 优化的请求处理函数 - 使用快速字节比较代替indexOf
 fn handleRequestFast(buffer: []const u8, client: *nets.Tcp) !bool {
     const startTime = std.time.nanoTimestamp();
 
     // 快速检查请求类型
     if (buffer.len < 3) return false;
 
-    // 检查是否是GET请求
-    if (!std.mem.eql(u8, buffer[0..3], "GET")) {
+    // 检查是否是GET请求 - 快速路径
+    if (buffer[0] != 'G' or buffer[1] != 'E' or buffer[2] != 'T') {
         return false;
     }
 
-    // 检查是否是shutdown请求
-    if (std.mem.indexOf(u8, buffer, "/shutdown") != null) {
-        _ = try client.write(HTTP_200_CLOSE);
-        return false;
+    // 快速扫描Connection头 (避免使用indexOf)
+    var isKeepAlive = false;
+    var i: usize = 0;
+    
+    // 扫描"Connection:"字符串
+    while (i < buffer.len - 10) {
+        if (buffer[i] == 'C' and 
+            buffer[i+1] == 'o' and 
+            buffer[i+2] == 'n' and 
+            buffer[i+3] == 'n' and 
+            buffer[i+4] == 'e' and 
+            buffer[i+5] == 'c' and 
+            buffer[i+6] == 't' and 
+            buffer[i+7] == 'i' and 
+            buffer[i+8] == 'o' and 
+            buffer[i+9] == 'n' and 
+            buffer[i+10] == ':') {
+            // 找到Connection头，检查是否是keep-alive
+            const remain = if (i + 11 < buffer.len) buffer[i + 11..] else break;
+            if (remain.len >= 10 and 
+                remain[1] == 'k' and 
+                remain[2] == 'e' and 
+                remain[3] == 'e' and 
+                remain[4] == 'p' and 
+                remain[5] == '-' and 
+                remain[6] == 'a' and 
+                remain[7] == 'l' and 
+                remain[8] == 'i' and 
+                remain[9] == 'v' and 
+                remain[10] == 'e') {
+                isKeepAlive = true;
+            }
+            break;
+        }
+        i += 1;
     }
-
-    // 快速检查Connection头
-    const isKeepAlive = std.mem.indexOf(u8, buffer, "Connection: keep-alive") != null;
 
     if (isKeepAlive) {
         _ = try client.write(HTTP_200_KEEPALIVE);
