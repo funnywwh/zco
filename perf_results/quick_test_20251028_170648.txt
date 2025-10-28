@@ -1,0 +1,22 @@
+[0;34m=== Quick ZCO vs Go Performance Test ===[0m
+[1;33mBuilding servers...[0m
+Building ZCO server...
+Building Go server...
+[0;32mServers built successfully[0m
+[0;34m=== Testing ZCO Server ===[0m
+[1;33mTesting ZCO server: 10000 requests, 100 concurrent[0m
+[0;32mZCO Results:[0m
+  RPS: 48362.21
+  Avg Time: 2.068 ms
+  Failed: 0
+
+[0;34m=== Testing Go Server ===[0m
+[1;33mTesting Go server: 10000 requests, 100 concurrent[0m
+Go HTTP server starting on :8081
+GOMAXPROCS: 1
+[0;32mGo Results:[0m
+  RPS: 49682.28
+  Avg Time: 2.013 ms
+  Failed: 0
+
+[0;32m=== Quick test completed ===[0m

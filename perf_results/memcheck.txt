@@ -1,0 +1,115 @@
+==1831321== Memcheck, a memory error detector
+==1831321== Copyright (C) 2002-2022, and GNU GPL'd, by Julian Seward et al.
+==1831321== Using Valgrind-3.19.0 and LibVEX; rerun with -h for copyright info
+==1831321== Command: /home/winger/zigwk/zco/nets/zig-out/bin/nets
+==1831321== Parent PID: 1831320
+==1831321== 
+==1831321== Warning: client switching stacks?  SP change: 0x1ffeffe988 --> 0x4ad0fe8
+==1831321==          to suppress, use: --max-stackframe=137343719840 or greater
+==1831321== Warning: client switching stacks?  SP change: 0x4ad0c58 --> 0x1ffeffe990
+==1831321==          to suppress, use: --max-stackframe=137343720760 or greater
+==1831321== Warning: client switching stacks?  SP change: 0x1ffeffe988 --> 0x4b2ffe8
+==1831321==          to suppress, use: --max-stackframe=137343330720 or greater
+==1831321==          further instances of this message will not be shown.
+==1831321== Conditional jump or move depends on uninitialised value(s)
+==1831321==    at 0x100B77B: handleRequestFast (main.zig:182)
+==1831321==    by 0x100B77B: main.httpHelloworld__struct_4574.run (main.zig:130)
+==1831321==    by 0x100BD3C: schedule.Schedule.go__anon_4582__struct_4598.run (schedule.zig:250)
+==1831321==    by 0x100EFD8: co.Co.contextEntry (co.zig:210)
+==1831321==    by 0x48C5F7F: ??? (in /usr/lib/x86_64-linux-gnu/libc.so.6)
+==1831321==    by 0x4A5FFFF: ???
+==1831321==  Uninitialised value was created by a stack allocation
+==1831321==    at 0x100B0BD: main.httpHelloworld__struct_4574.run (main.zig:93)
+==1831321== 
+==1831321== Conditional jump or move depends on uninitialised value(s)
+==1831321==    at 0x100B788: handleRequestFast (main.zig:182)
+==1831321==    by 0x100B788: main.httpHelloworld__struct_4574.run (main.zig:130)
+==1831321==    by 0x100BD3C: schedule.Schedule.go__anon_4582__struct_4598.run (schedule.zig:250)
+==1831321==    by 0x100EFD8: co.Co.contextEntry (co.zig:210)
+==1831321==    by 0x48C5F7F: ??? (in /usr/lib/x86_64-linux-gnu/libc.so.6)
+==1831321==    by 0x4A5FFFF: ???
+==1831321==  Uninitialised value was created by a stack allocation
+==1831321==    at 0x100B0BD: main.httpHelloworld__struct_4574.run (main.zig:93)
+==1831321== 
+==1831321== Conditional jump or move depends on uninitialised value(s)
+==1831321==    at 0x100B795: handleRequestFast (main.zig:182)
+==1831321==    by 0x100B795: main.httpHelloworld__struct_4574.run (main.zig:130)
+==1831321==    by 0x100BD3C: schedule.Schedule.go__anon_4582__struct_4598.run (schedule.zig:250)
+==1831321==    by 0x100EFD8: co.Co.contextEntry (co.zig:210)
+==1831321==    by 0x48C5F7F: ??? (in /usr/lib/x86_64-linux-gnu/libc.so.6)
+==1831321==    by 0x4A5FFFF: ???
+==1831321==  Uninitialised value was created by a stack allocation
+==1831321==    at 0x100B0BD: main.httpHelloworld__struct_4574.run (main.zig:93)
+==1831321== 
+==1831321== Conditional jump or move depends on uninitialised value(s)
+==1831321==    at 0x10117AB: indexOfPos__anon_9851 (mem.zig:1516)
+==1831321==    by 0x10117AB: mem.indexOf__anon_6676 (mem.zig:1392)
+==1831321==    by 0x100B7B9: handleRequestFast (main.zig:187)
+==1831321==    by 0x100B7B9: main.httpHelloworld__struct_4574.run (main.zig:130)
+==1831321==    by 0x100BD3C: schedule.Schedule.go__anon_4582__struct_4598.run (schedule.zig:250)
+==1831321==    by 0x100EFD8: co.Co.contextEntry (co.zig:210)
+==1831321==    by 0x48C5F7F: ??? (in /usr/lib/x86_64-linux-gnu/libc.so.6)
+==1831321==    by 0x4A5FFFF: ???
+==1831321==  Uninitialised value was created by a stack allocation
+==1831321==    at 0x100B0BD: main.httpHelloworld__struct_4574.run (main.zig:93)
+==1831321== 
+==1831321== Use of uninitialised value of size 8
+==1831321==    at 0x1011783: indexOfPos__anon_9851 (mem.zig:1519)
+==1831321==    by 0x1011783: mem.indexOf__anon_6676 (mem.zig:1392)
+==1831321==    by 0x100B7B9: handleRequestFast (main.zig:187)
+==1831321==    by 0x100B7B9: main.httpHelloworld__struct_4574.run (main.zig:130)
+==1831321==    by 0x100BD3C: schedule.Schedule.go__anon_4582__struct_4598.run (schedule.zig:250)
+==1831321==    by 0x100EFD8: co.Co.contextEntry (co.zig:210)
+==1831321==    by 0x48C5F7F: ??? (in /usr/lib/x86_64-linux-gnu/libc.so.6)
+==1831321==    by 0x4A5FFFF: ???
+==1831321==  Uninitialised value was created by a stack allocation
+==1831321==    at 0x100B0BD: main.httpHelloworld__struct_4574.run (main.zig:93)
+==1831321== 
+==1831321== Conditional jump or move depends on uninitialised value(s)
+==1831321==    at 0x1011693: indexOfPos__anon_9851 (mem.zig:1516)
+==1831321==    by 0x1011693: mem.indexOf__anon_6676 (mem.zig:1392)
+==1831321==    by 0x100B91B: handleRequestFast (main.zig:193)
+==1831321==    by 0x100B91B: main.httpHelloworld__struct_4574.run (main.zig:130)
+==1831321==    by 0x100BD3C: schedule.Schedule.go__anon_4582__struct_4598.run (schedule.zig:250)
+==1831321==    by 0x100EFD8: co.Co.contextEntry (co.zig:210)
+==1831321==    by 0x48C5F7F: ??? (in /usr/lib/x86_64-linux-gnu/libc.so.6)
+==1831321==    by 0x4A5FFFF: ???
+==1831321==  Uninitialised value was created by a stack allocation
+==1831321==    at 0x100B0BD: main.httpHelloworld__struct_4574.run (main.zig:93)
+==1831321== 
+==1831321== Use of uninitialised value of size 8
+==1831321==    at 0x101169B: indexOfPos__anon_9851 (mem.zig:1519)
+==1831321==    by 0x101169B: mem.indexOf__anon_6676 (mem.zig:1392)
+==1831321==    by 0x100B91B: handleRequestFast (main.zig:193)
+==1831321==    by 0x100B91B: main.httpHelloworld__struct_4574.run (main.zig:130)
+==1831321==    by 0x100BD3C: schedule.Schedule.go__anon_4582__struct_4598.run (schedule.zig:250)
+==1831321==    by 0x100EFD8: co.Co.contextEntry (co.zig:210)
+==1831321==    by 0x48C5F7F: ??? (in /usr/lib/x86_64-linux-gnu/libc.so.6)
+==1831321==    by 0x4A5FFFF: ???
+==1831321== 
+==1831321== 
+==1831321== Process terminating with default action of signal 15 (SIGTERM)
+==1831321==    at 0x4903084: pthread_sigmask@@GLIBC_2.32 (pthread_sigmask.c:45)
+==1831321==    by 0x100AA66: schedule.Schedule.ResumeCo (schedule.zig:304)
+==1831321==    by 0x101217E: Resume (co.zig:167)
+==1831321==    by 0x101217E: callback (co.zig:198)
+==1831321==    by 0x101217E: watcher.timer.Timer(main.Xev(.io_uring,backend.io_uring)).run__anon_6423__struct_9632.callback (timer.zig:67)
+==1831321==    by 0x100DC6C: backend.io_uring.Completion.invoke (io_uring.zig:773)
+==1831321==    by 0x100E2DB: tick___anon_4816 (io_uring.zig:162)
+==1831321==    by 0x100E2DB: backend.io_uring.Loop.run (io_uring.zig:60)
+==1831321==    by 0x101029A: checkNextCo (schedule.zig:481)
+==1831321==    by 0x101029A: loop (schedule.zig:437)
+==1831321==    by 0x101029A: httpHelloworld (main.zig:171)
+==1831321==    by 0x101029A: main (main.zig:15)
+==1831321==    by 0x101029A: callMain (start.zig:656)
+==1831321==    by 0x101029A: callMainWithArgs (start.zig:616)
+==1831321==    by 0x101029A: main (start.zig:631)
+==1831321== 
+==1831321== HEAP SUMMARY:
+==1831321==     in use at exit: 0 bytes in 0 blocks
+==1831321==   total heap usage: 0 allocs, 0 frees, 0 bytes allocated
+==1831321== 
+==1831321== All heap blocks were freed -- no leaks are possible
+==1831321== 
+==1831321== For lists of detected and suppressed errors, rerun with: -s
+==1831321== ERROR SUMMARY: 17500 errors from 7 contexts (suppressed: 0 from 0)

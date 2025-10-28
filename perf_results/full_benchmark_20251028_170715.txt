@@ -1,0 +1,73 @@
+[0;34m=== ZCO vs Go HTTP Server Performance Benchmark ===[0m
+Timestamp: 20251028_170715
+Results will be saved to: results/
+
+[1;33mChecking dependencies...[0m
+[0;32mAll dependencies found[0m
+[1;33mBuilding servers...[0m
+Building ZCO server...
+Building Go server...
+[0;32mServers built successfully[0m
+[0;34m=== Testing ZCO Server ===[0m
+Waiting for zig server to start...
+[0;32mzig server started successfully on port 8080[0m
+[1;33mTesting ZCO server: 1000 requests, 10 concurrent[0m
+[0;32mZCO Results:[0m
+  RPS: 45678.79
+  Avg Time: 0.219 ms
+  Failed: 0
+
+[1;33mTesting ZCO server: 10000 requests, 100 concurrent[0m
+[0;32mZCO Results:[0m
+  RPS: 50022.01
+  Avg Time: 1.999 ms
+  Failed: 0
+
+[1;33mTesting ZCO server: 50000 requests, 500 concurrent[0m
+[0;32mZCO Results:[0m
+  RPS: 40300.97
+  Avg Time: 12.407 ms
+  Failed: 0
+
+[1;33mTesting ZCO server: 100000 requests, 1000 concurrent[0m
+[0;32mZCO Results:[0m
+  RPS: 31837.33
+  Avg Time: 31.410 ms
+  Failed: 0
+
+Server stopped (PID: 1828341)
+[0;34m=== Testing Go Server ===[0m
+Waiting for go server to start...
+Go HTTP server starting on :8081
+GOMAXPROCS: 1
+[0;32mgo server started successfully on port 8081[0m
+[1;33mTesting Go server: 1000 requests, 10 concurrent[0m
+[0;32mGo Results:[0m
+  RPS: 39359.23
+  Avg Time: 0.254 ms
+  Failed: 0
+
+[1;33mTesting Go server: 10000 requests, 100 concurrent[0m
+[0;32mGo Results:[0m
+  RPS: 50995.95
+  Avg Time: 1.961 ms
+  Failed: 0
+
+[1;33mTesting Go server: 50000 requests, 500 concurrent[0m
+[0;32mGo Results:[0m
+  RPS: 42723.50
+  Avg Time: 11.703 ms
+  Failed: 0
+
+[1;33mTesting Go server: 100000 requests, 1000 concurrent[0m
+[0;32mGo Results:[0m
+  RPS: 37566.76
+  Avg Time: 26.619 ms
+  Failed: 0
+
+Server stopped (PID: 1828397)
+[1;33mGenerating benchmark report...[0m
+[0;32mBenchmark report generated: results/benchmark_report_20251028_170715.md[0m
+[0;32m=== Benchmark completed ===[0m
+Results saved in: results/
+[1;33mCleaning up...[0m

@@ -1,0 +1,11 @@
+desc: --massif-out-file=perf_results/massif.out
+cmd: /home/winger/zigwk/zco/nets/zig-out/bin/nets
+time_unit: i
+#-----------
+snapshot=0
+#-----------
+time=0
+mem_heap_B=0
+mem_heap_extra_B=0
+mem_stacks_B=0
+heap_tree=empty
