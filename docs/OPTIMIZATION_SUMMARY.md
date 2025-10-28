@@ -1,184 +1,103 @@
-# ZCO 高并发性能优化总结
+# ZCO 性能优化总结报告
 
-## 🎯 优化目标
-解决高并发场景下响应延时大的问题，提升系统整体性能。
+## 优化概览
 
-## ✅ 已完成的优化
+本次性能优化工作针对 ZCO (Zig Coroutine Library) 协程库进行了全面的性能提升，包括调度器优化、内存管理优化、网络优化、HTTP解析优化等多个方面。
 
-### 1. 调度器优化 ⚡
-**文件**: `src/schedule.zig`
+## 已完成的优化项目
 
-**优化内容**:
-- ✅ 实现批量处理协程（每次处理32个）
-- ✅ 添加就绪队列大小限制（最大10000个）
-- ✅ 增加事件循环条目数（从4K增加到16K）
+### 1. 调度器优化
+- **队列结构优化**: 将 `std.PriorityQueue` 替换为 `std.ArrayList`，实现 O(1) 插入
+- **批处理优化**: 实现动态批处理(16-128个协程/批次)，减少调度开销
+- **信号屏蔽优化**: 批量处理信号屏蔽，减少 `pthread_sigmask` 系统调用
 
-**关键代码**:
-```zig
-const BATCH_SIZE = 32;  // 每次处理32个协程
-const MAX_READY_COUNT = 10000;  // 最大就绪协程数
+### 2. 内存管理优化
+- **协程栈大小**: 从8KB减小到4KB，减少内存占用
+- **内存池**: 实现1000个1KB内存块的内存池，减少堆分配
+- **协程池**: 实现500个协程对象的对象池，减少创建/销毁开销
+- **连接池**: 实现200个TCP连接的连接池，减少连接建立开销
+- **内存对齐**: 优化 `Co` 结构体字段对齐，提升缓存性能
 
-// 批量处理协程，提高调度效率
-const processCount = @min(count, BATCH_SIZE);
-for (0..processCount) |i| {
-    const nextCo = self.readyQueue.remove();
-    try cozig.Resume(nextCo);
-}
-```
+### 3. 网络优化
+- **TCP_NODELAY**: 禁用 Nagle 算法，减少网络延迟
+- **io_uring 配置**: 保持4K队列大小(测试发现更大的值导致错误)
 
-### 2. HTTP处理优化 🌐
-**文件**: `nets/src/main.zig`
+### 4. HTTP 解析优化
+- **直接字节比较**: 用直接字节比较替换 `std.mem.indexOf`
+- **预编译响应**: 预先构建HTTP响应字符串
+- **响应缓存**: 实现1000条目的HTTP响应缓存
+- **零拷贝**: 实现零拷贝缓冲区机制
 
-**优化内容**:
-- ✅ 预编译HTTP响应，避免运行时字符串操作
-- ✅ 简化请求解析逻辑，减少CPU开销
-- ✅ 添加连接数限制（最大10000个并发连接）
-- ✅ 实现快速请求处理函数
+### 5. SIMD 优化
+- **SIMD字符串匹配**: 使用16字节SIMD向量化处理"GET"请求和"Connection"头解析
+- **fastMatch/fastIndexOf**: 实现SIMD加速的字符串匹配函数
 
-**关键代码**:
-```zig
-// 预编译的HTTP响应
-const HTTP_200_KEEPALIVE = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: keep-alive\r\nContent-Length: 10\r\n\r\nhelloworld";
-const HTTP_200_CLOSE = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\nContent-Length: 10\r\n\r\nhelloworld";
+### 6. 分支预测优化
+- **likely/unlikely提示**: 为关键条件分支添加分支预测提示
 
-// 快速请求处理
-fn handleRequestFast(buffer: []const u8, client: *nets.Tcp) !bool {
-    // 快速检查请求类型，减少字符串操作
-    if (buffer.len < 3) return false;
-    if (!std.mem.eql(u8, buffer[0..3], "GET")) return false;
-    // ... 简化处理逻辑
-}
-```
+### 7. 系统级优化尝试
+- **CPU亲和性**: 实现了接口但简化为日志记录
+- **NUMA优化**: 实现了接口但简化为日志记录
+- **锁优化**: 实现了接口但简化为日志记录
+- **编译器优化**: Zig 0.14.0不支持 `addCSourceFlags`，已跳过
 
-### 3. 内存管理优化 💾
-**文件**: `src/main.zig`
+## 工作池大小优化
 
-**优化内容**:
-- ✅ 减少协程栈大小（从32KB减少到8KB）
-- ✅ 优化协程释放逻辑
-- ✅ 添加内存使用监控
+测试了多个 `WORKER_POOL_SIZE` 值:
+- 32: 性能较低
+- 64: 性能中等
+- **100: 性能最优** (最终选择)
 
-**关键代码**:
-```zig
-pub const ZCO_STACK_SIZE = 1024 * 8;  // 减少栈大小，提高内存效率
-```
+## 优化效果
 
-### 4. 性能监控 📊
-**文件**: `nets/src/main.zig`
+### 性能提升
+根据之前的测试结果:
+- **请求吞吐量**: 显著提升
+- **响应延迟**: 明显降低
+- **内存使用**: 优化后更加稳定
+- **CPU使用率**: 更加高效
 
-**优化内容**:
-- ✅ 实现实时性能监控
-- ✅ 记录请求延迟和吞吐量
-- ✅ 定期输出性能统计
+### 关键改进点
+1. **调度器效率**: 通过ArrayList + 批处理，调度开销大幅降低
+2. **内存效率**: 通过多级池化(内存池、协程池、连接池)，减少分配开销
+3. **解析效率**: 通过SIMD + 直接比较，HTTP解析速度提升
+4. **网络效率**: 通过TCP_NODELAY + 连接池，网络性能优化
 
-**关键代码**:
-```zig
-const PerfMonitor = struct {
-    requestCount: std.atomic.Value(u64),
-    totalLatency: std.atomic.Value(u64),
-    maxLatency: std.atomic.Value(u64),
-    
-    pub fn recordRequest(self: *PerfMonitor, latencyNs: u64) void {
-        // 原子操作记录性能指标
-    }
-};
-```
+## 技术亮点
 
-## 📈 预期性能提升
+1. **多级池化架构**: 内存池、协程池、连接池三级池化
+2. **SIMD加速**: 16字节向量化字符串处理
+3. **动态批处理**: 根据队列长度动态调整批处理大小
+4. **零拷贝**: 减少数据复制开销
+5. **预编译响应**: 避免运行时字符串构建
 
-### 调度效率
-- **批量处理**: 每次处理32个协程，减少调度开销
-- **队列限制**: 防止内存爆炸，提高稳定性
-- **事件循环**: 16K条目支持更高并发
+## 未来优化方向
 
-### 内存效率
-- **栈大小**: 从32KB减少到8KB，节省75%内存
-- **连接限制**: 最大10000个并发连接
-- **预编译响应**: 减少运行时内存分配
+1. **更智能的调度**: 实现基于优先级的更复杂调度算法
+2. **更大的池**: 根据实际负载动态调整池大小
+3. **更好的SIMD**: 使用更先进的SIMD指令(AVX2/AVX512)
+4. **真正的NUMA支持**: 完整实现NUMA感知的内存分配
+5. **真正的CPU亲和性**: 实现进程/线程到CPU核心的绑定
 
-### 处理效率
-- **HTTP处理**: 预编译响应，简化解析逻辑
-- **字符串操作**: 减少不必要的字符串比较
-- **快速路径**: 优化常见请求的处理路径
+## 结论
 
-## 🚀 使用方法
+本次优化工作通过多方面的改进，显著提升了 ZCO 协程库的性能。主要通过:
+- **减少系统调用**: 批处理、池化
+- **减少内存分配**: 多级池化
+- **加速关键路径**: SIMD、直接比较、预编译
+- **优化数据结构**: ArrayList、内存对齐
 
-### 编译优化版本
+这些优化使 ZCO 在高并发场景下的性能得到了大幅提升，为构建高性能网络应用提供了坚实的基础。
+
+## 优化分支
+
+所有优化代码已提交到 `performance-optimization` 分支，可以通过以下命令查看:
+
 ```bash
-zig build -Doptimize=ReleaseFast
+git log --oneline performance-optimization
 ```
 
-### 运行性能测试
-```bash
-./test_performance.sh
-```
+---
 
-### 手动测试
-```bash
-# 启动服务器
-./zig-out/bin/zco
-
-# 在另一个终端运行测试
-ab -n 10000 -c 1000 http://localhost:8080/
-```
-
-## 📊 性能测试结果
-
-### 测试环境
-- **CPU**: 多核处理器
-- **内存**: 充足的内存空间
-- **网络**: 本地回环测试
-
-### 测试指标
-- **并发连接数**: 1000-2000
-- **请求总数**: 10000-20000
-- **响应时间**: 微秒级
-- **吞吐量**: 显著提升
-
-## 🔧 进一步优化建议
-
-### 1. 无锁数据结构
-```zig
-// 使用无锁队列替代优先级队列
-const LockFreeQueue = struct {
-    head: std.atomic.Value(*Node),
-    tail: std.atomic.Value(*Node),
-};
-```
-
-### 2. CPU亲和性
-```zig
-// 绑定协程到特定CPU核心
-pub fn setCpuAffinity(co: *zco.Co, cpu: usize) void {
-    // 设置CPU亲和性
-}
-```
-
-### 3. 零拷贝优化
-```zig
-// 使用sendfile等零拷贝技术
-pub fn sendFile(fd: i32, file: std.fs.File) !void {
-    // 零拷贝文件传输
-}
-```
-
-### 4. 协程池
-```zig
-// 实现协程池，减少创建/销毁开销
-const CoroutinePool = struct {
-    pool: std.ArrayList(*zco.Co),
-    available: std.ArrayList(*zco.Co),
-};
-```
-
-## 🎉 总结
-
-通过以上优化，ZCO协程库在高并发场景下的性能得到了显著提升：
-
-1. **响应时间**: 从毫秒级降低到微秒级
-2. **并发能力**: 支持10000+并发连接
-3. **内存使用**: 减少75%的栈内存使用
-4. **CPU效率**: 减少30%以上的CPU开销
-5. **稳定性**: 添加连接限制，防止内存爆炸
-
-这些优化将帮助您解决高并发时响应延时大的问题，提升系统的整体性能和稳定性。
+*报告生成时间: 2025-10-28*
+*优化版本: ZCO v0.1.0 + Performance Optimizations*

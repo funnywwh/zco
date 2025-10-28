@@ -24,21 +24,21 @@ Document Path:          /
 Document Length:        10 bytes
 
 Concurrency Level:      10
-Time taken for tests:   0.022 seconds
+Time taken for tests:   0.023 seconds
 Complete requests:      1000
 Failed requests:        0
 Total transferred:      94000 bytes
 HTML transferred:       10000 bytes
-Requests per second:    44947.86 [#/sec] (mean)
-Time per request:       0.222 [ms] (mean)
-Time per request:       0.022 [ms] (mean, across all concurrent requests)
-Transfer rate:          4126.07 [Kbytes/sec] received
+Requests per second:    42634.83 [#/sec] (mean)
+Time per request:       0.235 [ms] (mean)
+Time per request:       0.023 [ms] (mean, across all concurrent requests)
+Transfer rate:          3913.74 [Kbytes/sec] received
 
 Connection Times (ms)
               min  mean[+/-sd] median   max
 Connect:        0    0   0.0      0       0
-Processing:     0    0   0.0      0       0
-Waiting:        0    0   0.0      0       0
+Processing:     0    0   0.1      0       1
+Waiting:        0    0   0.1      0       1
 Total:          0    0   0.1      0       1
 
 Percentage of the requests served within a certain time (ms)
@@ -49,5 +49,5 @@ Percentage of the requests served within a certain time (ms)
   90%      0
   95%      0
   98%      0
-  99%      0
+  99%      1
  100%      1 (longest request)
