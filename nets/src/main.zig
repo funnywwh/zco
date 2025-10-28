@@ -117,7 +117,7 @@ fn httpHelloworld() !void {
                     }
 
                     var keepalive = true;
-                    var buffer: [1024]u8 = undefined;
+                    var buffer: [1024]u8 = std.mem.zeroes([1024]u8);
 
                     while (keepalive) {
                         const n = client.read(buffer[0..]) catch |e| {

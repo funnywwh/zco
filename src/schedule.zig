@@ -64,8 +64,8 @@ pub const Schedule = struct {
     }
 
     const CoMap = std.AutoArrayHashMap(usize, *Co);
-    const PriorityQueue = std.PriorityQueue(*Co, void, Schedule.queueCompare);
-    // const PriorityQueue = ListQueue;
+    // const PriorityQueue = std.PriorityQueue(*Co, void, Schedule.queueCompare);
+    const PriorityQueue = ListQueue; // 使用ListQueue获得O(1)插入性能
 
     const ListQueue = struct {
         const List = std.ArrayList(*Co);
@@ -439,9 +439,22 @@ pub const Schedule = struct {
             };
         }
     }
-    // 批量处理配置
-    const BATCH_SIZE = 32; // 每次处理32个协程
+    // 批量处理配置 - 动态调整
+    const BATCH_SIZE_MIN = 8; // 最小批处理大小
+    const BATCH_SIZE_MAX = 64; // 最大批处理大小
     const MAX_READY_COUNT = 100000; // 最大就绪协程数，增加到10万
+
+    // 根据队列长度动态确定批处理大小
+    fn getBatchSize(queue_len: usize) usize {
+        return if (queue_len < 50)
+            BATCH_SIZE_MIN // 队列短，小批量处理
+        else if (queue_len < 200)
+            16 // 中等队列
+        else if (queue_len < 500)
+            32 // 较大队列
+        else
+            BATCH_SIZE_MAX; // 队列很长，大批量处理
+    }
 
     inline fn checkNextCo(self: *Schedule) !void {
         // === 关键区开始：屏蔽信号 ===
@@ -460,8 +473,9 @@ pub const Schedule = struct {
         }
 
         if (count > 0) {
-            // 批量处理协程，提高调度效率
-            const processCount = @min(count, BATCH_SIZE);
+            // 动态调整批处理大小，根据队列长度优化调度效率
+            const batch_size = getBatchSize(count);
+            const processCount = @min(count, batch_size);
             for (0..processCount) |_| {
                 const nextCo = self.readyQueue.remove();
 
