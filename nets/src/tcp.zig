@@ -56,20 +56,19 @@ pub const Tcp = struct {
         }).callback);
         try co.Suspend();
         const clientConn = try result.clientConn;
-        
+
         // 设置TCP_NODELAY，禁用Nagle算法以降低延迟
         const nodelay: posix.socket_t = 1;
         const fd = if (@import("builtin").os.tag == .windows)
             @as(std.os.windows.ws2_32.SOCKET, @ptrCast(clientConn.fd))
         else
             clientConn.fd;
-        
+
         // 设置TCP_NODELAY，性能优化
-        posix.setsockopt(fd, posix.IPPROTO.TCP, posix.TCP.NODELAY, 
-            &std.mem.toBytes(nodelay)) catch |e| {
+        posix.setsockopt(fd, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(nodelay)) catch |e| {
             std.log.warn("Failed to set TCP_NODELAY: {s}", .{@errorName(e)});
         };
-        
+
         const retTcp = try self.schedule.allocator.create(Tcp);
         retTcp.* = .{
             .xobj = clientConn,

@@ -186,33 +186,35 @@ fn handleRequestFast(buffer: []const u8, client: *nets.Tcp) !bool {
     // 快速扫描Connection头 (避免使用indexOf)
     var isKeepAlive = false;
     var i: usize = 0;
-    
+
     // 扫描"Connection:"字符串
     while (i < buffer.len - 10) {
-        if (buffer[i] == 'C' and 
-            buffer[i+1] == 'o' and 
-            buffer[i+2] == 'n' and 
-            buffer[i+3] == 'n' and 
-            buffer[i+4] == 'e' and 
-            buffer[i+5] == 'c' and 
-            buffer[i+6] == 't' and 
-            buffer[i+7] == 'i' and 
-            buffer[i+8] == 'o' and 
-            buffer[i+9] == 'n' and 
-            buffer[i+10] == ':') {
+        if (buffer[i] == 'C' and
+            buffer[i + 1] == 'o' and
+            buffer[i + 2] == 'n' and
+            buffer[i + 3] == 'n' and
+            buffer[i + 4] == 'e' and
+            buffer[i + 5] == 'c' and
+            buffer[i + 6] == 't' and
+            buffer[i + 7] == 'i' and
+            buffer[i + 8] == 'o' and
+            buffer[i + 9] == 'n' and
+            buffer[i + 10] == ':')
+        {
             // 找到Connection头，检查是否是keep-alive
-            const remain = if (i + 11 < buffer.len) buffer[i + 11..] else break;
-            if (remain.len >= 10 and 
-                remain[1] == 'k' and 
-                remain[2] == 'e' and 
-                remain[3] == 'e' and 
-                remain[4] == 'p' and 
-                remain[5] == '-' and 
-                remain[6] == 'a' and 
-                remain[7] == 'l' and 
-                remain[8] == 'i' and 
-                remain[9] == 'v' and 
-                remain[10] == 'e') {
+            const remain = if (i + 11 < buffer.len) buffer[i + 11 ..] else break;
+            if (remain.len >= 10 and
+                remain[1] == 'k' and
+                remain[2] == 'e' and
+                remain[3] == 'e' and
+                remain[4] == 'p' and
+                remain[5] == '-' and
+                remain[6] == 'a' and
+                remain[7] == 'l' and
+                remain[8] == 'i' and
+                remain[9] == 'v' and
+                remain[10] == 'e')
+            {
                 isKeepAlive = true;
             }
             break;
