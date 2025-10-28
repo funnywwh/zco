@@ -23,6 +23,10 @@ const HTTP_200_CLOSE = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnectio
 const MAX_CONNECTIONS = 10000;
 var connectionCount: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 
+// 协程池配置
+const WORKER_POOL_SIZE = 100; // 固定协程池大小
+const CHANNEL_BUFFER = 1000; // channel 缓冲大小
+
 // 性能监控
 const PerfMonitor = struct {
     requestCount: std.atomic.Value(u64),
@@ -64,6 +68,14 @@ fn httpHelloworld() !void {
     const schedule = try zco.newSchedule();
     defer schedule.deinit();
 
+    // 创建带缓冲的 channel 用于传递客户端连接
+    const TcpChan = zco.CreateChan(*nets.Tcp);
+    var clientChan = try TcpChan.init(schedule, CHANNEL_BUFFER);
+    defer {
+        clientChan.close();
+        clientChan.deinit();
+    }
+
     // 启动性能统计协程
     _ = try schedule.go(struct {
         fn run(s: *zco.Schedule) !void {
@@ -75,8 +87,59 @@ fn httpHelloworld() !void {
         }
     }.run, .{schedule});
 
+    // 创建固定数量的工作协程池
+    for (0..WORKER_POOL_SIZE) |_| {
+        _ = try schedule.go(struct {
+            fn run(chan: *TcpChan) !void {
+                while (true) {
+                    var client = chan.recv() catch |e| {
+                        // channel 关闭时退出
+                        std.log.info("Worker exiting: {any}", .{e});
+                        break;
+                    };
+
+                    // 检查连接数限制
+                    const currentConnections = connectionCount.load(.monotonic);
+                    if (currentConnections >= MAX_CONNECTIONS) {
+                        std.log.warn("Max connections reached, dropping connection", .{});
+                        client.close();
+                        client.deinit();
+                        continue;
+                    }
+
+                    _ = connectionCount.fetchAdd(1, .monotonic);
+
+                    // 处理客户端连接
+                    defer {
+                        _ = connectionCount.fetchSub(1, .monotonic);
+                        client.close();
+                        client.deinit();
+                    }
+
+                    var keepalive = true;
+                    var buffer: [1024]u8 = undefined;
+
+                    while (keepalive) {
+                        const n = client.read(buffer[0..]) catch |e| {
+                            std.log.debug("Read error: {any}", .{e});
+                            break;
+                        };
+                        if (n == 0) break;
+
+                        // 快速处理请求
+                        keepalive = handleRequestFast(buffer[0..n], client) catch |e| {
+                            std.log.err("Handle request error: {any}", .{e});
+                            break;
+                        };
+                    }
+                }
+            }
+        }.run, .{clientChan});
+    }
+
+    // 启动服务器协程：accept 循环并将连接发送到 channel
     _ = try schedule.go(struct {
-        fn run(s: *zco.Schedule) !void {
+        fn run(s: *zco.Schedule, chan: *TcpChan) !void {
             var server = try nets.Tcp.init(s);
             defer {
                 server.close();
@@ -85,56 +148,25 @@ fn httpHelloworld() !void {
             const address = try std.net.Address.parseIp4("127.0.0.1", 8080);
             std.log.info("Starting server on port {d}", .{address.getPort()});
             try server.bind(address);
-            try server.listen(MAX_CONNECTIONS); // 增加监听队列大小
+            try server.listen(MAX_CONNECTIONS);
             std.log.info("Server listening on port {d}", .{address.getPort()});
+            std.log.info("Worker pool size: {d}, Channel buffer: {d}", .{ WORKER_POOL_SIZE, CHANNEL_BUFFER });
+
             while (true) {
-                const _s = server.schedule;
                 var client = server.accept() catch |e| {
                     std.log.err("server accept error: {any}", .{e});
                     break;
                 };
-                errdefer {
+
+                // 将客户端连接发送到 channel，由工作协程处理
+                chan.send(client) catch |e| {
+                    std.log.err("Failed to send client to channel: {any}", .{e});
                     client.close();
                     client.deinit();
-                }
-
-                // 检查连接数限制
-                const currentConnections = connectionCount.load(.monotonic);
-                if (currentConnections >= MAX_CONNECTIONS) {
-                    std.log.warn("Max connections reached, dropping connection", .{});
-                    client.close();
-                    client.deinit();
-                    continue;
-                }
-
-                _ = connectionCount.fetchAdd(1, .monotonic);
-
-                _ = try _s.go(struct {
-                    fn run(_client: *nets.Tcp) !void {
-                        defer {
-                            _ = connectionCount.fetchSub(1, .monotonic);
-                        }
-
-                        defer {
-                            _client.close();
-                            _client.deinit();
-                        }
-
-                        var keepalive = true;
-                        var buffer: [1024]u8 = undefined;
-
-                        while (keepalive) {
-                            const n = try _client.read(buffer[0..]);
-                            if (n == 0) break;
-
-                            // 快速处理请求
-                            keepalive = try handleRequestFast(buffer[0..n], _client);
-                        }
-                    }
-                }.run, .{client});
+                };
             }
         }
-    }.run, .{schedule});
+    }.run, .{ schedule, clientChan });
 
     try schedule.loop();
 }
