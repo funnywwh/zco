@@ -87,7 +87,7 @@ pub const Chan = struct {
         });
         if (self.recvingQueue.items.len > 0) {
             const recvCo = self.recvingQueue.orderedRemove(0);
-            std.log.err("Chan send wakeup recv coid:{d}", .{recvCo.id});
+            // std.log.err("Chan send wakeup recv coid:{d}", .{recvCo.id});
             try schedule.ResumeCo(recvCo);
         }
         //等待recver读完成
