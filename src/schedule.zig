@@ -13,6 +13,19 @@ const DEFAULT_ZCO_STACK_SZIE = cfg.DEFAULT_ZCO_STACK_SZIE;
 const RING_BUFFER_SIZE = cfg.RING_BUFFER_SIZE;
 const MAX_PRIORITY_LEVELS = cfg.MAX_PRIORITY_LEVELS;
 
+// 线程专用定时器配置
+// 使用 CLOCK_MONOTONIC 以便等待时也继续计时
+const CLOCK_MONOTONIC = if (@hasDecl(c, "CLOCK_MONOTONIC"))
+    c.CLOCK_MONOTONIC
+else
+    1; // Linux中 CLOCK_MONOTONIC 的值
+
+// 使用 SIGEV_THREAD_ID 让信号只发给特定线程
+const SIGEV_THREAD_ID = if (@hasDecl(c, "SIGEV_THREAD_ID"))
+    c.SIGEV_THREAD_ID
+else
+    4; // Linux中 SIGEV_THREAD_ID 的值
+
 // 协程池配置
 const CO_POOL_SIZE = 500; // 协程池大小
 
@@ -25,36 +38,36 @@ const CoPool = struct {
     co_list: [CO_POOL_SIZE]*Co,
     free_co_list: std.ArrayList(usize),
     allocator: std.mem.Allocator,
-    
+
     pub fn init(allocator: std.mem.Allocator) !CoPool {
         var pool = CoPool{
             .co_list = undefined,
             .free_co_list = std.ArrayList(usize).init(allocator),
             .allocator = allocator,
         };
-        
+
         // 预分配协程
         for (0..CO_POOL_SIZE) |i| {
             pool.co_list[i] = try allocator.create(Co);
             try pool.free_co_list.append(i);
         }
-        
+
         return pool;
     }
-    
+
     pub fn deinit(self: *CoPool) void {
         for (0..CO_POOL_SIZE) |i| {
             self.allocator.destroy(self.co_list[i]);
         }
         self.free_co_list.deinit();
     }
-    
+
     pub fn alloc(self: *CoPool) ?*Co {
         if (self.free_co_list.items.len == 0) return null;
         const index = self.free_co_list.pop();
         return self.co_list[index];
     }
-    
+
     pub fn free(self: *CoPool, co: *Co) void {
         for (0..CO_POOL_SIZE) |i| {
             if (self.co_list[i] == co) {
@@ -70,36 +83,36 @@ const MemoryPool = struct {
     blocks: [MEMORY_POOL_SIZE][]u8,
     free_blocks: std.ArrayList(usize),
     allocator: std.mem.Allocator,
-    
+
     pub fn init(allocator: std.mem.Allocator) !MemoryPool {
         var pool = MemoryPool{
             .blocks = undefined,
             .free_blocks = std.ArrayList(usize).init(allocator),
             .allocator = allocator,
         };
-        
+
         // 预分配内存块
         for (0..MEMORY_POOL_SIZE) |i| {
             pool.blocks[i] = try allocator.alloc(u8, MEMORY_POOL_BLOCK_SIZE);
             try pool.free_blocks.append(i);
         }
-        
+
         return pool;
     }
-    
+
     pub fn deinit(self: *MemoryPool) void {
         for (0..MEMORY_POOL_SIZE) |i| {
             self.allocator.free(self.blocks[i]);
         }
         self.free_blocks.deinit();
     }
-    
+
     pub fn alloc(self: *MemoryPool) ?[]u8 {
         if (self.free_blocks.items.len == 0) return null;
         const index = self.free_blocks.pop();
         return self.blocks[index];
     }
-    
+
     pub fn free(self: *MemoryPool, block: []u8) void {
         for (0..MEMORY_POOL_SIZE) |i| {
             if (self.blocks[i].ptr == block.ptr) {
@@ -117,7 +130,7 @@ const RingBufferPriorityQueue = struct {
         head: usize,
         tail: usize,
         count: usize,
-        
+
         pub fn init(allocator: std.mem.Allocator) !RingBuffer {
             const buffer = try allocator.alloc(?*Co, RING_BUFFER_SIZE);
             // 初始化为null
@@ -131,11 +144,11 @@ const RingBufferPriorityQueue = struct {
                 .count = 0,
             };
         }
-        
+
         pub fn deinit(self: *RingBuffer, allocator: std.mem.Allocator) void {
             allocator.free(self.buffer);
         }
-        
+
         pub fn add(self: *RingBuffer, co: *Co) !void {
             if (self.count >= RING_BUFFER_SIZE) {
                 return error.RingBufferFull;
@@ -144,7 +157,7 @@ const RingBufferPriorityQueue = struct {
             self.tail = (self.tail + 1) % RING_BUFFER_SIZE;
             self.count += 1;
         }
-        
+
         pub fn remove(self: *RingBuffer) ?*Co {
             if (self.count == 0) {
                 return null;
@@ -155,72 +168,72 @@ const RingBufferPriorityQueue = struct {
             self.count -= 1;
             return co;
         }
-        
+
         pub fn isEmpty(self: *const RingBuffer) bool {
             return self.count == 0;
         }
-        
+
         pub fn isFull(self: *const RingBuffer) bool {
             return self.count >= RING_BUFFER_SIZE;
         }
     };
-    
+
     // 环形缓冲区数组
     rings: [MAX_PRIORITY_LEVELS]RingBuffer,
-    
+
     // 优先级位图 (32位，每位表示一个优先级级别是否有协程)
     priority_bitmap: u32,
-    
+
     allocator: std.mem.Allocator,
-    
+
     pub fn init(allocator: std.mem.Allocator) !RingBufferPriorityQueue {
         var queue = RingBufferPriorityQueue{
             .rings = undefined,
             .priority_bitmap = 0,
             .allocator = allocator,
         };
-        
+
         // 初始化所有优先级的环形缓冲区
         for (0..MAX_PRIORITY_LEVELS) |i| {
             queue.rings[i] = try RingBuffer.init(allocator);
         }
-        
+
         return queue;
     }
-    
+
     pub fn deinit(self: *RingBufferPriorityQueue) void {
         for (0..MAX_PRIORITY_LEVELS) |i| {
             self.rings[i].deinit(self.allocator);
         }
     }
-    
+
     pub fn add(self: *RingBufferPriorityQueue, co: *Co) !void {
         const priority = @min(co.priority, MAX_PRIORITY_LEVELS - 1);
         try self.rings[priority].add(co);
-        
+
         // 设置对应优先级的位图位
         self.priority_bitmap |= (@as(u32, 1) << @intCast(priority));
     }
-    
+
     pub fn remove(self: *RingBufferPriorityQueue) ?*Co {
         if (self.priority_bitmap == 0) {
             return null;
         }
-        
+
         // 使用 @clz() 快速找到最高优先级位 (O(1))
         const highest_priority = 31 - @clz(self.priority_bitmap);
-        
+
         // 从对应环形缓冲区头部取出协程
         const co = self.rings[highest_priority].remove();
-        
+
         // 如果该优先级队列为空，清除位图位
         if (self.rings[highest_priority].isEmpty()) {
             self.priority_bitmap &= ~(@as(u32, 1) << @intCast(highest_priority));
         }
-        
+
         return co;
     }
-    
+
     pub fn count(self: *const RingBufferPriorityQueue) usize {
         var total: usize = 0;
         for (0..MAX_PRIORITY_LEVELS) |i| {
@@ -228,29 +241,29 @@ const RingBufferPriorityQueue = struct {
         }
         return total;
     }
-    
+
     pub fn isEmpty(self: *const RingBufferPriorityQueue) bool {
         return self.priority_bitmap == 0;
     }
-    
+
     // 获取指定优先级的协程数量
     pub fn getPriorityCount(self: *const RingBufferPriorityQueue, priority: usize) usize {
         if (priority >= MAX_PRIORITY_LEVELS) return 0;
         return self.rings[priority].count;
     }
-    
+
     // 获取当前最高优先级
     pub fn getHighestPriority(self: *const RingBufferPriorityQueue) ?usize {
         if (self.priority_bitmap == 0) return null;
         return 31 - @clz(self.priority_bitmap);
     }
-    
+
     // 迭代器支持（为了兼容现有代码）
     const Iterator = struct {
         queue: *RingBufferPriorityQueue,
         current_priority: usize = 0,
         current_index: usize = 0,
-        
+
         fn next(self: *Iterator) ?*Co {
             // 找到下一个有协程的优先级
             while (self.current_priority < MAX_PRIORITY_LEVELS) {
@@ -268,7 +281,7 @@ const RingBufferPriorityQueue = struct {
             return null;
         }
     };
-    
+
     pub fn iterator(self: *RingBufferPriorityQueue) Iterator {
         return Iterator{
             .queue = self,
@@ -276,12 +289,12 @@ const RingBufferPriorityQueue = struct {
             .current_index = 0,
         };
     }
-    
+
     // 移除指定索引的协程（为了兼容现有代码）
     // 注意：这个方法效率不高，因为需要遍历所有优先级
     pub fn removeIndex(self: *RingBufferPriorityQueue, idx: usize) ?*Co {
         var current_idx: usize = 0;
-        
+
         for (0..MAX_PRIORITY_LEVELS) |priority| {
             const ring = &self.rings[priority];
             if (current_idx + ring.count > idx) {
@@ -289,7 +302,7 @@ const RingBufferPriorityQueue = struct {
                 const local_idx = idx - current_idx;
                 const buffer_idx = (ring.head + local_idx) % RING_BUFFER_SIZE;
                 const co = ring.buffer[buffer_idx];
-                
+
                 if (co) |found_co| {
                     // 移除协程（将后面的协程前移）
                     var i = local_idx;
@@ -299,23 +312,23 @@ const RingBufferPriorityQueue = struct {
                         ring.buffer[current_buffer_idx] = ring.buffer[next_buffer_idx];
                         i += 1;
                     }
-                    
+
                     // 清除最后一个位置
                     const last_buffer_idx = (ring.head + ring.count - 1) % RING_BUFFER_SIZE;
                     ring.buffer[last_buffer_idx] = null;
                     ring.count -= 1;
-                    
+
                     // 如果该优先级队列为空，清除位图位
                     if (ring.isEmpty()) {
                         self.priority_bitmap &= ~(@as(u32, 1) << @intCast(priority));
                     }
-                    
+
                     return found_co;
                 }
             }
             current_idx += ring.count;
         }
-        
+
         return null;
     }
 };
@@ -450,14 +463,26 @@ pub const Schedule = struct {
             return error.sigaction;
         }
 
-        // 创建线程定时器
+        localSchedule = schedule;
+        schedule.tid = std.Thread.getCurrentId();
+
+        // 创建线程专用定时器
+        // 使用 CLOCK_MONOTONIC 以便等待时也继续计时
+        // 使用 SIGEV_THREAD_ID 让信号只发给当前线程
         var sev: c.struct_sigevent = undefined;
         @memset(@as([*]u8, @ptrCast(&sev))[0..@sizeOf(c.struct_sigevent)], 0);
-        sev.sigev_notify = c.SIGEV_SIGNAL;
+
+        // 获取当前线程的系统TID（用于SIGEV_THREAD_ID）
+        const tid = c.syscall(c.SYS_gettid);
+
+        sev.sigev_notify = SIGEV_THREAD_ID;
         sev.sigev_signo = c.SIGALRM;
+        // SIGEV_THREAD_ID 需要设置 _sigev_un._tid 字段为线程的系统TID
+        // 这是 Linux 特定的结构体字段访问方式
+        sev._sigev_un._tid = @intCast(tid);
 
         var timerid: c.timer_t = undefined;
-        if (c.timer_create(c.CLOCK_REALTIME, &sev, &timerid) != 0) {
+        if (c.timer_create(CLOCK_MONOTONIC, &sev, &timerid) != 0) {
             return error.timer_create;
         }
         schedule.timer_id = timerid;
@@ -469,9 +494,6 @@ pub const Schedule = struct {
 
         // 暂时不启动定时器，等到第一次 Resume 之后再启动
         // 这样可以确保 schedule.ctx 已经被正确初始化
-
-        localSchedule = schedule;
-        schedule.tid = std.Thread.getCurrentId();
         return schedule;
     }
     pub fn resumeAll(self: *Schedule) !void {
@@ -491,13 +513,13 @@ pub const Schedule = struct {
         self.resumeAll() catch |e| {
             std.log.err("Schedule deinit resumeAll error:{s}", .{@errorName(e)});
         };
-        
+
         // 清理内存池
         self.memoryPool.deinit();
-        
+
         // 清理协程池
         self.coPool.deinit();
-        
+
         if (self.xLoop) |*xLoop| {
             xLoop.deinit();
             self.xLoop = null;
@@ -859,10 +881,10 @@ pub const Schedule = struct {
             // 动态调整批处理大小，根据队列长度优化调度效率
             const batch_size = getBatchSize(count);
             const processCount = @min(count, batch_size);
-            
+
             // 批量处理：只在开始时恢复信号屏蔽，结束时重新屏蔽
             _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null); // 恢复信号屏蔽
-            
+
             for (0..processCount) |_| {
                 const nextCo = self.readyQueue.remove();
                 if (nextCo) |co| {
@@ -871,7 +893,7 @@ pub const Schedule = struct {
                     break; // 队列为空，停止处理
                 }
             }
-            
+
             _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset); // 重新屏蔽信号
         } else {
             // 恢复信号屏蔽

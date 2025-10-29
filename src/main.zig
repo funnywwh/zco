@@ -25,7 +25,8 @@ pub fn main() !void {
 
     // const t6 = try std.Thread.spawn(.{}, testTimerLifecycle, .{});
     // t6.join();
-    try testPreemption();
+    const t7 = try std.Thread.spawn(.{}, testPreemption, .{});
+    t7.join();
 }
 
 pub fn testDataChan() !void {
