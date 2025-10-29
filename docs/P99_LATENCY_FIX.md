@@ -15,10 +15,16 @@
 ```bash
 # ❌ 错误：没有启用 keep-alive（每个请求都新建连接）
 ab -n 10000 -c 100 http://127.0.0.1:8080/
+# 结果：P99=2675ms, RPS=6430/sec（性能差）
 
 # ✅ 正确：启用 keep-alive（在同一个连接上发送多个请求）
 ab -k -n 10000 -c 100 http://127.0.0.1:8080/
+# 结果：P99=32ms, RPS=110750/sec（性能好 17.2x）
 ```
+
+### 性能对比
+
+详见 **[HTTP_KEEPALIVE_COMPARISON.md](./HTTP_KEEPALIVE_COMPARISON.md)**
 
 ## 其他可能的问题
 
