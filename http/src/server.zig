@@ -32,6 +32,9 @@ pub const Server = struct {
     /// 是否使用协程池模式
     use_pool: bool = true, // 默认启用协程池
 
+    /// Channel 用于协程池（生命周期需要与 Server 一致）
+    client_chan: ?*zco.CreateChan(*nets.Tcp) = null,
+
     /// 初始化服务器
     pub fn init(allocator: std.mem.Allocator, schedule: *zco.Schedule) Self {
         return .{
@@ -74,6 +77,12 @@ pub const Server = struct {
         if (self.tcp) |tcp| {
             tcp.close();
             tcp.deinit();
+        }
+        // 清理 channel（如果使用了协程池）
+        if (self.client_chan) |chan| {
+            chan.close();
+            chan.deinit();
+            self.client_chan = null;
         }
     }
 
@@ -131,8 +140,16 @@ pub const Server = struct {
                 continue;
             };
 
-            // 为每个连接启动协程
-            _ = try self.schedule.go(handleConnection, .{ self, client });
+            // 为每个连接启动协程（直接模式下，handleConnection 需要清理 client）
+            _ = try self.schedule.go(struct {
+                fn run(server_ptr: *Self, client_ptr: *nets.Tcp) !void {
+                    defer {
+                        client_ptr.close();
+                        client_ptr.deinit();
+                    }
+                    try handleConnection(server_ptr, client_ptr);
+                }
+            }.run, .{ self, client });
         }
     }
 
@@ -149,13 +166,10 @@ pub const Server = struct {
         std.log.info("HTTP server listening on {} (pool mode)", .{address});
         std.log.info("Worker pool size: {}, Channel buffer: {}, Max connections: {}", .{ self.worker_pool_size, self.channel_buffer, self.max_connections });
 
-        // 创建 channel 用于传递客户端连接
+        // 创建 channel 用于传递客户端连接（生命周期与 Server 一致）
         const TcpChan = zco.CreateChan(*nets.Tcp);
-        var client_chan = try TcpChan.init(self.schedule, self.channel_buffer);
-        defer {
-            client_chan.close();
-            client_chan.deinit();
-        }
+        const client_chan = try TcpChan.init(self.schedule, self.channel_buffer);
+        self.client_chan = client_chan; // 保存引用，在 deinit 时清理
 
         // 创建固定数量的工作协程池
         for (0..self.worker_pool_size) |_| {
@@ -179,17 +193,16 @@ pub const Server = struct {
 
                         _ = server_ptr.connection_count.fetchAdd(1, .monotonic);
 
-                        // 处理客户端连接
-                        defer {
-                            _ = server_ptr.connection_count.fetchSub(1, .monotonic);
-                            client.close();
-                            client.deinit();
-                        }
-
-                        // 使用现有的 handleConnection 逻辑
+                        // 使用现有的 handleConnection 逻辑处理连接
+                        // handleConnection 会处理 keep-alive 连接的所有请求
                         handleConnection(server_ptr, client) catch |e| {
                             std.log.err("Handle connection error: {s}", .{@errorName(e)});
                         };
+                        
+                        // 连接处理完成后清理资源并更新计数器
+                        _ = server_ptr.connection_count.fetchSub(1, .monotonic);
+                        client.close();
+                        client.deinit();
                     }
                 }
             }.run, .{ self, client_chan });
@@ -214,17 +227,18 @@ pub const Server = struct {
             }
         }.run, .{ tcp, client_chan });
 
-        // 阻塞等待（listenWithPool 会在协程池中继续运行）
-        // 注意：这里不应该返回，应该让协程继续运行
+        // listenWithPool 不会返回，协程会持续运行
+        // 当 Server 被 deinit 时，channel 会被清理，工作协程会退出
     }
 
     /// 处理单个连接（支持HTTP keep-alive）
+    /// 注意：在协程池模式下，调用者负责 client 的清理；在直接模式下使用 defer 自动清理
     fn handleConnection(server: *Self, client: *nets.Tcp) !void {
-        defer {
-            client.close();
-            client.deinit();
-        }
-
+        // 在直接模式下，这个 defer 会清理连接
+        // 在协程池模式下，工作协程会负责清理，但这里也保留 defer 作为保护
+        // 由于 defer 在函数返回时执行，而协程池模式下我们在函数返回后手动清理，
+        // 这会导致双重清理。我们需要一个标志来区分模式，或者移除 defer。
+        // 暂时移除 defer，由调用者负责清理
         var buffer = try server.allocator.alloc(u8, server.read_buffer_size);
         defer server.allocator.free(buffer);
 
