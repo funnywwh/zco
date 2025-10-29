@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 性能测试脚本
-# 对比 ZCO 和 Go 的 HTTP 服务器性能
+# 对比 ZCO、Go 和 gnet 的 HTTP 服务器性能
 
 set -e
 
@@ -15,6 +15,7 @@ NC='\033[0m' # No Color
 # 测试配置
 ZIG_SERVER_PORT=8080
 GO_SERVER_PORT=8081
+GNET_SERVER_PORT=8082
 RESULTS_DIR="results"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
@@ -26,7 +27,7 @@ TEST_CASES=(
     "100000:1000"  # 100000 requests, 1000 concurrent
 )
 
-echo -e "${BLUE}=== ZCO vs Go HTTP Server Performance Benchmark ===${NC}"
+echo -e "${BLUE}=== ZCO vs Go vs gnet HTTP Server Performance Benchmark ===${NC}"
 echo "Timestamp: $TIMESTAMP"
 echo "Results will be saved to: $RESULTS_DIR/"
 echo
@@ -73,6 +74,12 @@ build_servers() {
     go build -o go_server main.go
     cd ..
     
+    # 构建 gnet 服务器
+    echo "Building gnet server..."
+    cd gnet_benchmark
+    go build -o simple_http_server simple_http_server.go
+    cd ..
+    
     echo -e "${GREEN}Servers built successfully${NC}"
 }
 
@@ -87,9 +94,14 @@ start_server() {
         ./zig_server &
         echo $! > "../$pid_file"
         cd ..
-    else
+    elif [ "$server_type" = "go" ]; then
         cd go_server
         ./go_server &
+        echo $! > "../$pid_file"
+        cd ..
+    elif [ "$server_type" = "gnet" ]; then
+        cd gnet_benchmark
+        ./simple_http_server -port $port &
         echo $! > "../$pid_file"
         cd ..
     fi
@@ -151,7 +163,7 @@ generate_report() {
     echo -e "${YELLOW}Generating benchmark report...${NC}"
     
     cat > "$report_file" << EOF
-# ZCO vs Go HTTP Server Performance Benchmark
+# ZCO vs Go vs gnet HTTP Server Performance Benchmark
 
 **Test Date:** $(date)
 **Test Environment:** $(uname -a)
@@ -160,6 +172,7 @@ generate_report() {
 
 - **ZCO Server Port:** $ZIG_SERVER_PORT
 - **Go Server Port:** $GO_SERVER_PORT
+- **gnet Server Port:** $GNET_SERVER_PORT
 - **Test Tool:** ApacheBench (ab)
 
 ## Results Summary
@@ -191,6 +204,16 @@ EOF
             
             echo "| $requests/$concurrency | Go | $requests | $concurrency | $go_rps | $go_avg | $go_failed |" >> "$report_file"
         fi
+        
+        # gnet 结果
+        local gnet_file="$RESULTS_DIR/gnet_${requests}_${concurrency}.txt"
+        if [ -f "$gnet_file" ]; then
+            local gnet_rps=$(grep "Requests per second" "$gnet_file" | awk '{print $4}')
+            local gnet_avg=$(grep "Time per request.*mean)" "$gnet_file" | awk '{print $4}')
+            local gnet_failed=$(grep "Failed requests" "$gnet_file" | awk '{print $3}')
+            
+            echo "| $requests/$concurrency | gnet | $requests | $concurrency | $gnet_rps | $gnet_avg | $gnet_failed |" >> "$report_file"
+        fi
     done
     
     cat >> "$report_file" << EOF
@@ -221,6 +244,16 @@ EOF
             echo "#### Go Server" >> "$report_file"
             echo '```' >> "$report_file"
             cat "$go_file" >> "$report_file"
+            echo '```' >> "$report_file"
+            echo "" >> "$report_file"
+        fi
+        
+        # gnet 详细结果
+        local gnet_file="$RESULTS_DIR/gnet_${requests}_${concurrency}.txt"
+        if [ -f "$gnet_file" ]; then
+            echo "#### gnet Server" >> "$report_file"
+            echo '```' >> "$report_file"
+            cat "$gnet_file" >> "$report_file"
             echo '```' >> "$report_file"
             echo "" >> "$report_file"
         fi
@@ -261,6 +294,21 @@ main() {
     
     stop_server "go_server.pid"
     
+    # 等待端口释放
+    sleep 2
+    
+    # 测试 gnet 服务器
+    echo -e "${BLUE}=== Testing gnet Server ===${NC}"
+    start_server "gnet" $GNET_SERVER_PORT "gnet_server.pid"
+    
+    for test_case in "${TEST_CASES[@]}"; do
+        IFS=':' read -r requests concurrency <<< "$test_case"
+        local output_file="$RESULTS_DIR/gnet_${requests}_${concurrency}.txt"
+        run_benchmark "gnet" $GNET_SERVER_PORT "$requests" "$concurrency" "$output_file"
+    done
+    
+    stop_server "gnet_server.pid"
+    
     # 生成报告
     generate_report
     
@@ -273,6 +321,7 @@ cleanup() {
     echo -e "${YELLOW}Cleaning up...${NC}"
     stop_server "zig_server.pid"
     stop_server "go_server.pid"
+    stop_server "gnet_server.pid"
 }
 
 # 设置清理陷阱
