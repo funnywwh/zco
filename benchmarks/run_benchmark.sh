@@ -77,7 +77,7 @@ build_servers() {
     # 构建 gnet 服务器
     echo "Building gnet server..."
     cd gnet_benchmark
-    go build -o simple_http_server simple_http_server.go
+    go build -o simple_http_server
     cd ..
     
     echo -e "${GREEN}Servers built successfully${NC}"
