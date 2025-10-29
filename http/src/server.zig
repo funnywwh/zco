@@ -21,6 +21,17 @@ pub const Server = struct {
     /// 最大请求大小
     max_request_size: usize = 1024 * 1024, // 1MB
 
+    /// 协程池配置
+    worker_pool_size: usize = 100, // 工作协程池大小
+    channel_buffer: usize = 1000, // channel 缓冲大小
+    max_connections: u32 = 10000, // 最大连接数
+
+    /// 连接计数器（原子操作）
+    connection_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    /// 是否使用协程池模式
+    use_pool: bool = true, // 默认启用协程池
+
     /// 初始化服务器
     pub fn init(allocator: std.mem.Allocator, schedule: *zco.Schedule) Self {
         return .{
@@ -28,7 +39,32 @@ pub const Server = struct {
             .schedule = schedule,
             .router = router.Router.init(allocator),
             .middleware_chain = middleware.MiddlewareChain.init(allocator),
+            .worker_pool_size = 100,
+            .channel_buffer = 1000,
+            .max_connections = 10000,
+            .connection_count = std.atomic.Value(u32).init(0),
+            .use_pool = true,
         };
+    }
+
+    /// 设置协程池大小
+    pub fn setWorkerPoolSize(self: *Self, size: usize) void {
+        self.worker_pool_size = size;
+    }
+
+    /// 设置 channel 缓冲大小
+    pub fn setChannelBuffer(self: *Self, size: usize) void {
+        self.channel_buffer = size;
+    }
+
+    /// 设置最大连接数
+    pub fn setMaxConnections(self: *Self, max: u32) void {
+        self.max_connections = max;
+    }
+
+    /// 启用/禁用协程池模式
+    pub fn setUsePool(self: *Self, use: bool) void {
+        self.use_pool = use;
     }
 
     /// 清理服务器资源
@@ -69,6 +105,15 @@ pub const Server = struct {
 
     /// 监听指定地址（需要在协程环境中调用）
     pub fn listen(self: *Self, address: std.net.Address) !void {
+        if (self.use_pool) {
+            try self.listenWithPool(address);
+        } else {
+            try self.listenDirect(address);
+        }
+    }
+
+    /// 直接模式：为每个连接创建协程（原始方式）
+    fn listenDirect(self: *Self, address: std.net.Address) !void {
         const tcp = try nets.Tcp.init(self.schedule);
         errdefer tcp.deinit();
 
@@ -77,7 +122,7 @@ pub const Server = struct {
 
         self.tcp = tcp;
 
-        std.log.info("HTTP server listening on {}", .{address});
+        std.log.info("HTTP server listening on {} (direct mode)", .{address});
 
         // 接受连接并处理（accept必须在协程环境中调用）
         while (true) {
@@ -89,6 +134,88 @@ pub const Server = struct {
             // 为每个连接启动协程
             _ = try self.schedule.go(handleConnection, .{ self, client });
         }
+    }
+
+    /// 协程池模式：使用固定数量的工作协程处理连接
+    fn listenWithPool(self: *Self, address: std.net.Address) !void {
+        const tcp = try nets.Tcp.init(self.schedule);
+        errdefer tcp.deinit();
+
+        try tcp.bind(address);
+        try tcp.listen(@intCast(self.max_connections));
+
+        self.tcp = tcp;
+
+        std.log.info("HTTP server listening on {} (pool mode)", .{address});
+        std.log.info("Worker pool size: {}, Channel buffer: {}, Max connections: {}", .{ self.worker_pool_size, self.channel_buffer, self.max_connections });
+
+        // 创建 channel 用于传递客户端连接
+        const TcpChan = zco.CreateChan(*nets.Tcp);
+        var client_chan = try TcpChan.init(self.schedule, self.channel_buffer);
+        defer {
+            client_chan.close();
+            client_chan.deinit();
+        }
+
+        // 创建固定数量的工作协程池
+        for (0..self.worker_pool_size) |_| {
+            _ = try self.schedule.go(struct {
+                fn run(server_ptr: *Self, chan: *TcpChan) !void {
+                    while (true) {
+                        var client = chan.recv() catch |e| {
+                            // channel 关闭时退出
+                            std.log.info("Worker exiting: {s}", .{@errorName(e)});
+                            break;
+                        };
+
+                        // 检查连接数限制
+                        const current_connections = server_ptr.connection_count.load(.monotonic);
+                        if (current_connections >= server_ptr.max_connections) {
+                            std.log.warn("Max connections reached ({}), dropping connection", .{server_ptr.max_connections});
+                            client.close();
+                            client.deinit();
+                            continue;
+                        }
+
+                        _ = server_ptr.connection_count.fetchAdd(1, .monotonic);
+
+                        // 处理客户端连接
+                        defer {
+                            _ = server_ptr.connection_count.fetchSub(1, .monotonic);
+                            client.close();
+                            client.deinit();
+                        }
+
+                        // 使用现有的 handleConnection 逻辑
+                        handleConnection(server_ptr, client) catch |e| {
+                            std.log.err("Handle connection error: {s}", .{@errorName(e)});
+                        };
+                    }
+                }
+            }.run, .{ self, client_chan });
+        }
+
+        // 启动服务器协程：accept 循环并将连接发送到 channel
+        _ = try self.schedule.go(struct {
+            fn run(tcp_ptr: *nets.Tcp, chan: *TcpChan) !void {
+                while (true) {
+                    var client = tcp_ptr.accept() catch |e| {
+                        std.log.err("Server accept error: {s}", .{@errorName(e)});
+                        continue;
+                    };
+
+                    // 将客户端连接发送到 channel，由工作协程处理
+                    chan.send(client) catch |e| {
+                        std.log.err("Failed to send client to channel: {s}", .{@errorName(e)});
+                        client.close();
+                        client.deinit();
+                    };
+                }
+            }
+        }.run, .{ tcp, client_chan });
+
+        // 阻塞等待（listenWithPool 会在协程池中继续运行）
+        // 注意：这里不应该返回，应该让协程继续运行
     }
 
     /// 处理单个连接（支持HTTP keep-alive）
