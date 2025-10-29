@@ -125,7 +125,7 @@ pub const Router = struct {
     /// 创建路由组
     pub fn group(self: *Self, prefix: []const u8) !*RouteGroup {
         const prefix_dup = try self.allocator.dupe(u8, prefix);
-        var new_group = RouteGroup{
+        const new_group = RouteGroup{
             .prefix = prefix_dup,
             .routes = std.ArrayList(*Route).init(self.allocator),
             .allocator = self.allocator,
@@ -198,18 +198,17 @@ pub const Router = struct {
                 // 提取参数名和值
                 const param_name = pattern_val[1..];
                 const param_value = path_val;
-                
+
                 // 分配并存储参数
                 const param_name_dup = ctx.allocator.dupe(u8, param_name) catch return false;
                 const param_value_dup = ctx.allocator.dupe(u8, param_value) catch {
                     ctx.allocator.free(param_name_dup);
                     return false;
                 };
-                
-                ctx.req.params.put(param_name_dup, param_value_dup) catch |e| {
+
+                ctx.req.params.put(param_name_dup, param_value_dup) catch {
                     ctx.allocator.free(param_name_dup);
                     ctx.allocator.free(param_value_dup);
-                    _ = e;
                     return false;
                 };
             } else {
@@ -228,9 +227,8 @@ pub const Router = struct {
             try h(ctx);
         } else {
             // 404 Not Found
-            ctx.status = 404;
+            ctx.res.status = 404;
             try ctx.text(404, "Not Found");
         }
     }
 };
-

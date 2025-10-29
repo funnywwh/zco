@@ -6,7 +6,7 @@ pub const Template = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    
+
     /// 模板变量
     vars: std.StringHashMap([]const u8),
 
@@ -53,7 +53,7 @@ pub const Template = struct {
         while (mut_i < template.len) {
             if (template[mut_i] == '{' and mut_i + 1 < template.len and template[mut_i + 1] == '{') {
                 // 找到变量 {{var}}
-                var var_start = mut_i + 2;
+                const var_start = mut_i + 2;
                 var var_end = var_start;
 
                 // 查找闭合 }}
@@ -67,7 +67,7 @@ pub const Template = struct {
                 if (var_end < template.len) {
                     // 提取变量名
                     const var_name = std.mem.trim(u8, template[var_start..var_end], " ");
-                    
+
                     // 查找变量值
                     if (self.vars.get(var_name)) |value| {
                         try result.appendSlice(value);
@@ -112,4 +112,3 @@ pub const Template = struct {
         try ctx.send();
     }
 };
-

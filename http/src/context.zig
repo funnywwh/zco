@@ -13,7 +13,7 @@ pub const Context = struct {
     tcp: *nets.Tcp,
     req: request.Request,
     res: response.Response,
-    
+
     /// 用户自定义数据存储
     values: std.StringHashMap(*anyopaque),
 
@@ -33,7 +33,7 @@ pub const Context = struct {
     pub fn deinit(self: *Self) void {
         self.req.deinit();
         self.res.deinit();
-        
+
         // 清理values（注意：值指针需要调用者管理）
         self.values.deinit();
     }
@@ -54,9 +54,9 @@ pub const Context = struct {
         try self.res.send(self.tcp);
     }
 
-    /// 发送JSON响应
-    pub fn json(self: *Self, status: u16, data: anytype) !void {
-        try self.res.json(status, data, self.allocator);
+    /// 发送JSON响应（字符串版本）
+    pub fn jsonString(self: *Self, status: u16, json_str: []const u8) !void {
+        try self.res.jsonString(status, json_str);
         try self.send();
     }
 
@@ -82,4 +82,3 @@ pub const Context = struct {
         try self.res.cookie(name, value, options, self.allocator);
     }
 };
-

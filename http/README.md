@@ -155,14 +155,14 @@ fn handleText(ctx: *http.Context) !void {
 
 ```zig
 fn handleJSON(ctx: *http.Context) !void {
-    // 方式1: 直接传递字符串
-    try ctx.json(200, "{\"message\":\"success\"}");
+    // 使用 jsonString 发送 JSON 字符串
+    try ctx.jsonString(200, "{\"message\":\"success\"}");
     
-    // 方式2: 使用ArrayList构建
+    // 或使用ArrayList构建
     var json = std.ArrayList(u8).init(ctx.allocator);
     defer json.deinit();
     try json.writer().print("{{\"status\":\"ok\"}}", .{});
-    try ctx.json(200, json.items);
+    try ctx.jsonString(200, json.items);
 }
 ```
 
@@ -450,7 +450,7 @@ fn handleWithError(ctx: *http.Context) !void {
     
     // 或使用JSON错误响应
     ctx.res.status = 500;
-    try ctx.json(500, "{\"error\":\"Internal Server Error\"}");
+    try ctx.jsonString(500, "{\"error\":\"Internal Server Error\"}");
 }
 ```
 

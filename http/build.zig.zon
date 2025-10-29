@@ -1,7 +1,7 @@
 .{
     .name = .http,
     .version = "0.0.0",
-    .fingerprint = 0x42ce80b977a2046d,
+    .fingerprint = 0x97780db2d22576e6,
     .dependencies = .{
         .zco = .{
             .path = "../",
@@ -25,4 +25,3 @@
         "src",
     },
 }
-

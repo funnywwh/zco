@@ -6,16 +6,16 @@ pub const Response = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    
+
     /// 状态码
     status: u16 = 200,
-    
+
     /// 响应头
     headers: std.StringHashMap([]const u8),
-    
+
     /// 响应体
     body: std.ArrayList(u8),
-    
+
     /// Cookies
     cookies: std.ArrayList(Cookie),
 
@@ -78,7 +78,6 @@ pub const Response = struct {
     }
 
     /// 设置状态码（通过直接访问status字段）
-
     /// 设置响应头
     pub fn header(self: *Self, key: []const u8, value: []const u8) !void {
         const key_dup = try self.allocator.dupe(u8, key);
@@ -96,7 +95,7 @@ pub const Response = struct {
     pub fn cookie(self: *Self, name: []const u8, value: []const u8, options: CookieOptions, allocator: std.mem.Allocator) !void {
         const name_dup = try allocator.dupe(u8, name);
         errdefer allocator.free(name_dup);
-        
+
         const value_dup = try allocator.dupe(u8, value);
         errdefer allocator.free(value_dup);
 
@@ -127,7 +126,7 @@ pub const Response = struct {
     pub fn text(self: *Self, status: u16, content: []const u8) !void {
         self.status = status;
         try self.header("Content-Type", "text/plain; charset=utf-8");
-        try self.body.clearRetainingCapacity();
+        self.body.clearRetainingCapacity();
         try self.write(content);
     }
 
@@ -135,21 +134,16 @@ pub const Response = struct {
     pub fn html(self: *Self, status: u16, content: []const u8) !void {
         self.status = status;
         try self.header("Content-Type", "text/html; charset=utf-8");
-        try self.body.clearRetainingCapacity();
+        self.body.clearRetainingCapacity();
         try self.write(content);
     }
 
-    /// 发送JSON响应
-    pub fn json(self: *Self, status: u16, data: anytype, allocator: std.mem.Allocator) !void {
+    /// 发送JSON响应（字符串版本）
+    pub fn jsonString(self: *Self, status: u16, json_str: []const u8) !void {
         self.status = status;
         try self.header("Content-Type", "application/json; charset=utf-8");
-        try self.body.clearRetainingCapacity();
-
-        var buffer = std.ArrayList(u8).init(allocator);
-        defer buffer.deinit();
-
-        try std.json.stringify(data, .{}, buffer.writer());
-        try self.write(buffer.items);
+        self.body.clearRetainingCapacity();
+        try self.write(json_str);
     }
 
     /// 发送响应到TCP连接
@@ -177,7 +171,7 @@ pub const Response = struct {
         };
 
         // 写入响应行
-        try response_buf.writer().print("HTTP/1.1 {} {}\r\n", .{ self.status, status_text });
+        try response_buf.writer().print("HTTP/1.1 {} {s}\r\n", .{ self.status, status_text });
 
         // 写入Content-Length（如果没有设置）
         if (!self.headers.contains("Content-Length")) {
@@ -203,19 +197,19 @@ pub const Response = struct {
                 try response_buf.writer().print("; Path={s}", .{path});
             }
             if (cookie_item.options.secure) {
-                try response_buf.writeAll("; Secure");
+                try response_buf.appendSlice("; Secure");
             }
             if (cookie_item.options.http_only) {
-                try response_buf.writeAll("; HttpOnly");
+                try response_buf.appendSlice("; HttpOnly");
             }
             if (cookie_item.options.same_site) |same_site| {
                 try response_buf.writer().print("; SameSite={s}", .{same_site});
             }
-            try response_buf.writeAll("\r\n");
+            try response_buf.appendSlice("\r\n");
         }
 
         // 头部结束
-        try response_buf.writeAll("\r\n");
+        try response_buf.appendSlice("\r\n");
 
         // 写入响应体
         try response_buf.appendSlice(self.body.items);
@@ -224,4 +218,3 @@ pub const Response = struct {
         _ = try tcp.write(response_buf.items);
     }
 };
-

@@ -23,7 +23,7 @@ pub const Upload = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    
+
     /// 最大文件大小（字节）
     max_file_size: usize = 10 * 1024 * 1024, // 10MB
 
@@ -41,13 +41,13 @@ pub const Upload = struct {
         const boundary_pos = std.mem.indexOf(u8, content_type, boundary_prefix) orelse {
             return error.InvalidFormat;
         };
-        
+
         const boundary_start = boundary_pos + boundary_prefix.len;
         var boundary_end = boundary_start;
         while (boundary_end < content_type.len and content_type[boundary_end] != ';' and content_type[boundary_end] != ' ') {
             boundary_end += 1;
         }
-        
+
         const boundary_str = content_type[boundary_start..boundary_end];
         const boundary = try std.fmt.allocPrint(self.allocator, "--{s}", .{boundary_str});
         defer self.allocator.free(boundary);
@@ -55,7 +55,7 @@ pub const Upload = struct {
         var files = std.ArrayList(UploadedFile).init(self.allocator);
 
         // 分割multipart数据
-        var parts = std.mem.split(u8, body, boundary);
+        var parts = std.mem.splitSequence(u8, body, boundary);
         _ = parts.next(); // 跳过第一个空部分
 
         while (parts.next()) |part| {
@@ -68,10 +68,10 @@ pub const Upload = struct {
             if (std.mem.indexOf(u8, trimmed, "\r\n\r\n")) |header_end| {
                 const headers_raw = trimmed[0..header_end];
                 const content = trimmed[header_end + 4 ..];
-                
+
                 // 移除末尾的\r\n
                 const content_clean = if (content.len >= 2 and content[content.len - 2] == '\r' and content[content.len - 1] == '\n')
-                    content[0..content.len - 2]
+                    content[0 .. content.len - 2]
                 else
                     content;
 
@@ -92,7 +92,7 @@ pub const Upload = struct {
                                 filename = try self.allocator.dupe(u8, fn_raw);
                             }
                         }
-                        
+
                         // 提取name
                         if (std.mem.indexOf(u8, line_trimmed, "name=\"")) |name_start| {
                             const name_start_pos = name_start + 6;
@@ -102,7 +102,7 @@ pub const Upload = struct {
                             }
                         }
                     }
-                    
+
                     if (std.mem.indexOf(u8, line_trimmed, "Content-Type:")) |_| {
                         const ct_start = std.mem.indexOf(u8, line_trimmed, ":") orelse continue;
                         const ct_raw = std.mem.trim(u8, line_trimmed[ct_start + 1 ..], " ");
@@ -142,7 +142,7 @@ pub const Upload = struct {
     }
 
     /// 保存文件到磁盘
-    pub fn saveFile(self: *Self, file: *UploadedFile, dest_path: []const u8) !void {
+    pub fn saveFile(_: *Self, file: *UploadedFile, dest_path: []const u8) !void {
         const dest_dir = std.fs.path.dirname(dest_path) orelse return error.InvalidPath;
         try std.fs.cwd().makePath(dest_dir);
 
@@ -152,4 +152,3 @@ pub const Upload = struct {
         try dest_file.writeAll(file.data);
     }
 };
-
