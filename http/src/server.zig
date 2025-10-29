@@ -391,27 +391,18 @@ pub const Server = struct {
 
             // 创建上下文（每次请求都需要新的上下文）
             var ctx = context.Context.init(server.allocator, server.schedule, client);
-            defer ctx.deinit();
-
+            
             // 解析请求（只解析当前请求部分）
             ctx.req.parse(buffer[0..request_size]) catch |e| {
                 std.log.err("Parse error: {s}", .{@errorName(e)});
                 ctx.res.status = 400;
                 try ctx.text(400, "Bad Request");
                 try ctx.send();
+                ctx.deinit();
                 break;
             };
 
-            // 处理粘包：如果有剩余数据，移到缓冲区开头
-            if (total_read > request_size) {
-                const remaining = total_read - request_size;
-                @memcpy(buffer[0..remaining], buffer[request_size..total_read]);
-                buffer_used = remaining;
-            } else {
-                buffer_used = 0;
-            }
-
-            // 检查Connection头和HTTP版本
+            // 检查Connection头和HTTP版本（在清理上下文之前检查，因为需要用到 req）
             const version = ctx.req.version;
             const is_http11 = std.mem.startsWith(u8, version, "HTTP/1.1");
 
@@ -436,6 +427,16 @@ pub const Server = struct {
                 }
             }
 
+            // 处理粘包：如果有剩余数据，移到缓冲区开头
+            // 注意：必须在解析和检查 Connection 之后进行，因为需要使用 request_size
+            if (total_read > request_size) {
+                const remaining = total_read - request_size;
+                @memcpy(buffer[0..remaining], buffer[request_size..total_read]);
+                buffer_used = remaining;
+            } else {
+                buffer_used = 0;
+            }
+
             // 设置响应Connection头（已禁用，不再设置 Connection 头）
             // if (keep_alive) {
             //     try ctx.header("Connection", "keep-alive");
@@ -451,7 +452,7 @@ pub const Server = struct {
             };
 
             // 如果中间件没有发送响应，执行路由
-            if (ctx.res.body.items.len == 0 and ctx.res.status == 200) {
+            if (!ctx.res.sent and ctx.res.body.items.len == 0 and ctx.res.status == 200) {
                 server.router.handle(&ctx) catch |e| {
                     std.log.err("Route error: {s}", .{@errorName(e)});
                     ctx.res.status = 500;
@@ -459,11 +460,17 @@ pub const Server = struct {
                 };
             }
 
-            // 发送响应
-            ctx.send() catch |e| {
-                std.log.err("Send error: {s}", .{@errorName(e)});
-                break;
-            };
+            // 发送响应（如果还没有发送）
+            if (!ctx.res.sent) {
+                ctx.send() catch |e| {
+                    std.log.err("Send error: {s}", .{@errorName(e)});
+                    ctx.deinit();
+                    break;
+                };
+            }
+
+            // 清理上下文（在发送响应后清理）
+            ctx.deinit();
 
             // 如果不需要keep-alive，退出循环
             if (!keep_alive) {

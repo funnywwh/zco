@@ -22,6 +22,9 @@ pub const Response = struct {
     /// 是否在 Content-Type 中包含 charset=utf-8（默认 false）
     include_charset: bool = false,
 
+    /// 响应是否已发送（防止重复发送）
+    sent: bool = false,
+
     /// Cookie选项
     pub const CookieOptions = struct {
         max_age: ?i64 = null,
@@ -201,6 +204,12 @@ pub const Response = struct {
 
     /// 发送响应到TCP连接
     pub fn send(self: *Self, tcp: *nets.Tcp) !void {
+        // 防止重复发送
+        if (self.sent) {
+            return;
+        }
+        self.sent = true;
+
         // 构建响应行和头部
         var response_buf = std.ArrayList(u8).init(self.allocator);
         defer response_buf.deinit();
