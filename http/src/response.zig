@@ -125,7 +125,7 @@ pub const Response = struct {
     /// 发送文本响应
     pub fn text(self: *Self, status: u16, content: []const u8) !void {
         self.status = status;
-        try self.header("Content-Type", "text/plain; charset=utf-8");
+        try self.header("Content-Type", "text/plain");
         self.body.clearRetainingCapacity();
         try self.write(content);
     }
@@ -133,7 +133,7 @@ pub const Response = struct {
     /// 发送HTML响应
     pub fn html(self: *Self, status: u16, content: []const u8) !void {
         self.status = status;
-        try self.header("Content-Type", "text/html; charset=utf-8");
+        try self.header("Content-Type", "text/html");
         self.body.clearRetainingCapacity();
         try self.write(content);
     }
@@ -141,7 +141,7 @@ pub const Response = struct {
     /// 发送JSON响应（字符串版本）
     pub fn jsonString(self: *Self, status: u16, json_str: []const u8) !void {
         self.status = status;
-        try self.header("Content-Type", "application/json; charset=utf-8");
+        try self.header("Content-Type", "application/json");
         self.body.clearRetainingCapacity();
         try self.write(json_str);
     }

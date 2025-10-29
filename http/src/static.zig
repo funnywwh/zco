@@ -16,10 +16,10 @@ pub const StaticFiles = struct {
         var mime_types = std.StringHashMap([]const u8).init(allocator);
 
         // 初始化常用MIME类型
-        mime_types.put(".html", "text/html; charset=utf-8") catch {};
-        mime_types.put(".css", "text/css; charset=utf-8") catch {};
-        mime_types.put(".js", "application/javascript; charset=utf-8") catch {};
-        mime_types.put(".json", "application/json; charset=utf-8") catch {};
+        mime_types.put(".html", "text/html") catch {};
+        mime_types.put(".css", "text/css") catch {};
+        mime_types.put(".js", "application/javascript") catch {};
+        mime_types.put(".json", "application/json") catch {};
         mime_types.put(".png", "image/png") catch {};
         mime_types.put(".jpg", "image/jpeg") catch {};
         mime_types.put(".jpeg", "image/jpeg") catch {};
@@ -27,7 +27,7 @@ pub const StaticFiles = struct {
         mime_types.put(".svg", "image/svg+xml") catch {};
         mime_types.put(".ico", "image/x-icon") catch {};
         mime_types.put(".pdf", "application/pdf") catch {};
-        mime_types.put(".txt", "text/plain; charset=utf-8") catch {};
+        mime_types.put(".txt", "text/plain") catch {};
 
         return .{
             .allocator = allocator,
