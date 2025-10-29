@@ -11,8 +11,10 @@ pub fn main() !void {
             const schedule = try zco.getSchedule();
 
             // 创建HTTP服务器
+            // 注意：server.deinit() 不应该在这里使用 defer
+            // 因为 listen() 会一直运行，直到程序退出
             var server = http.Server.init(allocator, schedule);
-            defer server.deinit();
+            // defer server.deinit(); // 不在这里清理，避免在 listen 运行时清理资源
 
             // 添加中间件
             try server.use(http.middleware.Middleware.init(http.middleware.logger, "logger"));

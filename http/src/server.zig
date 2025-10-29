@@ -47,6 +47,7 @@ pub const Server = struct {
             .max_connections = 10000,
             .connection_count = std.atomic.Value(u32).init(0),
             .use_pool = true,
+            .client_chan = null,
         };
     }
 
@@ -172,12 +173,16 @@ pub const Server = struct {
         self.client_chan = client_chan; // 保存引用，在 deinit 时清理
 
         // 创建固定数量的工作协程池
+        // 注意：必须捕获 channel 指针，确保生命周期一致
         for (0..self.worker_pool_size) |_| {
             _ = try self.schedule.go(struct {
-                fn run(server_ptr: *Self, chan: *TcpChan) !void {
+                fn run(server_ptr: *Self, chan_ptr: *TcpChan) !void {
+                    // 确保 channel 指针有效
+                    const chan = chan_ptr;
                     while (true) {
+                        // 捕获 recv 可能抛出的错误（包括 closed 错误）
                         var client = chan.recv() catch |e| {
-                            // channel 关闭时退出
+                            // channel 关闭或错误时退出
                             std.log.info("Worker exiting: {s}", .{@errorName(e)});
                             break;
                         };
@@ -198,7 +203,7 @@ pub const Server = struct {
                         handleConnection(server_ptr, client) catch |e| {
                             std.log.err("Handle connection error: {s}", .{@errorName(e)});
                         };
-                        
+
                         // 连接处理完成后清理资源并更新计数器
                         _ = server_ptr.connection_count.fetchSub(1, .monotonic);
                         client.close();
@@ -209,8 +214,10 @@ pub const Server = struct {
         }
 
         // 启动服务器协程：accept 循环并将连接发送到 channel
+        // 注意：必须确保 channel 和 tcp 的生命周期一致
         _ = try self.schedule.go(struct {
-            fn run(tcp_ptr: *nets.Tcp, chan: *TcpChan) !void {
+            fn run(tcp_ptr: *nets.Tcp, chan_ptr: *TcpChan) !void {
+                const chan = chan_ptr; // 保存本地引用
                 while (true) {
                     var client = tcp_ptr.accept() catch |e| {
                         std.log.err("Server accept error: {s}", .{@errorName(e)});
@@ -227,36 +234,44 @@ pub const Server = struct {
             }
         }.run, .{ tcp, client_chan });
 
-        // listenWithPool 不会返回，协程会持续运行
-        // 当 Server 被 deinit 时，channel 会被清理，工作协程会退出
+        // listenWithPool 必须在协程中运行并阻塞
+        // 由于 accept 和 worker 协程都在后台运行，
+        // 这个函数需要无限阻塞，保持 channel 的生命周期
+        // 使用一个永不退出的循环来阻塞
+        while (true) {
+            // 使用协程的 Suspend 来阻塞，而不是 Sleep
+            // 这样可以避免 CPU 占用，同时保持函数不返回
+            const co = self.schedule.runningCo orelse {
+                std.log.err("listenWithPool must be called in a coroutine context", .{});
+                return error.CallInSchedule;
+            };
+            try co.Sleep(60 * std.time.ns_per_s); // 睡眠60秒，避免频繁检查
+        }
     }
 
     /// 处理单个连接（支持HTTP keep-alive）
-    /// 注意：在协程池模式下，调用者负责 client 的清理；在直接模式下使用 defer 自动清理
+    /// 注意：调用者负责 client 的清理（close 和 deinit）
+    /// - 直接模式：协程中使用 defer 清理
+    /// - 协程池模式：工作协程中手动清理
     fn handleConnection(server: *Self, client: *nets.Tcp) !void {
-        // 在直接模式下，这个 defer 会清理连接
-        // 在协程池模式下，工作协程会负责清理，但这里也保留 defer 作为保护
-        // 由于 defer 在函数返回时执行，而协程池模式下我们在函数返回后手动清理，
-        // 这会导致双重清理。我们需要一个标志来区分模式，或者移除 defer。
-        // 暂时移除 defer，由调用者负责清理
         var buffer = try server.allocator.alloc(u8, server.read_buffer_size);
         defer server.allocator.free(buffer);
 
         // 支持HTTP keep-alive：在同一连接上处理多个请求
         var keep_alive = true;
         var buffer_used: usize = 0; // 已使用的缓冲区大小（用于处理粘包）
-        
+
         while (keep_alive) {
             // 读取请求（可能需要多次读取才能完整）
             var total_read: usize = buffer_used;
             var header_end: ?usize = null;
             var content_length: ?usize = null;
-            
+
             // 先尝试从现有缓冲区中找到请求边界
             if (buffer_used > 0) {
                 if (std.mem.indexOf(u8, buffer[0..buffer_used], "\r\n\r\n")) |pos| {
                     header_end = pos + 4;
-                    
+
                     // 尝试解析Content-Length（简化实现）
                     const h_end = header_end.?;
                     if (std.mem.indexOf(u8, buffer[0..h_end], "Content-Length:")) |cl_start| {
@@ -264,13 +279,13 @@ pub const Server = struct {
                         while (cl_end < h_end and buffer[cl_end] != '\r') {
                             cl_end += 1;
                         }
-                        const cl_line = buffer[cl_start + 15..cl_end];
+                        const cl_line = buffer[cl_start + 15 .. cl_end];
                         const cl_str = std.mem.trim(u8, cl_line, " \t");
                         content_length = std.fmt.parseInt(usize, cl_str, 10) catch null;
                     }
                 }
             }
-            
+
             // 需要读取完整的请求
             while (true) {
                 // 如果已经找到了头部结束，检查是否需要继续读取请求体
@@ -301,14 +316,14 @@ pub const Server = struct {
                         break;
                     }
                 }
-                
+
                 // 需要读取更多数据来找到头部结束
                 if (total_read >= buffer.len) {
                     std.log.warn("Request buffer too small or request too large", .{});
                     keep_alive = false;
                     break;
                 }
-                
+
                 const n = client.read(buffer[total_read..]) catch |e| {
                     std.log.err("Read error: {s}", .{@errorName(e)});
                     keep_alive = false;
@@ -324,15 +339,15 @@ pub const Server = struct {
                     // 有数据但连接关闭，尝试解析
                     break;
                 }
-                
+
                 total_read += n;
-                
+
                 // 查找头部结束标记
                 if (header_end == null) {
                     if (std.mem.indexOf(u8, buffer[0..total_read], "\r\n\r\n")) |pos| {
                         const h_end = pos + 4;
                         header_end = h_end;
-                        
+
                         // 解析Content-Length
                         if (std.mem.indexOf(u8, buffer[0..h_end], "Content-Length:")) |cl_start| {
                             var cl_end = cl_start;
@@ -340,7 +355,7 @@ pub const Server = struct {
                                 cl_end += 1;
                             }
                             if (cl_end > cl_start + 15) {
-                                const cl_line = buffer[cl_start + 15..cl_end];
+                                const cl_line = buffer[cl_start + 15 .. cl_end];
                                 const cl_str = std.mem.trim(u8, cl_line, " \t");
                                 content_length = std.fmt.parseInt(usize, cl_str, 10) catch null;
                             }
@@ -364,11 +379,11 @@ pub const Server = struct {
 
             // 确定实际请求的大小（处理粘包）
             const h_end = header_end orelse total_read;
-            const request_size = if (content_length) |cl| 
+            const request_size = if (content_length) |cl|
                 h_end + cl
-            else 
+            else
                 h_end;
-                
+
             if (request_size > total_read) {
                 std.log.warn("Incomplete request, total: {}, expected: {}", .{ total_read, request_size });
                 break;
@@ -386,7 +401,7 @@ pub const Server = struct {
                 try ctx.send();
                 break;
             };
-            
+
             // 处理粘包：如果有剩余数据，移到缓冲区开头
             if (total_read > request_size) {
                 const remaining = total_read - request_size;
