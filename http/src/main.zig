@@ -4,37 +4,32 @@ const http = @import("http");
 
 /// HTTP服务器示例程序
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    // 使用 zco.loop 包装整个服务器启动逻辑
+    _ = try zco.loop(struct {
+        fn run() !void {
+            const allocator = (try zco.getSchedule()).allocator;
+            const schedule = try zco.getSchedule();
 
-    try zco.init(allocator);
-    defer zco.deinit();
+            // 创建HTTP服务器
+            var server = http.Server.init(allocator, schedule);
+            defer server.deinit();
 
-    const schedule = try zco.newSchedule();
-    defer schedule.deinit();
+            // 添加中间件
+            try server.use(http.middleware.Middleware.init(http.middleware.logger, "logger"));
+            try server.use(http.middleware.Middleware.init(http.middleware.cors, "cors"));
 
-    // 创建HTTP服务器
-    var server = http.Server.init(allocator, schedule);
-    defer server.deinit();
+            // 路由示例
+            try server.get("/", handleRoot);
+            try server.get("/hello/:name", handleHello);
+            try server.post("/api/login", handleLogin);
+            try server.get("/api/protected", handleProtected);
+            try server.post("/api/upload", handleUpload);
 
-    // 添加中间件
-    try server.use(http.middleware.Middleware.init(http.middleware.logger, "logger"));
-    try server.use(http.middleware.Middleware.init(http.middleware.cors, "cors"));
-
-    // 路由示例
-    try server.get("/", handleRoot);
-    try server.get("/hello/:name", handleHello);
-    try server.post("/api/login", handleLogin);
-    try server.get("/api/protected", handleProtected);
-    try server.post("/api/upload", handleUpload);
-
-    // 启动服务器
-    const address = try std.net.Address.parseIp4("127.0.0.1", 8080);
-    try server.listen(address);
-
-    // 启动调度器循环
-    try schedule.loop();
+            // 启动服务器（listen需要在协程环境中调用）
+            const address = try std.net.Address.parseIp4("127.0.0.1", 8080);
+            try server.listen(address);
+        }
+    }.run, .{});
 }
 
 /// 根路径处理

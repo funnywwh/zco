@@ -5,6 +5,7 @@
 ## 📚 文档列表
 
 ### 开发指南
+- **[HTTP_FRAMEWORK_DEVELOPMENT_PLAN.md](./HTTP_FRAMEWORK_DEVELOPMENT_PLAN.md)** - HTTP 框架开发计划（功能状态、TODO、未来规划）
 - **[FMT_FORMATTING_TROUBLESHOOTING.md](./FMT_FORMATTING_TROUBLESHOOTING.md)** - Zig fmt 格式化问题排查指南
 
 ### 性能相关

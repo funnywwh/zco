@@ -14,10 +14,10 @@ pub const Server = struct {
     router: router.Router,
     middleware_chain: middleware.MiddlewareChain,
     tcp: ?*nets.Tcp = null,
-    
+
     /// 读取缓冲区大小
     read_buffer_size: usize = 8192,
-    
+
     /// 最大请求大小
     max_request_size: usize = 1024 * 1024, // 1MB
 
@@ -67,7 +67,7 @@ pub const Server = struct {
         try self.middleware_chain.use(mw);
     }
 
-    /// 监听指定地址
+    /// 监听指定地址（需要在协程环境中调用）
     pub fn listen(self: *Self, address: std.net.Address) !void {
         const tcp = try nets.Tcp.init(self.schedule);
         errdefer tcp.deinit();
@@ -79,7 +79,7 @@ pub const Server = struct {
 
         std.log.info("HTTP server listening on {}", .{address});
 
-        // 接受连接并处理
+        // 接受连接并处理（accept必须在协程环境中调用）
         while (true) {
             const client = tcp.accept() catch |e| {
                 std.log.err("Accept error: {s}", .{@errorName(e)});
@@ -152,4 +152,3 @@ pub const Server = struct {
         };
     }
 };
-
