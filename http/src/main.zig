@@ -18,7 +18,7 @@ pub fn main() !void {
 
             // 添加中间件
             try server.use(http.middleware.Middleware.init(http.middleware.logger, "logger"));
-            try server.use(http.middleware.Middleware.init(http.middleware.cors, "cors"));
+            // try server.use(http.middleware.Middleware.init(http.middleware.cors, "cors")); // 已禁用 CORS 中间件
 
             // 路由示例
             try server.get("/", handleRoot);

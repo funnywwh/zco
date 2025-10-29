@@ -436,12 +436,12 @@ pub const Server = struct {
                 }
             }
 
-            // 设置响应Connection头
-            if (keep_alive) {
-                try ctx.header("Connection", "keep-alive");
-            } else {
-                try ctx.header("Connection", "close");
-            }
+            // 设置响应Connection头（已禁用，不再设置 Connection 头）
+            // if (keep_alive) {
+            //     try ctx.header("Connection", "keep-alive");
+            // } else {
+            //     try ctx.header("Connection", "close");
+            // }
 
             // 执行中间件链
             server.middleware_chain.execute(&ctx) catch |e| {
