@@ -214,7 +214,16 @@ pub const Response = struct {
         // 写入响应体
         try response_buf.appendSlice(self.body.items);
 
-        // 发送响应
-        _ = try tcp.write(response_buf.items);
+        // 发送响应（必须完整发送所有数据）
+        var total_written: usize = 0;
+        const response_data = response_buf.items;
+        while (total_written < response_data.len) {
+            const n = try tcp.write(response_data[total_written..]);
+            total_written += n;
+            if (n == 0) {
+                std.log.err("Failed to send complete response: {} / {}", .{ total_written, response_data.len });
+                return error.WriteFailed;
+            }
+        }
     }
 };
