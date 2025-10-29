@@ -54,21 +54,48 @@ pub const Context = struct {
         try self.res.send(self.tcp);
     }
 
-    /// 发送JSON响应（字符串版本）
+    /// 发送JSON响应（字符串版本，默认不包含 charset）
     pub fn jsonString(self: *Self, status: u16, json_str: []const u8) !void {
         try self.res.jsonString(status, json_str);
         try self.send();
     }
 
-    /// 发送文本响应
+    /// 发送JSON响应（字符串版本，可指定 charset）
+    /// charset: 如果为 true，则在 Content-Type 中包含 charset=utf-8
+    pub fn jsonStringWithCharset(self: *Self, status: u16, json_str: []const u8, charset: bool) !void {
+        try self.res.jsonStringWithCharset(status, json_str, charset);
+        try self.send();
+    }
+
+    /// 设置响应默认是否包含 charset（全局设置）
+    /// 设置后，所有使用默认 charset 设置的响应都会包含 charset=utf-8
+    pub fn setIncludeCharset(self: *Self, include: bool) void {
+        self.res.setIncludeCharset(include);
+    }
+
+    /// 发送文本响应（默认不包含 charset）
     pub fn text(self: *Self, status: u16, content: []const u8) !void {
         try self.res.text(status, content);
         try self.send();
     }
 
-    /// 发送HTML响应
+    /// 发送文本响应（可指定 charset）
+    /// charset: 如果为 true，则在 Content-Type 中包含 charset=utf-8
+    pub fn textWithCharset(self: *Self, status: u16, content: []const u8, charset: bool) !void {
+        try self.res.textWithCharset(status, content, charset);
+        try self.send();
+    }
+
+    /// 发送HTML响应（默认不包含 charset）
     pub fn html(self: *Self, status: u16, content: []const u8) !void {
         try self.res.html(status, content);
+        try self.send();
+    }
+
+    /// 发送HTML响应（可指定 charset）
+    /// charset: 如果为 true，则在 Content-Type 中包含 charset=utf-8
+    pub fn htmlWithCharset(self: *Self, status: u16, content: []const u8, charset: bool) !void {
+        try self.res.htmlWithCharset(status, content, charset);
         try self.send();
     }
 

@@ -19,6 +19,9 @@ pub const Response = struct {
     /// Cookies
     cookies: std.ArrayList(Cookie),
 
+    /// 是否在 Content-Type 中包含 charset=utf-8（默认 false）
+    include_charset: bool = false,
+
     /// Cookie选项
     pub const CookieOptions = struct {
         max_age: ?i64 = null,
@@ -122,28 +125,78 @@ pub const Response = struct {
         try self.body.appendSlice(data);
     }
 
-    /// 发送文本响应
+    /// 发送文本响应（内部实现，可指定 charset）
+    /// charset: 如果为 true，则在 Content-Type 中包含 charset=utf-8；如果为 null，使用 include_charset 设置
+    fn textImpl(self: *Self, status: u16, content: []const u8, charset: ?bool) !void {
+        self.status = status;
+        const content_type = if (charset orelse self.include_charset)
+            "text/plain; charset=utf-8"
+        else
+            "text/plain";
+        try self.header("Content-Type", content_type);
+        self.body.clearRetainingCapacity();
+        try self.write(content);
+    }
+
+    /// 发送文本响应（默认不包含 charset）
     pub fn text(self: *Self, status: u16, content: []const u8) !void {
+        try self.textImpl(status, content, false);
+    }
+
+    /// 发送文本响应（可指定 charset）
+    pub fn textWithCharset(self: *Self, status: u16, content: []const u8, charset: bool) !void {
+        try self.textImpl(status, content, charset);
+    }
+
+    /// 发送HTML响应（内部实现，可指定 charset）
+    /// charset: 如果为 true，则在 Content-Type 中包含 charset=utf-8；如果为 null，使用 include_charset 设置
+    fn htmlImpl(self: *Self, status: u16, content: []const u8, charset: ?bool) !void {
         self.status = status;
-        try self.header("Content-Type", "text/plain");
+        const content_type = if (charset orelse self.include_charset)
+            "text/html; charset=utf-8"
+        else
+            "text/html";
+        try self.header("Content-Type", content_type);
         self.body.clearRetainingCapacity();
         try self.write(content);
     }
 
-    /// 发送HTML响应
+    /// 发送HTML响应（默认不包含 charset）
     pub fn html(self: *Self, status: u16, content: []const u8) !void {
-        self.status = status;
-        try self.header("Content-Type", "text/html");
-        self.body.clearRetainingCapacity();
-        try self.write(content);
+        try self.htmlImpl(status, content, false);
     }
 
-    /// 发送JSON响应（字符串版本）
-    pub fn jsonString(self: *Self, status: u16, json_str: []const u8) !void {
+    /// 发送HTML响应（可指定 charset）
+    pub fn htmlWithCharset(self: *Self, status: u16, content: []const u8, charset: bool) !void {
+        try self.htmlImpl(status, content, charset);
+    }
+
+    /// 发送JSON响应（字符串版本，内部实现，可指定 charset）
+    /// charset: 如果为 true，则在 Content-Type 中包含 charset=utf-8；如果为 null，使用 include_charset 设置
+    fn jsonStringImpl(self: *Self, status: u16, json_str: []const u8, charset: ?bool) !void {
         self.status = status;
-        try self.header("Content-Type", "application/json");
+        const content_type = if (charset orelse self.include_charset)
+            "application/json; charset=utf-8"
+        else
+            "application/json";
+        try self.header("Content-Type", content_type);
         self.body.clearRetainingCapacity();
         try self.write(json_str);
+    }
+
+    /// 发送JSON响应（字符串版本，默认不包含 charset）
+    pub fn jsonString(self: *Self, status: u16, json_str: []const u8) !void {
+        try self.jsonStringImpl(status, json_str, false);
+    }
+
+    /// 发送JSON响应（字符串版本，可指定 charset）
+    pub fn jsonStringWithCharset(self: *Self, status: u16, json_str: []const u8, charset: bool) !void {
+        try self.jsonStringImpl(status, json_str, charset);
+    }
+
+    /// 设置默认是否包含 charset
+    pub fn setIncludeCharset(self: *Self, include: bool) void {
+        self.include_charset = include;
     }
 
     /// 发送响应到TCP连接
