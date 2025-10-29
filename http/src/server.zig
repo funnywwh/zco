@@ -63,8 +63,8 @@ pub const Server = struct {
     }
 
     /// 启用/禁用协程池模式
-    pub fn setUsePool(self: *Self, use: bool) void {
-        self.use_pool = use;
+    pub fn setUsePool(self: *Self, enable: bool) void {
+        self.use_pool = enable;
     }
 
     /// 清理服务器资源
