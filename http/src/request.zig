@@ -6,34 +6,34 @@ pub const Request = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    
+
     /// HTTP方法
     method: root.Method = .GET,
-    
+
     /// 请求路径
     path: []u8 = undefined,
-    
+
     /// 查询参数字符串
     query_string: []u8 = undefined,
-    
+
     /// HTTP版本
     version: []u8 = undefined,
-    
+
     /// HTTP头部
     headers: std.StringHashMap([]const u8),
-    
+
     /// 查询参数（解析后的）
     query: std.StringHashMap([]const u8),
-    
+
     /// 路径参数（从路由中提取）
     params: std.StringHashMap([]const u8),
-    
+
     /// 请求体（如果是空则 len = 0，ptr 可能为 null）
     body: []u8 = &[0]u8{},
-    
+
     /// Content-Length
     content_length: usize = 0,
-    
+
     /// Content-Type
     content_type: ?[]const u8 = null,
 
@@ -257,7 +257,7 @@ pub const Request = struct {
             if (std.mem.indexOfScalar(u8, pair, '=')) |eq_pos| {
                 const key_raw = pair[0..eq_pos];
                 const value_raw = pair[eq_pos + 1 ..];
-                
+
                 // URL解码
                 const key_decoded = try self.urlDecode(key_raw);
                 defer self.allocator.free(key_decoded);
@@ -327,4 +327,3 @@ pub const Request = struct {
         return self.params.get(key);
     }
 };
-
