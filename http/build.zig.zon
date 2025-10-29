@@ -1,0 +1,28 @@
+.{
+    .name = .http,
+    .version = "0.0.0",
+    .fingerprint = 0x42ce80b977a2046d,
+    .dependencies = .{
+        .zco = .{
+            .path = "../",
+        },
+        .nets = .{
+            .path = "../nets",
+        },
+        .io = .{
+            .path = "../io",
+        },
+        .websocket = .{
+            .path = "../websocket",
+        },
+        .libxev = .{
+            .path = "../vendor/libxev",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
+
