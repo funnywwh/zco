@@ -103,20 +103,133 @@ pub const Server = struct {
 
         // 支持HTTP keep-alive：在同一连接上处理多个请求
         var keep_alive = true;
+        var buffer_used: usize = 0; // 已使用的缓冲区大小（用于处理粘包）
+        
         while (keep_alive) {
-            // 读取请求
-            const n = client.read(buffer) catch |e| {
-                std.log.err("Read error: {s}", .{@errorName(e)});
-                break;
-            };
+            // 读取请求（可能需要多次读取才能完整）
+            var total_read: usize = buffer_used;
+            var header_end: ?usize = null;
+            var content_length: ?usize = null;
+            
+            // 先尝试从现有缓冲区中找到请求边界
+            if (buffer_used > 0) {
+                if (std.mem.indexOf(u8, buffer[0..buffer_used], "\r\n\r\n")) |pos| {
+                    header_end = pos + 4;
+                    
+                    // 尝试解析Content-Length（简化实现）
+                    const h_end = header_end.?;
+                    if (std.mem.indexOf(u8, buffer[0..h_end], "Content-Length:")) |cl_start| {
+                        var cl_end = cl_start;
+                        while (cl_end < h_end and buffer[cl_end] != '\r') {
+                            cl_end += 1;
+                        }
+                        const cl_line = buffer[cl_start + 15..cl_end];
+                        const cl_str = std.mem.trim(u8, cl_line, " \t");
+                        content_length = std.fmt.parseInt(usize, cl_str, 10) catch null;
+                    }
+                }
+            }
+            
+            // 需要读取完整的请求
+            while (true) {
+                // 如果已经找到了头部结束，检查是否需要继续读取请求体
+                if (header_end) |h_end| {
+                    if (content_length) |cl| {
+                        const body_start = h_end;
+                        const expected_total = body_start + cl;
+                        if (total_read >= expected_total) {
+                            // 请求完整
+                            break;
+                        }
+                        if (total_read < expected_total and total_read < buffer.len) {
+                            // 继续读取请求体
+                            const n = client.read(buffer[total_read..]) catch |e| {
+                                std.log.err("Read error: {s}", .{@errorName(e)});
+                                return;
+                            };
+                            if (n == 0) {
+                                // 连接关闭
+                                keep_alive = false;
+                                break;
+                            }
+                            total_read += n;
+                            continue;
+                        }
+                    } else {
+                        // 没有Content-Length，头部结束就是请求结束（GET请求）
+                        break;
+                    }
+                }
+                
+                // 需要读取更多数据来找到头部结束
+                if (total_read >= buffer.len) {
+                    std.log.warn("Request buffer too small or request too large", .{});
+                    keep_alive = false;
+                    break;
+                }
+                
+                const n = client.read(buffer[total_read..]) catch |e| {
+                    std.log.err("Read error: {s}", .{@errorName(e)});
+                    keep_alive = false;
+                    break;
+                };
 
-            if (n == 0) {
-                // 连接关闭
+                if (n == 0) {
+                    // 连接关闭
+                    if (total_read == 0) {
+                        keep_alive = false;
+                        break;
+                    }
+                    // 有数据但连接关闭，尝试解析
+                    break;
+                }
+                
+                total_read += n;
+                
+                // 查找头部结束标记
+                if (header_end == null) {
+                    if (std.mem.indexOf(u8, buffer[0..total_read], "\r\n\r\n")) |pos| {
+                        const h_end = pos + 4;
+                        header_end = h_end;
+                        
+                        // 解析Content-Length
+                        if (std.mem.indexOf(u8, buffer[0..h_end], "Content-Length:")) |cl_start| {
+                            var cl_end = cl_start;
+                            while (cl_end < h_end and buffer[cl_end] != '\r') {
+                                cl_end += 1;
+                            }
+                            if (cl_end > cl_start + 15) {
+                                const cl_line = buffer[cl_start + 15..cl_end];
+                                const cl_str = std.mem.trim(u8, cl_line, " \t");
+                                content_length = std.fmt.parseInt(usize, cl_str, 10) catch null;
+                            }
+                        }
+                    }
+                } else if (content_length) |cl| {
+                    // 已找到头部，检查请求体是否完整
+                    const h_end = header_end.?;
+                    const body_start = h_end;
+                    const expected_total = body_start + cl;
+                    if (total_read >= expected_total) {
+                        break;
+                    }
+                }
+            }
+
+            if (total_read == 0) {
+                // 没有数据，连接已关闭
                 break;
             }
 
-            if (n > server.max_request_size) {
-                std.log.warn("Request too large: {} bytes", .{n});
+            // 确定实际请求的大小（处理粘包）
+            const h_end = header_end orelse total_read;
+            const request_size = if (content_length) |cl| 
+                h_end + cl
+            else 
+                h_end;
+                
+            if (request_size > total_read) {
+                std.log.warn("Incomplete request, total: {}, expected: {}", .{ total_read, request_size });
                 break;
             }
 
@@ -124,14 +237,23 @@ pub const Server = struct {
             var ctx = context.Context.init(server.allocator, server.schedule, client);
             defer ctx.deinit();
 
-            // 解析请求
-            ctx.req.parse(buffer[0..n]) catch |e| {
+            // 解析请求（只解析当前请求部分）
+            ctx.req.parse(buffer[0..request_size]) catch |e| {
                 std.log.err("Parse error: {s}", .{@errorName(e)});
                 ctx.res.status = 400;
                 try ctx.text(400, "Bad Request");
                 try ctx.send();
                 break;
             };
+            
+            // 处理粘包：如果有剩余数据，移到缓冲区开头
+            if (total_read > request_size) {
+                const remaining = total_read - request_size;
+                @memcpy(buffer[0..remaining], buffer[request_size..total_read]);
+                buffer_used = remaining;
+            } else {
+                buffer_used = 0;
+            }
 
             // 检查Connection头和HTTP版本
             const version = ctx.req.version;
