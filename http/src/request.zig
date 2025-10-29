@@ -28,8 +28,8 @@ pub const Request = struct {
     /// 路径参数（从路由中提取）
     params: std.StringHashMap([]const u8),
     
-    /// 请求体
-    body: []u8 = undefined,
+    /// 请求体（如果是空则 len = 0，ptr 可能为 null）
+    body: []u8 = &[0]u8{},
     
     /// Content-Length
     content_length: usize = 0,
@@ -91,7 +91,10 @@ pub const Request = struct {
         }
 
         // 释放body
+        // body 初始化为空切片，只有在 parse 时分配了内存才需要释放
+        // 检查 body.ptr 是否有效（不等于 undefined 且不为 null）
         if (self.body.len > 0) {
+            // body 可能是从 buffer 复制的，确保是通过 allocator.dupe 分配的
             self.allocator.free(self.body);
         }
 
