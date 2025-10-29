@@ -1,0 +1,12 @@
+{
+  "name": "websocket-test-client",
+  "version": "1.0.0",
+  "description": "Node.js test client for WebSocket server",
+  "main": "client_test.js",
+  "scripts": {
+    "test": "node client_test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
