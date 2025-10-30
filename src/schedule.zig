@@ -545,20 +545,17 @@ pub const Schedule = struct {
     }
     pub fn getCurrentCo(self: *Schedule) !*Co {
         // === 关键区开始：屏蔽信号 ===
-        var sigset: c.sigset_t = undefined;
         var oldset: c.sigset_t = undefined;
-        _ = c.sigemptyset(&sigset);
-        _ = c.sigaddset(&sigset, c.SIGALRM);
-        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+        blockPreemptSignals(&oldset);
 
         const _co = self.runningCo orelse {
             // 恢复信号屏蔽
-            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            restoreSignals(&oldset);
             return error.NotInCo;
         };
 
         // === 关键区结束：恢复信号屏蔽 ===
-        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+        restoreSignals(&oldset);
         return _co;
     }
     pub fn go(self: *Schedule, comptime func: anytype, args: anytype) !*Co {
@@ -605,16 +602,13 @@ pub const Schedule = struct {
         Co.nextId +%= 1;
 
         // === 关键区开始：屏蔽信号 ===
-        var sigset: c.sigset_t = undefined;
         var oldset: c.sigset_t = undefined;
-        _ = c.sigemptyset(&sigset);
-        _ = c.sigaddset(&sigset, c.SIGALRM);
-        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+        blockPreemptSignals(&oldset);
 
         try self.allCoMap.put(co.id, co);
 
         // === 关键区结束：恢复信号屏蔽 ===
-        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+        restoreSignals(&oldset);
 
         try self.ResumeCo(co);
         return co;
@@ -666,16 +660,13 @@ pub const Schedule = struct {
         Co.nextId +%= 1;
 
         // === 关键区开始：屏蔽信号 ===
-        var sigset: c.sigset_t = undefined;
         var oldset: c.sigset_t = undefined;
-        _ = c.sigemptyset(&sigset);
-        _ = c.sigaddset(&sigset, c.SIGALRM);
-        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+        blockPreemptSignals(&oldset);
 
         try self.allCoMap.put(co.id, co);
 
         // === 关键区结束：恢复信号屏蔽 ===
-        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+        restoreSignals(&oldset);
 
         try self.ResumeCo(co);
         return co;
@@ -688,32 +679,26 @@ pub const Schedule = struct {
     // 抢占缓冲区操作 - 使用关中断方式
     fn sleepCo(self: *Schedule, co: *Co) !void {
         // === 关键区开始：屏蔽信号 ===
-        var sigset: c.sigset_t = undefined;
         var oldset: c.sigset_t = undefined;
-        _ = c.sigemptyset(&sigset);
-        _ = c.sigaddset(&sigset, c.SIGALRM);
-        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+        blockPreemptSignals(&oldset);
 
         try self.sleepQueue.add(co);
 
         // === 关键区结束：恢复信号屏蔽 ===
-        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+        restoreSignals(&oldset);
     }
     pub fn ResumeCo(self: *Schedule, co: *Co) !void {
 
         // === 关键区开始：屏蔽信号 ===
-        var sigset: c.sigset_t = undefined;
         var oldset: c.sigset_t = undefined;
-        _ = c.sigemptyset(&sigset);
-        _ = c.sigaddset(&sigset, c.SIGALRM);
-        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+        blockPreemptSignals(&oldset);
 
         // 检查就绪队列大小，防止内存爆炸
         const currentCount = self.readyQueue.count();
         if (currentCount >= MAX_READY_COUNT) {
             std.log.warn("Ready queue full ({}), dropping coroutine {}", .{ currentCount, co.id });
             // 恢复信号屏蔽
-            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            restoreSignals(&oldset);
             return;
         }
 
@@ -725,16 +710,13 @@ pub const Schedule = struct {
         try self.readyQueue.add(co);
 
         // === 关键区结束：恢复信号屏蔽 ===
-        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+        restoreSignals(&oldset);
     }
     pub fn freeCo(self: *Schedule, co: *Co) void {
 
         // === 关键区开始：屏蔽信号 ===
-        var sigset: c.sigset_t = undefined;
         var oldset: c.sigset_t = undefined;
-        _ = c.sigemptyset(&sigset);
-        _ = c.sigaddset(&sigset, c.SIGALRM);
-        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+        blockPreemptSignals(&oldset);
 
         // 优化：使用更高效的查找方式
         // 从睡眠队列中移除
@@ -767,7 +749,7 @@ pub const Schedule = struct {
         }
 
         // === 关键区结束：恢复信号屏蔽 ===
-        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+        restoreSignals(&oldset);
     }
     pub fn startTimer(self: *Schedule) !void {
         const timerid = self.timer_id orelse return error.NoTimer;
@@ -863,11 +845,8 @@ pub const Schedule = struct {
 
     inline fn checkNextCo(self: *Schedule) !void {
         // === 关键区开始：屏蔽信号 ===
-        var sigset: c.sigset_t = undefined;
         var oldset: c.sigset_t = undefined;
-        _ = c.sigemptyset(&sigset);
-        _ = c.sigaddset(&sigset, c.SIGALRM);
-        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+        blockPreemptSignals(&oldset);
 
         // 定时器现在完全由协程 Resume/Suspend 控制
         // 不再需要在这里管理定时器状态
@@ -883,7 +862,7 @@ pub const Schedule = struct {
             const processCount = @min(count, batch_size);
 
             // 批量处理：只在开始时恢复信号屏蔽，结束时重新屏蔽
-            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null); // 恢复信号屏蔽
+            restoreSignals(&oldset); // 恢复信号屏蔽
 
             for (0..processCount) |_| {
                 const nextCo = self.readyQueue.remove();
@@ -894,10 +873,10 @@ pub const Schedule = struct {
                 }
             }
 
-            _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset); // 重新屏蔽信号
+            blockPreemptSignals(&oldset); // 重新屏蔽信号
         } else {
             // 恢复信号屏蔽
-            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            restoreSignals(&oldset);
 
             if (self.xLoop) |*xLoop| {
                 try xLoop.run(.once);
@@ -908,6 +887,18 @@ pub const Schedule = struct {
         }
 
         // === 关键区结束：恢复信号屏蔽 ===
-        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+        restoreSignals(&oldset);
     }
 };
+
+// 信号屏蔽/恢复工具函数（针对 SIGALRM 的抢占信号）
+inline fn blockPreemptSignals(oldset: *c.sigset_t) void {
+    var sigset: c.sigset_t = undefined;
+    _ = c.sigemptyset(&sigset);
+    _ = c.sigaddset(&sigset, c.SIGALRM);
+    _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, oldset);
+}
+
+inline fn restoreSignals(oldset: *const c.sigset_t) void {
+    _ = c.pthread_sigmask(c.SIG_SETMASK, oldset, null);
+}
