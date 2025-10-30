@@ -88,5 +88,3 @@ pub fn parseSetCookie(allocator: std.mem.Allocator, set_cookie_header: []const u
 
     return result;
 }
-
-

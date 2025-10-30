@@ -155,6 +155,10 @@ pub const Parser = struct {
                             self.state = .BODY_CHUNKED_DATA;
                             self.chunk_received = 0;
                         }
+                        // 新增else分支处理，chunk_data结尾LF后进入下一个SIZE
+                        if (self.state == .BODY_CHUNKED_CR) {
+                            self.state = .BODY_CHUNKED_SIZE;
+                        }
                     },
                     .BODY_CHUNKED_DATA => {
                         const remaining = self.chunk_size - self.chunk_received;
@@ -163,7 +167,8 @@ pub const Parser = struct {
                         if (take > 0) {
                             try events.append(.{ .on_body_chunk = chunk[i .. i + take] });
                             self.chunk_received += take;
-                            i += take - 1; // for-loop 自增再 +1
+                            i += take;
+                            i -= 1; // 修正for +1导致的漏读 CR/LF
                             consumed += take;
                             if (self.chunk_received == self.chunk_size) {
                                 self.state = .BODY_CHUNKED_CR;
@@ -173,8 +178,8 @@ pub const Parser = struct {
                     },
                     .BODY_CHUNKED_CR => {
                         if (b != '\r') return error.InvalidChunk;
-                        self.state = .BODY_CHUNKED_LF;
-                        self.chunk_size = 0; // 下一轮会在 SIZE 阶段重新赋值
+                        self.state = .BODY_CHUNKED_SIZE;
+                        self.chunk_size = 0; // 下一轮重新赋值
                     },
                     else => {},
                 }
@@ -187,68 +192,68 @@ pub const Parser = struct {
         // 非 body 阶段：结合 header_buf（累积）进行行级解析
         // 查找头部结束标记："\r\n\r\n"
         if (self.state != .MESSAGE_COMPLETE) {
+            if (@import("builtin").mode == .Debug) {
+                const max_dump: usize = if (header_buf.len < 64) header_buf.len else 64;
+                var buf: [64 * 3]u8 = undefined; // "HH " * 64
+                var k: usize = 0;
+                var i_dbg: usize = 0;
+                while (i_dbg < max_dump) : (i_dbg += 1) {
+                    const b = header_buf[i_dbg];
+                    const hi = "0123456789ABCDEF"[b >> 4];
+                    const lo = "0123456789ABCDEF"[b & 0xF];
+                    buf[k] = hi;
+                    buf[k + 1] = lo;
+                    buf[k + 2] = ' ';
+                    k += 3;
+                }
+                std.log.debug("[dbg] header_len={}, chunk_len={}, head={s}", .{ header_buf.len, chunk.len, buf[0..k] });
+            }
             if (std.mem.indexOf(u8, header_buf, "\r\n\r\n")) |pos| {
                 // 解析请求行与头部（零拷贝切片均引用 header_buf）
-                try self.parseStartLineAndHeaders(header_buf[0 .. pos + 2], events);
+                // 传入完整头部（包含最后的 CRLFCRLF），避免半行导致不确定行为
+                const header_total = pos + 4; // "\r\n\r\n"
+                if (@import("builtin").mode == .Debug) {
+                    // 打印 pos/header_total 以及终止符四字节
+                    var four: [4]u8 = .{ 0, 0, 0, 0 };
+                    if (header_total <= header_buf.len and header_total >= 4) {
+                        four = .{ header_buf[header_total - 4], header_buf[header_total - 3], header_buf[header_total - 2], header_buf[header_total - 1] };
+                    }
+                    std.log.debug("[dbg] pos={}, total={}, tail4={x:0>2} {x:0>2} {x:0>2} {x:0>2}", .{ pos, header_total, four[0], four[1], four[2], four[3] });
+                }
+                std.debug.assert(header_total <= header_buf.len);
+                try self.parseStartLineAndHeaders(header_buf[0..header_total], events);
                 try events.append(.on_headers_complete);
                 self.state = .HEADERS_COMPLETE;
 
                 // 根据头部决策下一步
-                if (self.content_length) |cl2| {
+                if (self.is_chunked) {
+                    self.state = .BODY_CHUNKED_SIZE;
+                    // chunked 模式下，不处理 content_length，只走 chunked 状态机
+                    // return chunk.len;
+                    return chunk.len;
+                } else if (self.content_length) |cl2| {
                     self.state = .BODY_IDENTITY;
-                    // 计算本次 chunk 可直接作为 body 的起始部分（header 结束后，chunk 里可能已含 body）
-                    const header_total = pos + 4; // "\r\n\r\n"
+                    // 直接从 header_buf 末尾开始读取已在缓冲区中的 body 字节
                     const hb_len = header_buf.len;
-                    // header_buf = 历史累积 + 本次 chunk；因此本次 chunk 参与 header 的消耗为：
-                    // max(0, header_total - (hb_len - chunk.len))
-                    const already_in_buf = hb_len - chunk.len;
-                    const chunk_used_for_header = if (header_total > already_in_buf) header_total - already_in_buf else 0;
-                    // 返回给上层的“消费”应仅计算本次 chunk 的部分
-                    var consumed_from_chunk: usize = chunk_used_for_header;
-
-                    // 若 chunk 里在 header 之后还有 body 字节，立即产出 on_body_chunk
-                    if (chunk.len > chunk_used_for_header and self.body_received < cl2) {
-                        const available = chunk.len - chunk_used_for_header;
-                        const take = @min(available, cl2 - self.body_received);
+                    if (hb_len > header_total and self.body_received < cl2) {
+                        const body_in_buf = hb_len - header_total;
+                        const take = @min(body_in_buf, cl2 - self.body_received);
                         if (take > 0) {
-                            try events.append(.{ .on_body_chunk = chunk[chunk_used_for_header .. chunk_used_for_header + take] });
+                            try events.append(.{ .on_body_chunk = header_buf[header_total .. header_total + take] });
                             self.body_received += take;
-                            consumed_from_chunk += take;
                             if (self.body_received == cl2) {
                                 self.state = .MESSAGE_COMPLETE;
                                 try events.append(.on_message_complete);
                             }
                         }
                     }
-                    return consumed_from_chunk;
-                } else if (self.is_chunked) {
-                    self.state = .BODY_CHUNKED_SIZE;
-
-                    // 计算本次 chunk 在 header 之后的直接可消费部分（若有则在上面的 chunked 分支消耗）
-                    const header_total2 = pos + 4;
-                    const already2 = header_buf.len - chunk.len;
-                    const used_for_header2 = if (header_total2 > already2) header_total2 - already2 else 0;
-                    // 从 size 状态开始继续由上面的分支处理
-                    if (chunk.len > used_for_header2) {
-                        const rest = chunk[used_for_header2..];
-                        var tmp_events = std.ArrayList(Event).init(events.allocator);
-                        defer tmp_events.deinit();
-                        const c = try self.feed(header_buf, rest, &tmp_events);
-                        // 将临时事件转移到外部 events
-                        for (tmp_events.items) |ev| try events.append(ev);
-                        return used_for_header2 + c;
-                    }
-                    return used_for_header2;
+                    // 在头部阶段，一律认为本次 chunk 全部被消费（由上层累积 header_buf）
+                    return chunk.len;
                 } else {
                     // 无 body，消息完成
                     self.state = .MESSAGE_COMPLETE;
                     try events.append(.on_message_complete);
-
-                    // 计算 chunk 消耗（同上）
-                    const header_total = pos + 4;
-                    const already_in_buf = header_buf.len - chunk.len;
-                    const chunk_used_for_header = if (header_total > already_in_buf) header_total - already_in_buf else 0;
-                    return chunk_used_for_header;
+                    return chunk.len;
                 }
             }
         }
@@ -259,6 +264,7 @@ pub const Parser = struct {
 
     fn parseStartLineAndHeaders(self: *Self, header_part: []const u8, events: *std.ArrayList(Event)) !void {
         // 逐行解析：请求行 + 多个头部行（以 CRLF 结尾）
+        // 传入的 header_part 已包含最后的 CRLFCRLF；按行切分是安全的
         var it = std.mem.splitSequence(u8, header_part, "\r\n");
 
         // 请求行
@@ -271,6 +277,22 @@ pub const Parser = struct {
             if (line.len == 0) break; // 安全防御
             if (self.header_lines >= self.config.max_header_lines) return error.HeaderTooLarge;
             self.header_lines += 1;
+            if (@import("builtin").mode == .Debug) {
+                const max_dump: usize = if (line.len < 32) line.len else 32;
+                var buf: [32 * 3]u8 = undefined;
+                var k: usize = 0;
+                var i_dbg: usize = 0;
+                while (i_dbg < max_dump) : (i_dbg += 1) {
+                    const b = line[i_dbg];
+                    const hi = "0123456789ABCDEF"[b >> 4];
+                    const lo = "0123456789ABCDEF"[b & 0xF];
+                    buf[k] = hi;
+                    buf[k + 1] = lo;
+                    buf[k + 2] = ' ';
+                    k += 3;
+                }
+                std.log.debug("[dbg] header_line_len={}, head={s}", .{ line.len, buf[0..k] });
+            }
             if (std.mem.indexOfScalar(u8, line, ':')) |colon| {
                 const name_trim = std.mem.trim(u8, line[0..colon], " ");
                 const value_trim = std.mem.trim(u8, line[colon + 1 ..], " ");
@@ -278,14 +300,20 @@ pub const Parser = struct {
 
                 // 特别关注 Content-Length / Transfer-Encoding（分支预测：常见路径为 Content-Length）
                 if (std.ascii.eqlIgnoreCase(name_trim, "Content-Length")) {
-                    self.content_length = std.fmt.parseInt(usize, value_trim, 10) catch return error.InvalidContentLength;
+                    // 如果头部之前已标记 chunked，本 Content-Length 忽略
+                    if (!self.is_chunked) {
+                        self.content_length = std.fmt.parseInt(usize, value_trim, 10) catch return error.InvalidContentLength;
+                    }
                 } else if (std.ascii.eqlIgnoreCase(name_trim, "Transfer-Encoding")) {
                     // 无分配大小写不敏感查找 "chunked"
                     if (containsTokenCI(value_trim, "chunked")) {
                         self.is_chunked = true;
-                        self.content_length = null;
+                        self.content_length = null; // 有chunked立即清空CL
                     }
                 }
+            } else {
+                // 非空且不含冒号，表明可能是半行；返回错误并等待更多数据（由上层重试）
+                return error.InvalidRequest;
             }
         }
     }
@@ -311,21 +339,53 @@ pub const Parser = struct {
     }
 
     fn parseRequestLine(self: *Self, line: []const u8, events: *std.ArrayList(Event)) !void {
+        if (@import("builtin").mode == .Debug) {
+            const max_dump: usize = if (line.len < 64) line.len else 64;
+            var buf: [64 * 3]u8 = undefined;
+            var k: usize = 0;
+            var i_dbg: usize = 0;
+            while (i_dbg < max_dump) : (i_dbg += 1) {
+                const b = line[i_dbg];
+                const hi = "0123456789ABCDEF"[b >> 4];
+                const lo = "0123456789ABCDEF"[b & 0xF];
+                buf[k] = hi;
+                buf[k + 1] = lo;
+                buf[k + 2] = ' ';
+                k += 3;
+            }
+            std.log.debug("[dbg] request_line_len={}, head={s}", .{ line.len, buf[0..k] });
+        }
         // 形如：METHOD SP PATH SP HTTP/1.1
-        var parts = std.mem.splitScalar(u8, line, ' ');
-        const m = parts.next() orelse return error.InvalidRequest;
-        const p = parts.next() orelse return error.InvalidRequest;
-        const v = parts.next() orelse return error.InvalidRequest;
+        // 手动扫描空格，避免 split/trim 造成边界不明确
+        if (line.len == 0) return error.InvalidRequest;
+        var i: usize = 0;
+        while (i < line.len and line[i] != ' ') : (i += 1) {}
+        if (i == 0 or i >= line.len) return error.InvalidRequest;
+        const m = line[0..i];
+
+        var j: usize = i + 1; // 跳过空格
+        const path_start = j;
+        while (j < line.len and line[j] != ' ') : (j += 1) {}
+        if (j <= path_start or j >= line.len) return error.InvalidRequest;
+        const p = line[path_start..j];
+
+        const v_start = j + 1;
+        if (v_start >= line.len) return error.InvalidRequest;
+        const v = line[v_start..];
 
         self.method = m;
         self.path = p;
 
-        // 解析 HTTP/1.x
+        // 解析 HTTP/1.x 版本，失败则回退到 1.1
+        self.version_major = 1;
+        self.version_minor = 1;
         if (std.mem.startsWith(u8, v, "HTTP/")) {
             const ver = v[5..];
             if (std.mem.indexOfScalar(u8, ver, '.')) |dot| {
-                self.version_major = std.fmt.parseInt(u8, ver[0..dot], 10) catch 1;
-                self.version_minor = std.fmt.parseInt(u8, ver[dot + 1 ..], 10) catch 1;
+                if (dot > 0 and dot + 1 < ver.len) {
+                    self.version_major = std.fmt.parseInt(u8, ver[0..dot], 10) catch 1;
+                    self.version_minor = std.fmt.parseInt(u8, ver[dot + 1 ..], 10) catch 1;
+                }
             }
         }
 

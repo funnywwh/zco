@@ -10,16 +10,32 @@ pub fn main() !void {
             const allocator = (try zco.getSchedule()).allocator;
             const schedule = try zco.getSchedule();
 
+            // 忽略 SIGPIPE，避免写入已关闭套接字时进程崩溃
+            if (@import("builtin").os.tag != .windows) {
+                const posix = std.posix;
+                var act = posix.Sigaction{ .handler = .{ .handler = posix.SIG.IGN }, .mask = posix.empty_sigset, .flags = 0 };
+                _ = posix.sigaction(posix.SIG.PIPE, &act, null);
+            }
+
             // 创建HTTP服务器
             // 注意：server.deinit() 不应该在这里使用 defer
             // 因为 listen() 会一直运行，直到程序退出
             var server = http.Server.init(allocator, schedule);
+            std.log.info("[debug-top] server.use_pool={} (run初始)", .{server.use_pool});
             // 启用新的流式解析器（事件驱动、零内存积累）
             server.setUseStreamingParser(true);
+            std.log.info("[debug-top] server.use_pool={} (streamingParser后)", .{server.use_pool});
+            // 恢复协程池以支撑并发压测
+            server.setUsePool(true);
+            std.log.info("[debug-top] server.use_pool={} (setUsePool后)", .{server.use_pool});
+            // 调整并发与缓冲参数
+            server.setWorkerPoolSize(160);
+            server.setChannelBuffer(1280);
+            server.setMaxConnections(20000);
             // defer server.deinit(); // 不在这里清理，避免在 listen 运行时清理资源
 
-            // 添加中间件
-            try server.use(http.middleware.Middleware.init(http.middleware.logger, "logger"));
+            // 添加中间件（暂时禁用 logger 以定位崩溃来源）
+            // try server.use(http.middleware.Middleware.init(http.middleware.logger, "logger"));
             // try server.use(http.middleware.Middleware.init(http.middleware.cors, "cors")); // 已禁用 CORS 中间件
 
             // 路由示例
@@ -31,7 +47,9 @@ pub fn main() !void {
 
             // 启动服务器（listen需要在协程环境中调用）
             const address = try std.net.Address.parseIp4("127.0.0.1", 8080);
+            std.log.info("[debug] server.use_pool={} (即将listen)", .{server.use_pool});
             try server.listen(address);
+            std.log.info("[debug-bot] 已执行try listen", .{});
         }
     }.run, .{});
 }

@@ -30,5 +30,3 @@ test "chunked body streaming with two chunks" {
     try testing.expect(complete);
     try testing.expectEqual(@as(usize, 9), chunk_bytes); // Wiki + pedia
 }
-
-

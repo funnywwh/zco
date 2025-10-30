@@ -24,5 +24,3 @@ test "parse Set-Cookie with attributes" {
     try testing.expectEqual(cookie.Cookie.SameSite.Strict, c.same_site.?);
     try testing.expect(c.max_age.? == 10);
 }
-
-

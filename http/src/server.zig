@@ -135,6 +135,7 @@ pub const Server = struct {
 
     /// 直接模式：为每个连接创建协程（原始方式）
     fn listenDirect(self: *Self, address: std.net.Address) !void {
+        std.log.info("[listenDirect 路径激活]", .{});
         const tcp = try nets.Tcp.init(self.schedule);
         errdefer tcp.deinit();
 
@@ -167,6 +168,7 @@ pub const Server = struct {
 
     /// 协程池模式：使用固定数量的工作协程处理连接
     fn listenWithPool(self: *Self, address: std.net.Address) !void {
+        std.log.info("[listenWithPool 路径激活]", .{});
         const tcp = try nets.Tcp.init(self.schedule);
         errdefer tcp.deinit();
 
@@ -185,18 +187,21 @@ pub const Server = struct {
 
         // 创建固定数量的工作协程池
         // 注意：必须捕获 channel 指针，确保生命周期一致
-        for (0..self.worker_pool_size) |_| {
+        for (0..self.worker_pool_size) |i| {
             _ = try self.schedule.go(struct {
-                fn run(server_ptr: *Self, chan_ptr: *TcpChan) !void {
+                fn run(server_ptr: *Self, chan_ptr: *TcpChan, wid: usize) !void {
+                    std.log.info("[worker-{d}] 启动", .{wid});
                     // 确保 channel 指针有效
                     const chan = chan_ptr;
                     while (true) {
+                        std.log.info("[worker-{d}] 等待连接...", .{wid});
                         // 捕获 recv 可能抛出的错误（包括 closed 错误）
                         var client = chan.recv() catch |e| {
                             // channel 关闭或错误时退出
-                            std.log.info("Worker exiting: {s}", .{@errorName(e)});
+                            std.log.info("[worker-{d}] 退出: {s}", .{ wid, @errorName(e) });
                             break;
                         };
+                        std.log.info("[worker-{d}] 获得连接", .{wid});
 
                         // 检查连接数限制
                         const current_connections = server_ptr.connection_count.load(.monotonic);
@@ -221,42 +226,22 @@ pub const Server = struct {
                         client.deinit();
                     }
                 }
-            }.run, .{ self, client_chan });
+            }.run, .{ self, client_chan, i });
         }
 
-        // 启动服务器协程：accept 循环并将连接发送到 channel
-        // 注意：必须确保 channel 和 tcp 的生命周期一致
-        _ = try self.schedule.go(struct {
-            fn run(tcp_ptr: *nets.Tcp, chan_ptr: *TcpChan) !void {
-                const chan = chan_ptr; // 保存本地引用
-                while (true) {
-                    var client = tcp_ptr.accept() catch |e| {
-                        std.log.err("Server accept error: {s}", .{@errorName(e)});
-                        continue;
-                    };
-
-                    // 将客户端连接发送到 channel，由工作协程处理
-                    chan.send(client) catch |e| {
-                        std.log.err("Failed to send client to channel: {s}", .{@errorName(e)});
-                        client.close();
-                        client.deinit();
-                    };
-                }
-            }
-        }.run, .{ tcp, client_chan });
-
-        // listenWithPool 必须在协程中运行并阻塞
-        // 由于 accept 和 worker 协程都在后台运行，
-        // 这个函数需要无限阻塞，保持 channel 的生命周期
-        // 使用一个永不退出的循环来阻塞
+        // 在当前协程中直接执行 accept 循环并分发到 channel，
+        // 避免所有协程同时阻塞而被调度器视为死锁
         while (true) {
-            // 使用协程的 Suspend 来阻塞，而不是 Sleep
-            // 这样可以避免 CPU 占用，同时保持函数不返回
-            const co = self.schedule.runningCo orelse {
-                std.log.err("listenWithPool must be called in a coroutine context", .{});
-                return error.CallInSchedule;
+            var client = tcp.accept() catch |e| {
+                std.log.err("Server accept error: {s}", .{@errorName(e)});
+                continue;
             };
-            try co.Sleep(60 * std.time.ns_per_s); // 睡眠60秒，避免频繁检查
+            std.log.info("accept 分发 client", .{});
+            client_chan.send(client) catch |e| {
+                std.log.err("Failed to send client to channel: {s}", .{@errorName(e)});
+                client.close();
+                client.deinit();
+            };
         }
     }
 
@@ -549,6 +534,9 @@ pub const Server = struct {
         defer server.allocator.free(read_buf);
 
         var keep_alive = false;
+        const SAFE_MODE = false; // 恢复正常模式
+        const DISABLE_COPY = false; // 恢复 headers/body 拷贝
+        const SIMPLE_SEND = true; // 临时直接返回 OK，绕过中间件/路由
 
         var sreq = streaming_request_mod.StreamingRequest.init(server.allocator);
         defer sreq.deinit();
@@ -570,7 +558,9 @@ pub const Server = struct {
 
             if (sreq.isComplete()) {
                 // 构造上下文
+                std.log.debug("[dbg] before Context.init", .{});
                 var ctx = context.Context.init(server.allocator, server.schedule, client);
+                std.log.debug("[dbg] after Context.init", .{});
 
                 // 填充 Request 基础字段
                 // 方法：根据字符串简单映射
@@ -597,32 +587,41 @@ pub const Server = struct {
                 }
                 if (sreq.path.len > 0) {
                     ctx.req.path = try server.allocator.dupe(u8, sreq.path);
+                    ctx.req.owns_path = true;
                 } else {
                     ctx.req.path = try server.allocator.dupe(u8, "/");
+                    ctx.req.owns_path = true;
                 }
 
-                // 复制头部到 ctx.req.headers
-                for (sreq.headers.items) |h| {
-                    const key_dup = try server.allocator.dupe(u8, h.name);
-                    const val_dup = try server.allocator.dupe(u8, h.value);
-                    try ctx.req.headers.put(key_dup, val_dup);
-                }
-
-                // Body（若采用 accumulate）
-                if (body_list.items.len > 0) {
-                    ctx.req.body = try server.allocator.dupe(u8, body_list.items);
-                    ctx.req.content_length = body_list.items.len;
+                if (!SAFE_MODE and !DISABLE_COPY) {
+                    // 复制头部到 ctx.req.headers
+                    for (sreq.headers.items) |h| {
+                        const key_dup = try server.allocator.dupe(u8, h.name);
+                        const val_dup = try server.allocator.dupe(u8, h.value);
+                        try ctx.req.headers.put(key_dup, val_dup);
+                    }
+                    ctx.req.owns_headers = true;
+                    // Body（若采用 accumulate）
+                    if (body_list.items.len > 0) {
+                        ctx.req.body = try server.allocator.dupe(u8, body_list.items);
+                        ctx.req.content_length = body_list.items.len;
+                        ctx.req.owns_body = true;
+                    }
                 }
 
                 // Keep-Alive 判定
-                const conn_val = ctx.req.getHeader("Connection");
-                keep_alive = false;
-                if (conn_val) |cv| {
-                    var lower: [16]u8 = undefined;
-                    if (cv.len <= lower.len) {
-                        for (cv, 0..) |c, i| lower[i] = std.ascii.toLower(c);
-                        if (std.mem.eql(u8, lower[0..cv.len], "keep-alive")) keep_alive = true;
+                if (!SAFE_MODE) {
+                    const conn_val = ctx.req.getHeader("Connection");
+                    keep_alive = false;
+                    if (conn_val) |cv| {
+                        var lower: [16]u8 = undefined;
+                        if (cv.len <= lower.len) {
+                            for (cv, 0..) |c, i| lower[i] = std.ascii.toLower(c);
+                            if (std.mem.eql(u8, lower[0..cv.len], "keep-alive")) keep_alive = true;
+                        }
                     }
+                } else {
+                    keep_alive = false; // 安全模式关闭 keep-alive，避免复用导致的生命周期交叉
                 }
 
                 // 响应 Connection 头
@@ -632,34 +631,50 @@ pub const Server = struct {
                     try ctx.header("Connection", "close");
                 }
 
-                // 中间件与路由
-                server.middleware_chain.execute(&ctx) catch |e| {
-                    std.log.err("Middleware error: {s}", .{@errorName(e)});
-                    ctx.res.status = 500;
-                    _ = ctx.text(500, "Internal Server Error");
-                };
-                if (!ctx.res.sent and ctx.res.body.items.len == 0 and ctx.res.status == 200) {
-                    server.router.handle(&ctx) catch |e| {
-                        std.log.err("Route error: {s}", .{@errorName(e)});
+                if (SAFE_MODE or SIMPLE_SEND) {
+                    std.log.debug("[dbg] SAFE_MODE send begin", .{});
+                    try ctx.text(200, "OK");
+                    std.log.debug("[dbg] SAFE_MODE send end", .{});
+                } else {
+                    // 中间件与路由
+                    server.middleware_chain.execute(&ctx) catch |e| {
+                        std.log.err("Middleware error: {s}", .{@errorName(e)});
                         ctx.res.status = 500;
-                        _ = ctx.text(500, "Internal Server Error");
+                        try ctx.text(500, "Internal Server Error");
                     };
+                    if (!ctx.res.sent and ctx.res.body.items.len == 0 and ctx.res.status == 200) {
+                        server.router.handle(&ctx) catch |e| {
+                            std.log.err("Route error: {s}", .{@errorName(e)});
+                            ctx.res.status = 500;
+                            try ctx.text(500, "Internal Server Error");
+                        };
+                    }
                 }
 
                 if (!ctx.res.sent) {
+                    std.log.debug("[dbg] before ctx.send", .{});
                     ctx.send() catch |e| {
                         std.log.err("Send error: {s}", .{@errorName(e)});
                     };
+                    std.log.debug("[dbg] after ctx.send", .{});
                 }
 
-                ctx.deinit();
+                if (!SAFE_MODE) {
+                    std.log.debug("[dbg] before ctx.deinit", .{});
+                    ctx.deinit();
+                    std.log.debug("[dbg] after ctx.deinit", .{});
+                }
 
                 if (!keep_alive) break;
 
                 // 为下一条请求重置
-                sreq.reset();
-                body_list.clearRetainingCapacity();
-                sreq.setBodyHandler(.{ .accumulate = &body_list });
+                if (!SAFE_MODE) {
+                    sreq.reset();
+                    body_list.clearRetainingCapacity();
+                    sreq.setBodyHandler(.{ .accumulate = &body_list });
+                } else {
+                    break; // 安全模式：仅处理一条请求
+                }
             }
         }
     }

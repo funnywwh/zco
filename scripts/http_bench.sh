@@ -55,8 +55,8 @@ run_wrk() {
 case "${1:-}" in
   start) start_server ;;
   stop) stop_server ;;
-  ab) run_ab "$2" ;;
-  wrk) run_wrk "$2" ;;
+  ab) run_ab ;;
+  wrk) run_wrk ;;
   *) echo "usage: $0 {start|ab|wrk|stop}" ; exit 1 ;;
 esac
 

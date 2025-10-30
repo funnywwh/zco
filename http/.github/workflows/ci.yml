@@ -1,0 +1,49 @@
+name: Streaming HTTP Parser CI
+
+on:
+  push:
+    branches:
+      - '*'
+  pull_request:
+    branches:
+      - '*'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Zig Build Tests (all)
+        run: zig build test -Doptimize=ReleaseSafe
+
+      - name: Standalone Single Parser Tests
+        run: |
+          zig test src/parser_test.zig
+          zig test src/parser_chunked_test.zig
+          zig test src/cookie_test.zig
+          zig test src/parser_fuzz_test.zig
+
+      - name: Upload Test Outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: benchmarks/results/*.out
+
+      - name: (Optional) Run Benchmarks Script
+        run: |
+          if [ -x scripts/http_bench.sh ]; then scripts/http_bench.sh wrk; fi
+          if [ -d benchmarks/results ]; then ls -l benchmarks/results; fi
+
+      - name: Upload Benchmarks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: benchmarks/results/

@@ -9,7 +9,8 @@ pub const HeaderBuffer = struct {
     /// 默认头部缓冲区大小（字节）
     pub const DEFAULT_CAPACITY: usize = 4096;
 
-    data: [DEFAULT_CAPACITY]u8 = undefined,
+    // 使用零初始化，避免未初始化字节在某些库函数中被越界读取
+    data: [DEFAULT_CAPACITY]u8 = std.mem.zeroes([DEFAULT_CAPACITY]u8),
     len: usize = 0,
 
     /// 初始化头部缓冲区
@@ -37,5 +38,3 @@ pub const HeaderBuffer = struct {
         self.len = 0;
     }
 };
-
-

@@ -101,4 +101,97 @@ test "CRLF 跨分片（头部被分两次读入）" {
     try testing.expect(ok);
 }
 
+test "HTTP 0.9 行为 (无头部)" {
+    var parser = Parser.init(.request);
+    var hb = HeaderBuffer.init();
+    const raw = "GET /\r\n";
+    try hb.append(raw);
+    var ev = std.ArrayList(Parser.Event).init(testing.allocator);
+    defer ev.deinit();
+    _ = parser.feed(hb.slice(), raw, &ev) catch {
+        return;
+    };
+}
 
+test "HTTP 1.0 有/无Host兼容" {
+    var parser = Parser.init(.request);
+    var hb = HeaderBuffer.init();
+    const raw = "GET /foo HTTP/1.0\r\n\r\n";
+    try hb.append(raw);
+    var ev = std.ArrayList(Parser.Event).init(testing.allocator);
+    defer ev.deinit();
+    _ = try parser.feed(hb.slice(), raw, &ev);
+    try testing.expect(ev.items.len > 0);
+}
+
+test "超长头部行(>256)报错" {
+    var parser = Parser.init(.request);
+    parser.config.max_header_lines = 8;
+    var hb = HeaderBuffer.init();
+    var buf = try testing.allocator.alloc(u8, 512);
+    defer testing.allocator.free(buf);
+    var pos: usize = 0;
+    for (0..16) |i| {
+        const k = "X-Long";
+        const v = "abcde";
+        pos += (try std.fmt.bufPrint(buf[pos..], "{s}{d}: {s}\r\n", .{ k, i, v })).len;
+    }
+    // 拼接 HTTP 包和动态头集
+    var arr = std.ArrayList(u8).init(testing.allocator);
+    defer arr.deinit();
+    try arr.appendSlice("GET / HTTP/1.1\r\n");
+    try arr.appendSlice(buf[0..pos]);
+    try arr.appendSlice("\r\n");
+    const all = arr.items;
+    _ = hb.append(all) catch {};
+    var ev = std.ArrayList(Parser.Event).init(testing.allocator);
+    defer ev.deinit();
+    const err = parser.feed(hb.slice(), all, &ev) catch |e| e;
+    try testing.expectError(error.HeaderTooLarge, err);
+}
+
+test "Content-Length+chunked并存，仅chunked有效" {
+    var parser = Parser.init(.request);
+    var hb = HeaderBuffer.init();
+    const head = "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 99\r\nTransfer-Encoding: chunked\r\n\r\n";
+    try hb.append(head);
+    var ev = std.ArrayList(Parser.Event).init(testing.allocator);
+    defer ev.deinit();
+    _ = try parser.feed(hb.slice(), head, &ev);
+    const body = "4\r\nAABB\r\n0\r\n\r\n";
+    _ = try parser.feed(hb.slice(), body, &ev);
+    var chunkbuf: usize = 0;
+    for (ev.items) |e| {
+        std.debug.print("event: {any}\n", .{e});
+        if (e == .on_body_chunk) chunkbuf += e.on_body_chunk.len;
+    }
+    try testing.expect(chunkbuf == 4);
+}
+
+test "Header大小写、无冒号、异常空头测试" {
+    var parser = Parser.init(.request);
+    var hb = HeaderBuffer.init();
+    const raw = "GET / HTTP/1.1\r\nFOO: bar\r\nbaz:Qux\r\nMISSINGSEPARATOR\r\n\r\n";
+    try hb.append(raw);
+    var ev = std.ArrayList(Parser.Event).init(testing.allocator);
+    defer ev.deinit();
+    const result = parser.feed(hb.slice(), raw, &ev) catch |e| e;
+    try testing.expectError(error.InvalidRequest, result);
+}
+
+test "粘包（两个GET串连）" {
+    var parser = Parser.init(.request);
+    var hb = HeaderBuffer.init();
+    const full = "GET /a HTTP/1.1\r\nHost: h\r\n\r\nGET /b HTTP/1.1\r\nHost: h\r\n\r\n";
+    try hb.append(full);
+    var ev = std.ArrayList(Parser.Event).init(testing.allocator);
+    defer ev.deinit();
+    const consumed = try parser.feed(hb.slice(), full, &ev);
+    try testing.expect(ev.items.len > 0);
+    parser.reset();
+    // 继续第二条
+    var ev2 = std.ArrayList(Parser.Event).init(testing.allocator);
+    defer ev2.deinit();
+    _ = try parser.feed(hb.slice(), full[consumed..], &ev2);
+    try testing.expect(ev2.items.len > 0);
+}

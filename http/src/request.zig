@@ -37,6 +37,14 @@ pub const Request = struct {
     /// Content-Type
     content_type: ?[]const u8 = null,
 
+    // 所有权标记：指示哪些字段由本请求负责释放
+    owns_path: bool = false,
+    owns_query_string: bool = false,
+    owns_version: bool = false,
+    owns_headers: bool = false,
+    owns_body: bool = false,
+    owns_content_type: bool = false,
+
     /// 初始化请求
     pub fn init(allocator: std.mem.Allocator) Self {
         return .{
@@ -49,12 +57,14 @@ pub const Request = struct {
 
     /// 清理请求资源
     pub fn deinit(self: *Self) void {
-        // 释放headers
-        var header_iter = self.headers.iterator();
-        while (header_iter.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            if (entry.value_ptr.*.len > 0) {
-                self.allocator.free(entry.value_ptr.*);
+        // 释放headers（仅当拥有所有权）
+        if (self.owns_headers) {
+            var header_iter = self.headers.iterator();
+            while (header_iter.next()) |entry| {
+                self.allocator.free(entry.key_ptr.*);
+                if (entry.value_ptr.*.len > 0) {
+                    self.allocator.free(entry.value_ptr.*);
+                }
             }
         }
         self.headers.deinit();
@@ -79,27 +89,29 @@ pub const Request = struct {
         }
         self.params.deinit();
 
-        // 释放path, query_string, version
-        if (self.path.len > 0) {
+        // 释放path, query_string, version（仅当拥有所有权）
+        if (self.owns_path and self.path.len > 0) {
             self.allocator.free(self.path);
         }
-        if (self.query_string.len > 0) {
+        if (self.owns_query_string and self.query_string.len > 0) {
             self.allocator.free(self.query_string);
         }
-        if (self.version.len > 0) {
+        if (self.owns_version and self.version.len > 0) {
             self.allocator.free(self.version);
         }
 
         // 释放body
         // body 初始化为空切片，只有在 parse 时分配了内存才需要释放
         // 检查 body.ptr 是否有效（不等于 undefined 且不为 null）
-        if (self.body.len > 0) {
+        if (self.owns_body and self.body.len > 0) {
             // body 可能是从 buffer 复制的，确保是通过 allocator.dupe 分配的
             self.allocator.free(self.body);
         }
 
-        if (self.content_type) |ct| {
-            self.allocator.free(ct);
+        if (self.owns_content_type) {
+            if (self.content_type) |ct| {
+                self.allocator.free(ct);
+            }
         }
     }
 
@@ -142,6 +154,7 @@ pub const Request = struct {
 
         if (self.headers.get("Content-Type")) |ct| {
             self.content_type = try self.allocator.dupe(u8, ct);
+            self.owns_content_type = true;
         }
 
         // 提取请求体
@@ -151,8 +164,10 @@ pub const Request = struct {
                 const body_raw = raw[body_start..];
                 if (self.content_length > 0 and body_raw.len >= self.content_length) {
                     self.body = try self.allocator.dupe(u8, body_raw[0..self.content_length]);
+                    self.owns_body = true;
                 } else if (body_raw.len > 0) {
                     self.body = try self.allocator.dupe(u8, body_raw);
+                    self.owns_body = true;
                 }
             }
         }
@@ -208,20 +223,28 @@ pub const Request = struct {
                 const query_only = path_query[query_pos + 1 ..];
                 self.path = try self.allocator.dupe(u8, path_only);
                 self.query_string = try self.allocator.dupe(u8, query_only);
+                self.owns_path = true;
+                self.owns_query_string = true;
             } else {
                 self.path = try self.allocator.dupe(u8, path_query);
                 self.query_string = try self.allocator.dupe(u8, "");
+                self.owns_path = true;
+                self.owns_query_string = true;
             }
         } else {
             self.path = try self.allocator.dupe(u8, "/");
             self.query_string = try self.allocator.dupe(u8, "");
+            self.owns_path = true;
+            self.owns_query_string = true;
         }
 
         // 解析版本
         if (version_str) |v| {
             self.version = try self.allocator.dupe(u8, v);
+            self.owns_version = true;
         } else {
             self.version = try self.allocator.dupe(u8, "HTTP/1.1");
+            self.owns_version = true;
         }
     }
 
@@ -245,6 +268,7 @@ pub const Request = struct {
             }
 
             try self.headers.put(key_lower, value_dup);
+            self.owns_headers = true;
         }
     }
 
