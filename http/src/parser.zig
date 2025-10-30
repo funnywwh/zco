@@ -25,8 +25,8 @@ pub const Parser = struct {
         BODY_IDENTITY, // Content-Length body
         BODY_CHUNKED_SIZE, // 读取 chunk 大小（十六进制，以 CRLF 结束）
         BODY_CHUNKED_DATA, // 读取 chunk 数据
-        BODY_CHUNKED_CR,   // 读取 chunk 末尾的 \r
-        BODY_CHUNKED_LF,   // 读取 chunk 末尾的 \n
+        BODY_CHUNKED_CR, // 读取 chunk 末尾的 \r
+        BODY_CHUNKED_LF, // 读取 chunk 末尾的 \n
         MESSAGE_COMPLETE,
     };
 
@@ -276,22 +276,38 @@ pub const Parser = struct {
                 const value_trim = std.mem.trim(u8, line[colon + 1 ..], " ");
                 try events.append(.{ .on_header = .{ .name = name_trim, .value = value_trim } });
 
-                // 特别关注 Content-Length
+                // 特别关注 Content-Length / Transfer-Encoding（分支预测：常见路径为 Content-Length）
                 if (std.ascii.eqlIgnoreCase(name_trim, "Content-Length")) {
                     self.content_length = std.fmt.parseInt(usize, value_trim, 10) catch return error.InvalidContentLength;
                 } else if (std.ascii.eqlIgnoreCase(name_trim, "Transfer-Encoding")) {
-                    // 如果包含 chunked，则切换为 chunked 模式
-                    var lower = std.ArrayList(u8).init(events.allocator);
-                    defer lower.deinit();
-                    try lower.appendSlice(value_trim);
-                    for (lower.items, 0..) |c, i| lower.items[i] = std.ascii.toLower(c);
-                    if (std.mem.indexOf(u8, lower.items, "chunked") != null) {
+                    // 无分配大小写不敏感查找 "chunked"
+                    if (containsTokenCI(value_trim, "chunked")) {
                         self.is_chunked = true;
                         self.content_length = null;
                     }
                 }
             }
         }
+    }
+
+    /// 无分配大小写不敏感包含判断
+    fn containsTokenCI(haystack: []const u8, needle: []const u8) bool {
+        if (needle.len == 0 or haystack.len < needle.len) return false;
+        var i: usize = 0;
+        while (i + needle.len <= haystack.len) : (i += 1) {
+            var eq = true;
+            var j: usize = 0;
+            while (j < needle.len) : (j += 1) {
+                const a = haystack[i + j];
+                const b = needle[j];
+                if (std.ascii.toLower(a) != std.ascii.toLower(b)) {
+                    eq = false;
+                    break;
+                }
+            }
+            if (eq) return true;
+        }
+        return false;
     }
 
     fn parseRequestLine(self: *Self, line: []const u8, events: *std.ArrayList(Event)) !void {
