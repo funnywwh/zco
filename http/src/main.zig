@@ -14,6 +14,8 @@ pub fn main() !void {
             // 注意：server.deinit() 不应该在这里使用 defer
             // 因为 listen() 会一直运行，直到程序退出
             var server = http.Server.init(allocator, schedule);
+            // 启用新的流式解析器（事件驱动、零内存积累）
+            server.setUseStreamingParser(true);
             // defer server.deinit(); // 不在这里清理，避免在 listen 运行时清理资源
 
             // 添加中间件
