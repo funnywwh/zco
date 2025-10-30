@@ -22,8 +22,8 @@ pub const Server = struct {
     max_request_size: usize = 1024 * 1024, // 1MB
 
     /// 协程池配置
-    worker_pool_size: usize = 100, // 工作协程池大小
-    channel_buffer: usize = 1000, // channel 缓冲大小
+    worker_pool_size: usize = 2000, // 工作协程池大小（增加到 2000 以处理高并发）
+    channel_buffer: usize = 20000, // channel 缓冲大小（增加到 20000 以处理高并发）
     max_connections: u32 = 10000, // 最大连接数
 
     /// 连接计数器（原子操作）
@@ -258,16 +258,23 @@ pub const Server = struct {
         defer server.allocator.free(buffer);
 
         // 支持HTTP keep-alive：在同一连接上处理多个请求
-        var keep_alive = true;
+        var keep_alive = false; // 默认关闭，需要通过 Connection 头明确指定
         var buffer_used: usize = 0; // 已使用的缓冲区大小（用于处理粘包）
 
-        while (keep_alive) {
-            // 读取请求（可能需要多次读取才能完整）
+        // 参考 nets 的实现：循环处理请求，直到连接关闭或 keep_alive = false
+        while (true) {
+            // 每次请求开始时重置 keep_alive（会根据当前请求的 Connection 头重新设置）
+            keep_alive = false;
+
+            // 参考 nets：每次循环开始时尝试读取，检测连接是否关闭
+            // nets 的做法是 while (keepalive) { n = read(buffer[0..]); if (n == 0) break; ... }
+            // 关键：即使有粘包数据，也要在循环开始时先读取一次来检测连接关闭
+            // 但如果有粘包数据，我们可以先处理它们，不需要先读取
             var total_read: usize = buffer_used;
             var header_end: ?usize = null;
             var content_length: ?usize = null;
 
-            // 先尝试从现有缓冲区中找到请求边界
+            // 如果有缓冲区剩余数据（粘包），先尝试从中找到请求边界
             if (buffer_used > 0) {
                 if (std.mem.indexOf(u8, buffer[0..buffer_used], "\r\n\r\n")) |pos| {
                     header_end = pos + 4;
@@ -297,14 +304,25 @@ pub const Server = struct {
                             // 请求完整
                             break;
                         }
-                        if (total_read < expected_total and total_read < buffer.len) {
+                        if (total_read < expected_total) {
+                            if (total_read >= buffer.len) {
+                                std.log.warn("Request body too large, buffer: {}, expected: {}", .{ buffer.len, expected_total });
+                                keep_alive = false;
+                                break;
+                            }
                             // 继续读取请求体
                             const n = client.read(buffer[total_read..]) catch |e| {
+                                // EOF 错误表示连接关闭，这是正常情况，不需要记录错误
+                                if (std.mem.eql(u8, @errorName(e), "EOF")) {
+                                    keep_alive = false;
+                                    return;
+                                }
                                 std.log.err("Read error: {s}", .{@errorName(e)});
+                                keep_alive = false;
                                 return;
                             };
                             if (n == 0) {
-                                // 连接关闭
+                                // 连接关闭，请求体不完整
                                 keep_alive = false;
                                 break;
                             }
@@ -324,19 +342,25 @@ pub const Server = struct {
                     break;
                 }
 
+                // 参考 nets：读取数据，如果连接关闭（n == 0），直接退出
                 const n = client.read(buffer[total_read..]) catch |e| {
+                    // EOF 错误表示连接关闭，这是正常情况，不需要记录错误
+                    if (std.mem.eql(u8, @errorName(e), "EOF")) {
+                        keep_alive = false;
+                        return;
+                    }
                     std.log.err("Read error: {s}", .{@errorName(e)});
                     keep_alive = false;
-                    break;
+                    return;
                 };
 
                 if (n == 0) {
-                    // 连接关闭
+                    // 连接关闭（参考 nets：if (n == 0) break）
                     if (total_read == 0) {
-                        keep_alive = false;
-                        break;
+                        // 没有读取任何数据，连接已关闭（这是循环开始时的第一次读取）
+                        return;
                     }
-                    // 有数据但连接关闭，尝试解析
+                    // 有数据但连接关闭，尝试解析最后一个请求
                     break;
                 }
 
@@ -360,6 +384,10 @@ pub const Server = struct {
                                 content_length = std.fmt.parseInt(usize, cl_str, 10) catch null;
                             }
                         }
+                    } else {
+                        // 没有找到头部结束标记，且已经读取了一些数据
+                        // 如果连接关闭（n == 0），说明这是最后一个请求的最后一个片段
+                        // 在下一个循环中，如果没有找到 header_end，且没有更多数据，会退出
                     }
                 } else if (content_length) |cl| {
                     // 已找到头部，检查请求体是否完整
@@ -377,6 +405,13 @@ pub const Server = struct {
                 break;
             }
 
+            // 如果没有找到完整的请求头部，且连接已关闭，直接退出
+            if (header_end == null) {
+                // 数据不完整，无法解析请求，退出
+                keep_alive = false;
+                break;
+            }
+
             // 确定实际请求的大小（处理粘包）
             const h_end = header_end orelse total_read;
             const request_size = if (content_length) |cl|
@@ -391,7 +426,7 @@ pub const Server = struct {
 
             // 创建上下文（每次请求都需要新的上下文）
             var ctx = context.Context.init(server.allocator, server.schedule, client);
-            
+
             // 解析请求（只解析当前请求部分）
             ctx.req.parse(buffer[0..request_size]) catch |e| {
                 std.log.err("Parse error: {s}", .{@errorName(e)});
@@ -402,14 +437,10 @@ pub const Server = struct {
                 break;
             };
 
-            // 检查Connection头和HTTP版本（在清理上下文之前检查，因为需要用到 req）
-            const version = ctx.req.version;
-            const is_http11 = std.mem.startsWith(u8, version, "HTTP/1.1");
+            // 检查Connection头（在清理上下文之前检查，因为需要用到 req）
+            // keep_alive 在循环开始时已重置为 false，只需要检查是否启用
 
-            // HTTP/1.1 默认keep-alive，HTTP/1.0 默认close
-            keep_alive = is_http11;
-
-            // 检查Connection头（优先级高于默认值）
+            // 检查Connection头（只有明确指定 keep-alive 时才启用）
             const connection_header = ctx.req.getHeader("Connection");
             if (connection_header) |conn| {
                 const conn_trimmed = std.mem.trim(u8, conn, " ");
@@ -419,11 +450,10 @@ pub const Server = struct {
                         conn_lower_buf[i] = std.ascii.toLower(c);
                     }
                     const conn_lower = conn_lower_buf[0..conn_trimmed.len];
-                    if (std.mem.eql(u8, conn_lower, "close")) {
-                        keep_alive = false;
-                    } else if (std.mem.eql(u8, conn_lower, "keep-alive")) {
+                    if (std.mem.eql(u8, conn_lower, "keep-alive")) {
                         keep_alive = true;
                     }
+                    // 如果是 "close" 或未指定，keep_alive 保持 false
                 }
             }
 
@@ -437,12 +467,12 @@ pub const Server = struct {
                 buffer_used = 0;
             }
 
-            // 设置响应Connection头（已禁用，不再设置 Connection 头）
-            // if (keep_alive) {
-            //     try ctx.header("Connection", "keep-alive");
-            // } else {
-            //     try ctx.header("Connection", "close");
-            // }
+            // 设置响应Connection头
+            if (keep_alive) {
+                try ctx.header("Connection", "keep-alive");
+            } else {
+                try ctx.header("Connection", "close");
+            }
 
             // 执行中间件链
             server.middleware_chain.execute(&ctx) catch |e| {
@@ -475,6 +505,25 @@ pub const Server = struct {
             // 如果不需要keep-alive，退出循环
             if (!keep_alive) {
                 break;
+            }
+
+            // 参考 nets：如果需要 keep-alive 且缓冲区为空，先读取一次检测连接是否关闭
+            // 这确保我们在下一个循环开始时能及时检测到连接关闭
+            if (buffer_used == 0) {
+                const test_read = client.read(buffer[0..1]) catch |e| {
+                    // EOF 错误表示连接关闭，这是正常情况，不需要记录错误
+                    if (std.mem.eql(u8, @errorName(e), "EOF")) {
+                        break;
+                    }
+                    std.log.err("Read error: {s}", .{@errorName(e)});
+                    break;
+                };
+                if (test_read == 0) {
+                    // 连接已关闭（参考 nets：if (n == 0) break）
+                    break;
+                }
+                // 有一个字节的数据，设置 buffer_used，下次循环时会处理
+                buffer_used = test_read;
             }
         }
     }
