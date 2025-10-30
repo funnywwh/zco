@@ -11,6 +11,8 @@ pub const context = @import("./context.zig");
 pub const static_files = @import("./static.zig");
 pub const template = @import("./template.zig");
 pub const upload = @import("./upload.zig");
+pub const parser = @import("./parser.zig");
+pub const header_buffer = @import("./header_buffer.zig");
 pub const upgrade = @import("./upgrade.zig");
 
 // 公共类型和常量
