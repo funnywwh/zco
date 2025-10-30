@@ -94,33 +94,33 @@ pub fn Resume(self: *Co) !void {
 
 pub const Co = struct {
     const Self = @This();
-    
+
     // 协程ID - 8字节对齐
     id: usize align(8) = 0,
-    
+
     // 协程上下文 - 16字节对齐
     ctx: Context align(16) = std.mem.zeroes(Context),
-    
+
     // 协程函数 - 8字节对齐
     func: Func align(8) = undefined,
-    
+
     // 协程参数 - 8字节对齐
     args: ?*anyopaque align(8) = null,
     argsFreeFunc: *const fn (*Co, *anyopaque) void align(8),
-    
+
     // 协程状态 - 8字节对齐
     state: State align(8) = .INITED,
     priority: usize align(8) = 0,
-    
+
     // 调度器引用 - 8字节对齐
     schedule: *Schedule align(8) = undefined,
-    
+
     // 协程栈 - 16字节对齐
     stack: [DEFAULT_ZCO_STACK_SZIE]u8 align(16) = std.mem.zeroes([DEFAULT_ZCO_STACK_SZIE]u8),
-    
+
     // 唤醒时间戳 - 8字节对齐
     wakeupTimestampNs: usize align(8) = 0, //纳秒
-    
+
     // 内存对齐填充
     _padding: [8]u8 align(8) = std.mem.zeroes([8]u8),
     const State = enum {
@@ -156,7 +156,7 @@ pub const Co = struct {
             self.schedule.stopTimer();
             self.schedule.runningCo = null;
             // 恢复信号
-            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            schedule_mod.restoreSignals(&oldset);
             // === 关键区结束 ===
 
             const swap_result = c.swapcontext(&co.ctx, &schedule.ctx);
@@ -223,18 +223,15 @@ pub const Co = struct {
         };
 
         // === 关键区开始：屏蔽信号 ===
-        var sigset: c.sigset_t = undefined;
         var oldset: c.sigset_t = undefined;
-        _ = c.sigemptyset(&sigset);
-        _ = c.sigaddset(&sigset, c.SIGALRM);
-        _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+        schedule_mod.blockPreemptSignals(&oldset);
 
         // 在关中断状态下安全地设置协程状态和runningCo
         // 协程结束时，定时器由调度器管理，不需要在这里停止
         schedule.runningCo = null;
         self.state = .STOP;
 
-            // === 关键区结束：恢复信号屏蔽 ===
-            schedule_mod.restoreSignals(&oldset);
+        // === 关键区结束：恢复信号屏蔽 ===
+        schedule_mod.restoreSignals(&oldset);
     }
 };
