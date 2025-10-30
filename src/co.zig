@@ -2,7 +2,8 @@ const std = @import("std");
 const c = @import("./c.zig");
 const xev = @import("xev");
 const Context = c.ucontext_t;
-const Schedule = @import("./schedule.zig").Schedule;
+const schedule_mod = @import("./schedule.zig");
+const Schedule = schedule_mod.Schedule;
 const root = @import("root");
 const builtin = @import("builtin");
 
@@ -31,11 +32,8 @@ pub fn Resume(self: *Co) !void {
             c.makecontext(&self.ctx, @ptrCast(&Co.contextEntry), 1, self);
 
             // === 关键区开始：屏蔽信号 ===
-            var sigset: c.sigset_t = undefined;
             var oldset: c.sigset_t = undefined;
-            _ = c.sigemptyset(&sigset);
-            _ = c.sigaddset(&sigset, c.SIGALRM);
-            _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+            schedule_mod.blockPreemptSignals(&oldset);
 
             // 在关中断状态下安全地设置协程状态和runningCo
             self.state = .RUNNING;
@@ -44,7 +42,7 @@ pub fn Resume(self: *Co) !void {
             // 增加切换计数（在关中断状态下安全）
             schedule.total_switches.raw += 1;
             // 恢复信号
-            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            schedule_mod.restoreSignals(&oldset);
             // === 关键区结束 ===
 
             // 启动定时器（在协程开始运行前，重置计时）
@@ -62,11 +60,8 @@ pub fn Resume(self: *Co) !void {
         .SUSPEND, .READY => {
 
             // === 关键区开始：屏蔽信号 ===
-            var sigset: c.sigset_t = undefined;
             var oldset: c.sigset_t = undefined;
-            _ = c.sigemptyset(&sigset);
-            _ = c.sigaddset(&sigset, c.SIGALRM);
-            _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+            schedule_mod.blockPreemptSignals(&oldset);
 
             // 在关中断状态下安全地设置协程状态和runningCo
             self.state = .RUNNING;
@@ -75,7 +70,7 @@ pub fn Resume(self: *Co) !void {
             // 增加切换计数（在关中断状态下安全）
             schedule.total_switches.raw += 1;
             // 恢复信号
-            _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            schedule_mod.restoreSignals(&oldset);
             // === 关键区结束 ===
 
             // 启动定时器（在协程开始运行前，重置计时）
@@ -152,11 +147,8 @@ pub const Co = struct {
             }
 
             // === 关键区开始：屏蔽信号 ===
-            var sigset: c.sigset_t = undefined;
             var oldset: c.sigset_t = undefined;
-            _ = c.sigemptyset(&sigset);
-            _ = c.sigaddset(&sigset, c.SIGALRM);
-            _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, &oldset);
+            schedule_mod.blockPreemptSignals(&oldset);
 
             // 在关中断状态下安全地设置协程状态和runningCo
             co.state = .SUSPEND;
@@ -242,7 +234,7 @@ pub const Co = struct {
         schedule.runningCo = null;
         self.state = .STOP;
 
-        // === 关键区结束：恢复信号屏蔽 ===
-        _ = c.pthread_sigmask(c.SIG_SETMASK, &oldset, null);
+            // === 关键区结束：恢复信号屏蔽 ===
+            schedule_mod.restoreSignals(&oldset);
     }
 };

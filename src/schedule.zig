@@ -892,13 +892,13 @@ pub const Schedule = struct {
 };
 
 // 信号屏蔽/恢复工具函数（针对 SIGALRM 的抢占信号）
-inline fn blockPreemptSignals(oldset: *c.sigset_t) void {
+pub inline fn blockPreemptSignals(oldset: *c.sigset_t) void {
     var sigset: c.sigset_t = undefined;
     _ = c.sigemptyset(&sigset);
     _ = c.sigaddset(&sigset, c.SIGALRM);
     _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, oldset);
 }
 
-inline fn restoreSignals(oldset: *const c.sigset_t) void {
+pub inline fn restoreSignals(oldset: *const c.sigset_t) void {
     _ = c.pthread_sigmask(c.SIG_SETMASK, oldset, null);
 }
