@@ -4,6 +4,7 @@ const nets = @import("nets");
 const router = @import("./router.zig");
 const middleware = @import("./middleware.zig");
 const context = @import("./context.zig");
+const streaming_request_mod = @import("./streaming_request.zig");
 
 /// HTTP服务器
 pub const Server = struct {
@@ -35,6 +36,9 @@ pub const Server = struct {
     /// Channel 用于协程池（生命周期需要与 Server 一致）
     client_chan: ?*zco.CreateChan(*nets.Tcp) = null,
 
+    /// 是否启用新的流式解析器
+    use_streaming_parser: bool = false,
+
     /// 初始化服务器
     pub fn init(allocator: std.mem.Allocator, schedule: *zco.Schedule) Self {
         return .{
@@ -48,6 +52,7 @@ pub const Server = struct {
             .connection_count = std.atomic.Value(u32).init(0),
             .use_pool = true,
             .client_chan = null,
+            .use_streaming_parser = false,
         };
     }
 
@@ -115,6 +120,7 @@ pub const Server = struct {
 
     /// 监听指定地址（需要在协程环境中调用）
     pub fn listen(self: *Self, address: std.net.Address) !void {
+        // 若启用流式解析器，仍沿用现有监听模式，仅在连接处理时切换解析路径
         if (self.use_pool) {
             try self.listenWithPool(address);
         } else {
@@ -254,6 +260,10 @@ pub const Server = struct {
     /// - 直接模式：协程中使用 defer 清理
     /// - 协程池模式：工作协程中手动清理
     fn handleConnection(server: *Self, client: *nets.Tcp) !void {
+        if (server.use_streaming_parser) {
+            try handleConnectionStreaming(server, client);
+            return;
+        }
         var buffer = try server.allocator.alloc(u8, server.read_buffer_size);
         defer server.allocator.free(buffer);
 
@@ -524,6 +534,127 @@ pub const Server = struct {
                 }
                 // 有一个字节的数据，设置 buffer_used，下次循环时会处理
                 buffer_used = test_read;
+            }
+        }
+    }
+    
+    /// 基于流式解析器的连接处理
+    fn handleConnectionStreaming(server: *Self, client: *nets.Tcp) !void {
+        var read_buf = try server.allocator.alloc(u8, 4096);
+        defer server.allocator.free(read_buf);
+
+        var keep_alive = false;
+
+        var sreq = streaming_request_mod.StreamingRequest.init(server.allocator);
+        defer sreq.deinit();
+
+        // 默认采用积累策略（小请求），后续可按 Content-Length 动态切换写文件
+        var body_list = std.ArrayList(u8).init(server.allocator);
+        defer body_list.deinit();
+        sreq.setBodyHandler(.{ .accumulate = &body_list });
+
+        while (true) {
+            const n = client.read(read_buf[0..]) catch |e| {
+                if (std.mem.eql(u8, @errorName(e), "EOF")) return;
+                std.log.err("Read error: {s}", .{@errorName(e)});
+                return;
+            };
+            if (n == 0) break;
+
+            _ = try sreq.feedData(read_buf[0..n]);
+
+            if (sreq.isComplete()) {
+                // 构造上下文
+                var ctx = context.Context.init(server.allocator, server.schedule, client);
+
+                // 填充 Request 基础字段
+                // 方法：根据字符串简单映射
+                if (sreq.method.len > 0) {
+                    if (std.mem.eql(u8, sreq.method, "GET")) {
+                        ctx.req.method = .GET;
+                    } else if (std.mem.eql(u8, sreq.method, "POST")) {
+                        ctx.req.method = .POST;
+                    } else if (std.mem.eql(u8, sreq.method, "PUT")) {
+                        ctx.req.method = .PUT;
+                    } else if (std.mem.eql(u8, sreq.method, "DELETE")) {
+                        ctx.req.method = .DELETE;
+                    } else if (std.mem.eql(u8, sreq.method, "PATCH")) {
+                        ctx.req.method = .PATCH;
+                    } else if (std.mem.eql(u8, sreq.method, "OPTIONS")) {
+                        ctx.req.method = .OPTIONS;
+                    } else if (std.mem.eql(u8, sreq.method, "HEAD")) {
+                        ctx.req.method = .HEAD;
+                    } else if (std.mem.eql(u8, sreq.method, "CONNECT")) {
+                        ctx.req.method = .CONNECT;
+                    } else if (std.mem.eql(u8, sreq.method, "TRACE")) {
+                        ctx.req.method = .TRACE;
+                    }
+                }
+                if (sreq.path.len > 0) {
+                    ctx.req.path = try server.allocator.dupe(u8, sreq.path);
+                } else {
+                    ctx.req.path = try server.allocator.dupe(u8, "/");
+                }
+
+                // 复制头部到 ctx.req.headers
+                for (sreq.headers.items) |h| {
+                    const key_dup = try server.allocator.dupe(u8, h.name);
+                    const val_dup = try server.allocator.dupe(u8, h.value);
+                    try ctx.req.headers.put(key_dup, val_dup);
+                }
+
+                // Body（若采用 accumulate）
+                if (body_list.items.len > 0) {
+                    ctx.req.body = try server.allocator.dupe(u8, body_list.items);
+                    ctx.req.content_length = body_list.items.len;
+                }
+
+                // Keep-Alive 判定
+                const conn_val = ctx.req.getHeader("Connection");
+                keep_alive = false;
+                if (conn_val) |cv| {
+                    var lower: [16]u8 = undefined;
+                    if (cv.len <= lower.len) {
+                        for (cv, 0..) |c, i| lower[i] = std.ascii.toLower(c);
+                        if (std.mem.eql(u8, lower[0..cv.len], "keep-alive")) keep_alive = true;
+                    }
+                }
+
+                // 响应 Connection 头
+                if (keep_alive) {
+                    try ctx.header("Connection", "keep-alive");
+                } else {
+                    try ctx.header("Connection", "close");
+                }
+
+                // 中间件与路由
+                server.middleware_chain.execute(&ctx) catch |e| {
+                    std.log.err("Middleware error: {s}", .{@errorName(e)});
+                    ctx.res.status = 500;
+                    _ = ctx.text(500, "Internal Server Error");
+                };
+                if (!ctx.res.sent and ctx.res.body.items.len == 0 and ctx.res.status == 200) {
+                    server.router.handle(&ctx) catch |e| {
+                        std.log.err("Route error: {s}", .{@errorName(e)});
+                        ctx.res.status = 500;
+                        _ = ctx.text(500, "Internal Server Error");
+                    };
+                }
+
+                if (!ctx.res.sent) {
+                    ctx.send() catch |e| {
+                        std.log.err("Send error: {s}", .{@errorName(e)});
+                    };
+                }
+
+                ctx.deinit();
+
+                if (!keep_alive) break;
+
+                // 为下一条请求重置
+                sreq.reset();
+                body_list.clearRetainingCapacity();
+                sreq.setBodyHandler(.{ .accumulate = &body_list });
             }
         }
     }
