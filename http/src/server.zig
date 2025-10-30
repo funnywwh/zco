@@ -76,6 +76,11 @@ pub const Server = struct {
         self.use_pool = enable;
     }
 
+    /// 启用/禁用新的流式解析器
+    pub fn setUseStreamingParser(self: *Self, enable: bool) void {
+        self.use_streaming_parser = enable;
+    }
+
     /// 清理服务器资源
     pub fn deinit(self: *Self) void {
         self.router.deinit();
@@ -537,7 +542,7 @@ pub const Server = struct {
             }
         }
     }
-    
+
     /// 基于流式解析器的连接处理
     fn handleConnectionStreaming(server: *Self, client: *nets.Tcp) !void {
         var read_buf = try server.allocator.alloc(u8, 4096);
