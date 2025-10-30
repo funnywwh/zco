@@ -16,9 +16,6 @@ pub const Server = struct {
     middleware_chain: middleware.MiddlewareChain,
     tcp: ?*nets.Tcp = null,
 
-    /// 读取缓冲区大小
-    read_buffer_size: usize = 8192,
-
     /// 最大请求大小
     max_request_size: usize = 1024 * 1024, // 1MB
 
@@ -254,8 +251,7 @@ pub const Server = struct {
             try handleConnectionStreaming(server, client);
             return;
         }
-        var buffer = try server.allocator.alloc(u8, server.read_buffer_size);
-        defer server.allocator.free(buffer);
+        var buffer: [1024]u8 = undefined;
 
         // 支持HTTP keep-alive：在同一连接上处理多个请求
         var keep_alive = false; // 默认关闭，需要通过 Connection 头明确指定
@@ -530,13 +526,12 @@ pub const Server = struct {
 
     /// 基于流式解析器的连接处理
     fn handleConnectionStreaming(server: *Self, client: *nets.Tcp) !void {
-        var read_buf = try server.allocator.alloc(u8, 4096);
-        defer server.allocator.free(read_buf);
+        var read_buf: [1024]u8 = undefined;
 
         var keep_alive = false;
         const SAFE_MODE = false; // 恢复正常模式
         const DISABLE_COPY = false; // 恢复 headers/body 拷贝
-        const SIMPLE_SEND = true; // 临时直接返回 OK，绕过中间件/路由
+        const SIMPLE_SEND = false; // 临时直接返回 OK，绕过中间件/路由
 
         var sreq = streaming_request_mod.StreamingRequest.init(server.allocator);
         defer sreq.deinit();
