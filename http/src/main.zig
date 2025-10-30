@@ -29,9 +29,9 @@ pub fn main() !void {
             server.setUsePool(true);
             std.log.info("[debug-top] server.use_pool={} (setUsePool后)", .{server.use_pool});
             // 调整并发与缓冲参数
-            server.setWorkerPoolSize(10);
-            server.setChannelBuffer(100);
-            server.setMaxConnections(100);
+            server.setWorkerPoolSize(512);
+            server.setChannelBuffer(8192);
+            server.setMaxConnections(10000);
             // defer server.deinit(); // 不在这里清理，避免在 listen 运行时清理资源
 
             // 添加中间件（暂时禁用 logger 以定位崩溃来源）
