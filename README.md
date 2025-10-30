@@ -163,17 +163,22 @@ pub fn main() !void {
 - **说明**: 创建多个协程，展示时间片抢占调度效果
 
 ### 2. 网络服务器 (`nets/`)
-- **功能**: 基于 ZCO 的高性能 HTTP 服务器
+- **功能**: 基于 ZCO 的高性能 TCP 服务器基础模块
 - **运行**: `cd nets && zig build run`
-- **说明**: 支持高并发连接，展示 ZCO 在网络编程中的优势
+- **说明**: 提供 TCP 连接管理，展示 ZCO 在网络编程中的优势
 
-### 3. WebSocket 服务器 (`websocket/`)
+### 3. HTTP 框架 (`http/`)
+- **功能**: 完整的 HTTP 框架，支持路由、中间件、JWT、文件上传等
+- **运行**: `cd http && zig build run`
+- **说明**: 提供完整的 Web 开发功能，包含路由系统、中间件链、JWT认证、静态文件服务、模板引擎等
+
+### 4. WebSocket 服务器 (`websocket/`)
 - **功能**: 完整的 WebSocket 服务器实现
 - **运行**: `cd websocket && zig build run`
 - **测试**: `cd websocket/test && npm install && node client_test.js`
 - **说明**: 支持 RFC 6455 标准协议，包含完整的测试套件
 
-### 4. 性能对比测试 (`benchmarks/`)
+### 5. 性能对比测试 (`benchmarks/`)
 - **功能**: ZCO 与 Go 的性能对比测试套件
 - **运行**: `cd benchmarks && ./quick_test.sh`
 - **说明**: 提供完整的性能测试和对比分析
@@ -316,6 +321,7 @@ cd benchmarks
 - [x] 性能统计和监控
 - [x] 批量协程处理优化
 - [x] 网络服务器集成
+- [x] HTTP 框架模块（路由、中间件、JWT、文件上传、模板引擎）
 - [x] WebSocket 服务器模块（v0.4.2）
 - [x] 高并发压力测试验证
 - [x] 与 Go 的性能对比测试
@@ -325,6 +331,7 @@ cd benchmarks
 ### 待改进功能
 - [x] 优先级感知抢占（已实现环形缓冲区+优先级位图调度器）
 - [x] WebSocket 服务器支持（已实现）
+- [x] HTTP 框架支持（已实现）
 - [ ] 自适应时间片调整
 - [ ] 跨平台支持（Windows/macOS）
 - [ ] 更详细的性能监控
