@@ -23,6 +23,10 @@ pub const Parser = struct {
         HEADER_VALUE,
         HEADERS_COMPLETE,
         BODY_IDENTITY, // Content-Length body
+        BODY_CHUNKED_SIZE, // 读取 chunk 大小（十六进制，以 CRLF 结束）
+        BODY_CHUNKED_DATA, // 读取 chunk 数据
+        BODY_CHUNKED_CR,   // 读取 chunk 末尾的 \r
+        BODY_CHUNKED_LF,   // 读取 chunk 末尾的 \n
         MESSAGE_COMPLETE,
     };
 
@@ -57,6 +61,11 @@ pub const Parser = struct {
     header_lines: usize = 0,
     content_length: ?usize = null,
     body_received: usize = 0,
+    is_chunked: bool = false,
+    chunk_size: usize = 0,
+    chunk_received: usize = 0,
+    chunk_line_buf: [32]u8 = undefined,
+    chunk_line_len: usize = 0,
 
     /// 初始化解析器
     pub fn init(t: Type) Self {
@@ -108,12 +117,79 @@ pub const Parser = struct {
             return 0;
         }
 
+        // chunked 模式：处理 chunk 大小/数据/CRLF
+        if (self.state == .BODY_CHUNKED_SIZE or self.state == .BODY_CHUNKED_DATA or self.state == .BODY_CHUNKED_CR or self.state == .BODY_CHUNKED_LF) {
+            var consumed: usize = 0;
+            var i: usize = 0;
+            while (i < chunk.len) : (i += 1) {
+                const b = chunk[i];
+                switch (self.state) {
+                    .BODY_CHUNKED_SIZE => {
+                        // 累积十六进制数字，直到 CRLF
+                        if (b == '\r') {
+                            self.state = .BODY_CHUNKED_LF; // 复用 LF 状态读取 size 行的 \n
+                            // 解析十六进制大小
+                            const size_str = self.chunk_line_buf[0..self.chunk_line_len];
+                            // 去掉可能存在的扩展: ";ext"
+                            var end_idx: usize = size_str.len;
+                            if (std.mem.indexOfScalar(u8, size_str, ';')) |semi| end_idx = semi;
+                            self.chunk_size = std.fmt.parseInt(usize, size_str[0..end_idx], 16) catch return error.InvalidChunk;
+                            self.chunk_line_len = 0;
+                        } else if (b == '\n') {
+                            // 容错：单独的 \n（不推荐），尝试继续
+                            continue;
+                        } else {
+                            if (self.chunk_line_len >= self.chunk_line_buf.len) return error.InvalidChunk;
+                            self.chunk_line_buf[self.chunk_line_len] = b;
+                            self.chunk_line_len += 1;
+                        }
+                    },
+                    .BODY_CHUNKED_LF => {
+                        // 读取 size 行或数据后的 \n
+                        if (b != '\n') return error.InvalidChunk;
+                        if (self.chunk_size == 0) {
+                            // 0-chunk 后应还有一个空行 CRLF，简单起见视为完成
+                            self.state = .MESSAGE_COMPLETE;
+                            try events.append(.on_message_complete);
+                        } else {
+                            self.state = .BODY_CHUNKED_DATA;
+                            self.chunk_received = 0;
+                        }
+                    },
+                    .BODY_CHUNKED_DATA => {
+                        const remaining = self.chunk_size - self.chunk_received;
+                        const left_in_chunk = chunk.len - i;
+                        const take = @min(remaining, left_in_chunk);
+                        if (take > 0) {
+                            try events.append(.{ .on_body_chunk = chunk[i .. i + take] });
+                            self.chunk_received += take;
+                            i += take - 1; // for-loop 自增再 +1
+                            consumed += take;
+                            if (self.chunk_received == self.chunk_size) {
+                                self.state = .BODY_CHUNKED_CR;
+                            }
+                            continue;
+                        }
+                    },
+                    .BODY_CHUNKED_CR => {
+                        if (b != '\r') return error.InvalidChunk;
+                        self.state = .BODY_CHUNKED_LF;
+                        self.chunk_size = 0; // 下一轮会在 SIZE 阶段重新赋值
+                    },
+                    else => {},
+                }
+                consumed += 1;
+                if (self.state == .MESSAGE_COMPLETE) break;
+            }
+            return consumed;
+        }
+
         // 非 body 阶段：结合 header_buf（累积）进行行级解析
         // 查找头部结束标记："\r\n\r\n"
         if (self.state != .MESSAGE_COMPLETE) {
             if (std.mem.indexOf(u8, header_buf, "\r\n\r\n")) |pos| {
                 // 解析请求行与头部（零拷贝切片均引用 header_buf）
-                try self.parseStartLineAndHeaders(header_buf[0..pos + 2], events);
+                try self.parseStartLineAndHeaders(header_buf[0 .. pos + 2], events);
                 try events.append(.on_headers_complete);
                 self.state = .HEADERS_COMPLETE;
 
@@ -145,6 +221,24 @@ pub const Parser = struct {
                         }
                     }
                     return consumed_from_chunk;
+                } else if (self.is_chunked) {
+                    self.state = .BODY_CHUNKED_SIZE;
+
+                    // 计算本次 chunk 在 header 之后的直接可消费部分（若有则在上面的 chunked 分支消耗）
+                    const header_total2 = pos + 4;
+                    const already2 = header_buf.len - chunk.len;
+                    const used_for_header2 = if (header_total2 > already2) header_total2 - already2 else 0;
+                    // 从 size 状态开始继续由上面的分支处理
+                    if (chunk.len > used_for_header2) {
+                        const rest = chunk[used_for_header2..];
+                        var tmp_events = std.ArrayList(Event).init(events.allocator);
+                        defer tmp_events.deinit();
+                        const c = try self.feed(header_buf, rest, &tmp_events);
+                        // 将临时事件转移到外部 events
+                        for (tmp_events.items) |ev| try events.append(ev);
+                        return used_for_header2 + c;
+                    }
+                    return used_for_header2;
                 } else {
                     // 无 body，消息完成
                     self.state = .MESSAGE_COMPLETE;
@@ -185,6 +279,16 @@ pub const Parser = struct {
                 // 特别关注 Content-Length
                 if (std.ascii.eqlIgnoreCase(name_trim, "Content-Length")) {
                     self.content_length = std.fmt.parseInt(usize, value_trim, 10) catch return error.InvalidContentLength;
+                } else if (std.ascii.eqlIgnoreCase(name_trim, "Transfer-Encoding")) {
+                    // 如果包含 chunked，则切换为 chunked 模式
+                    var lower = std.ArrayList(u8).init(events.allocator);
+                    defer lower.deinit();
+                    try lower.appendSlice(value_trim);
+                    for (lower.items, 0..) |c, i| lower.items[i] = std.ascii.toLower(c);
+                    if (std.mem.indexOf(u8, lower.items, "chunked") != null) {
+                        self.is_chunked = true;
+                        self.content_length = null;
+                    }
                 }
             }
         }
@@ -214,5 +318,3 @@ pub const Parser = struct {
         try events.append(.{ .on_version = .{ .major = self.version_major, .minor = self.version_minor } });
     }
 };
-
-
