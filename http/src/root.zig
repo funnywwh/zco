@@ -14,6 +14,7 @@ pub const upload = @import("./upload.zig");
 pub const parser = @import("./parser.zig");
 pub const header_buffer = @import("./header_buffer.zig");
 pub const streaming_request = @import("./streaming_request.zig");
+pub const cookie = @import("./cookie.zig");
 pub const upgrade = @import("./upgrade.zig");
 
 // 公共类型和常量
