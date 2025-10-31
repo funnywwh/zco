@@ -17,8 +17,11 @@ start_server() {
   echo "[+] building and starting server..."
   (cd "$ROOT_DIR/http" && zig build -Doptimize=ReleaseFast)
   # 后台启动（若已有同端口服务，请先手动停止）
-  (cd "$ROOT_DIR/http" && ./zig-out/bin/http > "$LOG_DIR/server.out" 2>&1 & echo $! > "$LOG_DIR/server.pid")
-  echo "[+] server pid: $(cat "$LOG_DIR/server.pid")"
+  cd "$ROOT_DIR/http"
+  ./zig-out/bin/http > "$LOG_DIR/server.out" 2>&1 &
+  SERVER_PID=$!
+  echo "$SERVER_PID" > "$LOG_DIR/server.pid"
+  echo "[+] server pid: $SERVER_PID"
   sleep 1
 }
 
