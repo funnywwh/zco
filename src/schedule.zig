@@ -356,6 +356,9 @@ pub const Schedule = struct {
     total_switches: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     start_time: ?std.time.Instant = null,
 
+    // 临界区标志（原子操作，信号处理器检查此标志）
+    in_critical: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
     var localSchedule: ?*Schedule = null;
 
     // 信号处理函数 - 在被中断协程的上下文中执行
@@ -371,18 +374,19 @@ pub const Schedule = struct {
         // 这里不会执行到，因为 Suspend 不会返回
     }
 
-    // 抢占信号处理器 - 使用关中断方式，彻底解决竞态条件
+    // 抢占信号处理器 - 检查临界区标志，避免在临界区执行
     fn preemptSigHandler(_: c_int, _: [*c]c.siginfo_t, uctx_ptr: ?*anyopaque) callconv(.C) void {
         _ = uctx_ptr;
         const schedule = localSchedule orelse return;
 
-        // 在关中断状态下安全地获取runningCo
-        const co = schedule.runningCo orelse {
-            // _ = c.sigprocmask(c.SIG_SETMASK, &oldset, null);
+        // 如果当前在临界区，跳过抢占（由原子标志控制）
+        if (schedule.in_critical.load(.acquire)) {
             return;
-        };
+        }
 
-        // 增加抢占计数（在关中断状态下安全）
+        const co = schedule.runningCo orelse return;
+
+        // 增加抢占计数
         schedule.preemption_count.raw += 1;
 
         co.Resume() catch return;
@@ -891,14 +895,18 @@ pub const Schedule = struct {
     }
 };
 
-// 信号屏蔽/恢复工具函数（针对 SIGALRM 的抢占信号）
+// 临界区保护函数（使用原子标志，信号处理器检查此标志）
+// 注意：oldset 参数保留以保持 API 兼容，但不再使用
 pub inline fn blockPreemptSignals(oldset: *c.sigset_t) void {
-    var sigset: c.sigset_t = undefined;
-    _ = c.sigemptyset(&sigset);
-    _ = c.sigaddset(&sigset, c.SIGALRM);
-    _ = c.pthread_sigmask(c.SIG_BLOCK, &sigset, oldset);
+    _ = oldset; // 保留参数以保持兼容，但不再使用
+    const schedule = Schedule.localSchedule orelse return;
+    // 设置临界区标志（原子操作，release 语义确保之前的操作可见）
+    schedule.in_critical.store(true, .release);
 }
 
 pub inline fn restoreSignals(oldset: *const c.sigset_t) void {
-    _ = c.pthread_sigmask(c.SIG_SETMASK, oldset, null);
+    _ = oldset; // 保留参数以保持兼容，但不再使用
+    const schedule = Schedule.localSchedule orelse return;
+    // 清除临界区标志（原子操作，release 语义确保临界区操作完成）
+    schedule.in_critical.store(false, .release);
 }
