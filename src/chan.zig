@@ -27,11 +27,30 @@ pub const Chan = struct {
         std.debug.assert(bufCap > 0);
         const allocator = s.allocator;
         const self: *Self = try allocator.create(Self);
+
+        // 初始化队列并预分配容量，避免在临界区内分配内存导致死锁
+        // recvingQueue 和 sendingQueue 需要容纳等待的协程，可能数量很多（如 worker pool）
+        // 预分配一个较大的容量以确保在临界区内不需要扩容
+        // 对于高并发场景，队列可能需要容纳很多等待的协程（如 512+ 个 worker）
+        const estimated_queue_capacity = if (bufCap > 2048) bufCap else 2048;
+
+        var sendingQueue = CoQueue.init(s.allocator);
+        errdefer sendingQueue.deinit();
+        try sendingQueue.ensureTotalCapacity(estimated_queue_capacity);
+
+        var recvingQueue = CoQueue.init(s.allocator);
+        errdefer recvingQueue.deinit();
+        try recvingQueue.ensureTotalCapacity(estimated_queue_capacity);
+
+        var valueQueue = ValQueue.init(s.allocator);
+        errdefer valueQueue.deinit();
+        try valueQueue.ensureTotalCapacity(bufCap);
+
         self.* = .{
             .schedule = s,
-            .sendingQueue = CoQueue.init(s.allocator),
-            .recvingQueue = CoQueue.init(s.allocator),
-            .valueQueue = ValQueue.init(s.allocator),
+            .sendingQueue = sendingQueue,
+            .recvingQueue = recvingQueue,
+            .valueQueue = valueQueue,
             .bufferCap = bufCap,
         };
         return self;
@@ -39,11 +58,11 @@ pub const Chan = struct {
     pub fn close(self: *Self) void {
         if (self.closed) return;
         const schedule = self.schedule;
-        
+
         // === 临界区：关闭通道并唤醒所有等待者 ===
         var oldset: c.sigset_t = undefined;
         schedule_mod.blockPreemptSignals(&oldset);
-        
+
         self.closed = true;
         //唤醒所有sender和recver
         for (self.sendingQueue.items) |sendCo| {
@@ -58,7 +77,7 @@ pub const Chan = struct {
             };
         }
         self.recvingQueue.clearAndFree();
-        
+
         schedule_mod.restoreSignals(&oldset);
         // === 临界区结束 ===
     }
@@ -90,17 +109,17 @@ pub const Chan = struct {
             try self.sendingQueue.append(sendCo);
             schedule_mod.restoreSignals(&oldset);
             // === 临界区结束 ===
-            
+
             try sendCo.Suspend();
             if (self.closed) {
                 return error.sendClosed;
             }
         }
-        
+
         // === 临界区：添加值到队列并唤醒接收者 ===
         var oldset: c.sigset_t = undefined;
         schedule_mod.blockPreemptSignals(&oldset);
-        
+
         try self.valueQueue.append(.{
             .value = data,
             .co = sendCo,
@@ -110,10 +129,10 @@ pub const Chan = struct {
             // std.log.err("Chan send wakeup recv coid:{d}", .{recvCo.id});
             try schedule.ResumeCo(recvCo);
         }
-        
+
         schedule_mod.restoreSignals(&oldset);
         // === 临界区结束 ===
-        
+
         //等待recver读完成
         try sendCo.Suspend();
     }
@@ -129,7 +148,7 @@ pub const Chan = struct {
             try self.recvingQueue.append(recvCo);
             schedule_mod.restoreSignals(&oldset);
             // === 临界区结束 ===
-            
+
             try recvCo.Suspend();
             //唤醒后要检测有没有可读数据
             //有可能已经被其它recver处理完了
@@ -137,11 +156,11 @@ pub const Chan = struct {
                 break;
             }
         }
-        
+
         // === 临界区：从队列移除值并唤醒发送者 ===
         var oldset: c.sigset_t = undefined;
         schedule_mod.blockPreemptSignals(&oldset);
-        
+
         if (self.valueQueue.items.len > 0) {
             const val = self.valueQueue.orderedRemove(0);
             try schedule.ResumeCo(val.co);
@@ -149,16 +168,16 @@ pub const Chan = struct {
                 const sendCo = self.sendingQueue.orderedRemove(0);
                 try schedule.ResumeCo(sendCo);
             }
-            
+
             schedule_mod.restoreSignals(&oldset);
             // === 临界区结束 ===
-            
+
             return val.value;
         }
-        
+
         schedule_mod.restoreSignals(&oldset);
         // === 临界区结束 ===
-        
+
         return error.recvClosed;
     }
     pub fn len(self: *Chan) !usize {
