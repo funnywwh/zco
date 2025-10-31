@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2024-12-28
+
+### Changed
+- **ucontext 实现优化**: 移除 `getcontext` 和 `setcontext` 函数中的信号屏蔽处理
+- **架构改进**: 信号掩码处理由调用者（调度器）统一管理，职责更清晰
+- **性能优化**: 减少不必要的 `pthread_sigmask` 系统调用，提升上下文切换效率
+
+### Technical Details
+- `getcontext`: 仅清零 `uc_sigmask` 字段，不再调用 `pthread_sigmask`
+- `setcontext`: 移除信号掩码恢复逻辑，由调用者在适当时机处理
+- 调度器层已有完善的信号屏蔽机制（`blockPreemptSignals`/`restoreSignals`）
+- 避免了重复的信号掩码操作，减少系统调用开销
+
+### Documentation
+- 完善了 `docs/UCONTEXT_IMPLEMENTATION.md` 实现文档
+- 更新了 README 中的版本信息和特性说明
+
+### Performance
+- 上下文切换开销进一步降低（减少系统调用）
+- 更清晰的代码架构，便于后续优化
+
 ## [0.3.1] - 2024-12-19
 
 ### Added
