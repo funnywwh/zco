@@ -3,8 +3,9 @@ const zco = @import("zco");
 
 pub const ZCO_STACK_SIZE = 1024 * 8; // 减少栈大小，从32KB降到8KB，提高内存效率
 
+// 临时启用调试日志（仅用于调试 ucontext 实现）
 // pub const std_options = .{
-//     .log_level = .err,
+//     .log_level = .debug,
 // };
 
 pub fn main() !void {

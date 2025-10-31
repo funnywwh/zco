@@ -29,7 +29,14 @@ pub fn Resume(self: *Co) !void {
             self.ctx.uc_stack.ss_size = self.stack.len;
             self.ctx.uc_flags = 0;
             self.ctx.uc_link = &schedule.ctx;
-            c.makecontext(&self.ctx, @ptrCast(&Co.contextEntry), 1, self);
+            // 注意：makecontext 期望 fn () callconv(.C) void 类型
+            // 但 Co.contextEntry 是 fn (*Co) callconv(.C) void
+            // 我们需要通过 @intFromPtr 获取地址，然后在 context_entry_wrapper 中正确调用
+            // 但由于类型不匹配，我们使用 @as 进行强制转换
+            const context_entry_addr = @intFromPtr(&Co.contextEntry);
+            // 创建一个临时的函数指针类型，仅用于类型匹配
+            const dummy_fn: *const fn () callconv(.C) void = @ptrFromInt(context_entry_addr);
+            c.makecontext(&self.ctx, dummy_fn, 1, self);
 
             // === 关键区开始：屏蔽信号 ===
             var oldset: c.sigset_t = undefined;
