@@ -498,7 +498,7 @@ pub const Stun = struct {
         const result = try self.udp.?.recvFrom(&buffer);
 
         // 解析响应
-        const response = try Message.parse(result.data, self.allocator);
+        var response = try Message.parse(result.data, self.allocator);
 
         // 验证事务 ID
         if (!std.mem.eql(u8, &response.header.transaction_id, &transaction_id)) {
