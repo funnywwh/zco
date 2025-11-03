@@ -533,8 +533,31 @@ pub const PeerConnection = struct {
             else => {},
         }
 
-        // TODO: 触发 ICE candidate 收集
-        // TODO: 启动连接流程（如果已有 remote description）
+        // 更新 ICE 收集状态
+        self.ice_gathering_state = .gathering;
+
+        // 触发 ICE candidate 收集
+        if (self.ice_agent) |agent| {
+            // 开始收集 Host Candidates
+            agent.gatherHostCandidates() catch |err| {
+                // 如果收集失败，记录错误但不中断流程
+                std.log.warn("Failed to gather host candidates: {}", .{err});
+            };
+
+            // TODO: 如果有 STUN/TURN 服务器配置，也收集 Server Reflexive 和 Relay Candidates
+            // agent.gatherServerReflexiveCandidates() catch {};
+            // agent.gatherRelayCandidates() catch {};
+
+            // 收集完成后，更新状态
+            // 注意：实际收集是异步的，这里只是开始收集
+            // 应该在收集完成后通过事件回调更新状态
+        }
+
+        // 如果已有 remote description，可以开始连接流程
+        if (self.remote_description != null) {
+            // TODO: 启动连接检查
+            // try self.startConnection();
+        }
     }
 
     /// 设置远程描述
@@ -558,8 +581,62 @@ pub const PeerConnection = struct {
             else => {},
         }
 
-        // TODO: 解析远程 ICE candidates
-        // TODO: 启动连接检查
+        // 解析远程 ICE candidates
+        if (self.ice_agent) |agent| {
+            // 从 SDP 中提取 ICE candidates
+            // 检查 session-level candidates
+            for (description.attributes.items) |attr| {
+                if (std.mem.eql(u8, attr.name, "candidate")) {
+                    if (attr.value) |candidate_str| {
+                        // 解析 candidate 字符串
+                        const candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
+                        errdefer candidate.deinit();
+                        
+                        // 创建堆分配的 candidate
+                        const candidate_ptr = try self.allocator.create(ice.candidate.Candidate);
+                        candidate_ptr.* = candidate;
+                        
+                        // 添加到远程 candidates
+                        try agent.addRemoteCandidate(candidate_ptr);
+                    }
+                }
+            }
+
+            // 检查 media-level candidates
+            for (description.media_descriptions.items) |media| {
+                for (media.attributes.items) |attr| {
+                    if (std.mem.eql(u8, attr.name, "candidate")) {
+                        if (attr.value) |candidate_str| {
+                            // 解析 candidate 字符串
+                            const candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
+                            errdefer candidate.deinit();
+                            
+                            // 创建堆分配的 candidate
+                            const candidate_ptr = try self.allocator.create(ice.candidate.Candidate);
+                            candidate_ptr.* = candidate;
+                            
+                            // 添加到远程 candidates
+                            try agent.addRemoteCandidate(candidate_ptr);
+                        }
+                    }
+                }
+            }
+
+            // 如果已有本地描述，可以开始连接检查
+            if (self.local_description != null) {
+                // 更新 ICE 连接状态
+                self.ice_connection_state = .checking;
+                
+                // 注意：generateCandidatePairs 会在 addRemoteCandidate 时自动调用
+                // 所以如果所有远程 candidates 都已添加，pairs 应该已经生成
+                
+                // 开始连接检查
+                agent.startConnectivityChecks() catch |err| {
+                    std.log.warn("Failed to start connectivity checks: {}", .{err});
+                    self.ice_connection_state = .failed;
+                };
+            }
+        }
     }
 
     /// 添加 ICE Candidate
