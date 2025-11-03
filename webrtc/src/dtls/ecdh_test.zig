@@ -97,7 +97,7 @@ test "ECDH validatePublicKey" {
     defer keypair.public.deinit(allocator);
 
     // 验证公钥有效性
-    try testing.expect(Ecdh.validatePublicKey(keypair.public));
+    try Ecdh.validatePublicKey(keypair.public);
 }
 
 test "ECDH multiple key pairs" {

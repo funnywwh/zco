@@ -2,13 +2,7 @@ const std = @import("std");
 const crypto = std.crypto;
 
 /// P-256 曲线（secp256r1）
-/// TODO: 在 Zig 0.14.0 中，pcurves 不是 crypto 的公共导出
-/// 暂时使用简化实现，后续需要找到正确的导入方式或使用外部库
-/// 当前实现使用哈希函数模拟 ECDH，仅用于功能测试
-/// 
-/// 正确的导入应该是：
-/// const P256 = @import("std").crypto.pcurves.p256.P256;
-/// 但当前版本不支持此路径
+const P256 = crypto.ecc.P256;
 
 /// ECDHE (Elliptic Curve Diffie-Hellman Ephemeral) 密钥交换
 /// 支持 P-256 曲线（secp256r1）
@@ -33,10 +27,9 @@ pub const Ecdh = struct {
         scalar_bytes: [32]u8, // 小端序标量字节
 
         pub fn generate(_: std.mem.Allocator) !PrivateKey {
-            // TODO: 使用真实的 P-256 生成随机标量
-            // 当前简化实现：生成随机字节
-            var scalar_bytes: [32]u8 = undefined;
-            crypto.random.bytes(&scalar_bytes);
+            // 使用 P-256 生成随机标量
+            const scalar = P256.scalar.random(.little);
+            const scalar_bytes = scalar.toBytes(.little);
             return PrivateKey{ .scalar_bytes = scalar_bytes };
         }
 
@@ -88,18 +81,24 @@ pub const Ecdh = struct {
         secret: [32]u8,
     };
 
-    /// 生成密钥对（简化实现）
-    /// TODO: 使用真实的 P-256 曲线点运算
-    /// 当前使用哈希函数生成"伪"公钥，仅用于功能测试
+    /// 生成密钥对（使用 P-256）
     pub fn generateKeyPair(allocator: std.mem.Allocator) !struct { private: PrivateKey, public: PublicKey } {
         // 生成私钥（随机标量）
         const private = try PrivateKey.generate(allocator);
 
-        // TODO: 计算公钥：公钥 = 基点 * 私钥
-        // 当前简化实现：使用哈希函数生成"伪"公钥
+        // 计算公钥：公钥 = 基点 * 私钥
+        const scalar = try P256.scalar.Scalar.fromBytes(private.scalar_bytes, .little);
+        const public_point = try P256.basePoint.mul(scalar.toBytes(.little), .little);
+        
+        // 转换为仿射坐标并序列化
+        const affine = public_point.affineCoordinates();
+        const x_bytes = affine.x.toBytes(.big);
+        const y_bytes = affine.y.toBytes(.big);
+
+        // 构建 64 字节公钥（X || Y）
         var public_key_bytes: [64]u8 = undefined;
-        crypto.hash.sha2.Sha256.hash(&private.scalar_bytes, public_key_bytes[0..32], .{});
-        crypto.hash.sha2.Sha256.hash(public_key_bytes[0..32], public_key_bytes[32..64], .{});
+        @memcpy(public_key_bytes[0..32], &x_bytes);
+        @memcpy(public_key_bytes[32..64], &y_bytes);
 
         const public = try PublicKey.fromBytes(allocator, &public_key_bytes);
 
@@ -109,9 +108,9 @@ pub const Ecdh = struct {
         };
     }
 
-    /// 计算共享密钥（简化实现）
-    /// TODO: 使用真实的 P-256 曲线点运算
-    /// 当前使用哈希函数计算共享密钥，仅用于功能测试
+    /// 计算共享密钥
+    /// 使用自己的私钥和对方的公钥
+    /// 共享密钥 = 对方的公钥点 * 自己的私钥标量
     pub fn computeSharedSecret(
         allocator: std.mem.Allocator,
         private_key: PrivateKey,
@@ -119,24 +118,46 @@ pub const Ecdh = struct {
     ) !SharedSecret {
         _ = allocator;
         
-        // TODO: 从公钥字节恢复 P-256 点并计算共享密钥点
-        // 当前简化实现：使用哈希函数计算共享密钥
-        var input: [96]u8 = undefined;
-        @memcpy(input[0..32], &private_key.scalar_bytes);
-        @memcpy(input[32..64], public_key.point.x);
-        @memcpy(input[64..96], public_key.point.y);
+        // 从公钥字节恢复 P-256 点
+        const public_point = try P256.fromSerializedAffineCoordinates(
+            public_key.point.x[0..32].*,
+            public_key.point.y[0..32].*,
+            .big,
+        );
         
-        var shared_secret: [32]u8 = undefined;
-        crypto.hash.sha2.Sha256.hash(&input, &shared_secret, .{});
+        // 验证公钥不是单位元
+        try public_point.rejectIdentity();
         
-        return SharedSecret{ .secret = shared_secret };
+        // 计算共享密钥点：shared_point = public_key * private_key
+        const scalar = try P256.scalar.Scalar.fromBytes(private_key.scalar_bytes, .little);
+        const shared_point = try public_point.mul(scalar.toBytes(.little), .little);
+        
+        // 验证共享密钥点不是单位元
+        try shared_point.rejectIdentity();
+        
+        // 提取共享密钥：使用共享点的 X 坐标（32 字节）
+        const shared_affine = shared_point.affineCoordinates();
+        const shared_secret_bytes = shared_affine.x.toBytes(.big);
+        
+        return SharedSecret{ .secret = shared_secret_bytes };
     }
 
-    /// 验证公钥有效性（简化）
-    pub fn validatePublicKey(public_key: PublicKey) bool {
-        // TODO: 验证点在 P-256 曲线上
-        // 简化：仅检查坐标长度
-        return public_key.point.x.len == 32 and public_key.point.y.len == 32;
+    /// 验证公钥有效性
+    pub fn validatePublicKey(public_key: PublicKey) !void {
+        // 检查坐标长度
+        if (public_key.point.x.len != 32 or public_key.point.y.len != 32) {
+            return error.InvalidPublicKey;
+        }
+        
+        // 验证点在 P-256 曲线上
+        const point = P256.fromSerializedAffineCoordinates(
+            public_key.point.x[0..32].*,
+            public_key.point.y[0..32].*,
+            .big,
+        ) catch return error.InvalidPublicKey;
+        
+        // 验证不是单位元
+        point.rejectIdentity() catch return error.IdentityElement;
     }
 
     pub const Error = error{
