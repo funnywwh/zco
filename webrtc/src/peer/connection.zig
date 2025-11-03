@@ -147,8 +147,15 @@ pub const PeerConnection = struct {
         };
 
         // 初始化 ICE Agent
-        self.ice_agent = try ice.Agent.init(allocator, schedule);
+        self.ice_agent = try ice.agent.IceAgent.init(allocator, schedule);
         errdefer if (self.ice_agent) |agent| agent.deinit();
+        
+        // 初始化组件 ID（RTP 为 1）
+        if (self.ice_agent) |agent| {
+            agent.component_id = 1;
+        }
+
+        // TODO: 初始化 DTLS Context（需要时生成证书）
 
         return self;
     }
@@ -189,18 +196,10 @@ pub const PeerConnection = struct {
     /// 创建 Offer
     /// 生成 SDP offer 描述
     pub fn createOffer(self: *Self, allocator: std.mem.Allocator) !*SessionDescription {
-        _ = self; // TODO: 使用 self 来获取 ICE agent、DTLS 等信息
-        // TODO: 实现完整的 offer 生成
-        // 1. 生成会话 ID 和版本
-        // 2. 添加媒体描述（m=audio, m=video）
-        // 3. 添加 ICE 候选
-        // 4. 添加 DTLS 指纹
-        // 5. 添加编解码器信息
-
         var offer = SessionDescription.init(allocator);
         errdefer offer.deinit();
 
-        // 基础信息
+        // 1. 基础信息
         offer.version = 0;
         const origin = SessionDescription.Origin{
             .username = try allocator.dupe(u8, "zco"),
@@ -214,7 +213,106 @@ pub const PeerConnection = struct {
 
         offer.session_name = try allocator.dupe(u8, "ZCO WebRTC Session");
 
-        // TODO: 添加媒体描述和 ICE 信息
+        // 2. 添加连接信息
+        const connection = SessionDescription.Connection{
+            .nettype = "IN",
+            .addrtype = "IP4",
+            .address = try allocator.dupe(u8, "0.0.0.0"), // 使用 0.0.0.0 表示将在 ICE 候选中使用
+        };
+        offer.connection = connection;
+
+        // 3. 添加音频媒体描述（基础配置）
+        var audio_formats = std.ArrayList([]const u8).init(allocator);
+        // 注意：不能 defer，因为 audio_media 会接管 ownership
+        // 添加基础音频编解码器（PCMU 0, PCMA 8）
+        try audio_formats.append(try allocator.dupe(u8, "0")); // PCMU
+        try audio_formats.append(try allocator.dupe(u8, "8")); // PCMA
+
+        const audio_media = SessionDescription.MediaDescription{
+            .media_type = try allocator.dupe(u8, "audio"),
+            .port = 9, // RTP 端口（9 表示禁用，ICE 将在候选中使用实际端口）
+            .proto = try allocator.dupe(u8, "UDP/TLS/RTP/SAVPF"), // SRTP with feedback
+            .formats = audio_formats,
+            .bandwidths = std.ArrayList(SessionDescription.Bandwidth).init(allocator),
+            .attributes = std.ArrayList(SessionDescription.Attribute).init(allocator),
+        };
+        try offer.media_descriptions.append(audio_media);
+
+        // 获取音频媒体描述引用（用于后续添加属性）
+        const audio_media_desc = &offer.media_descriptions.items[0];
+
+        // 4. 添加 ICE 属性（如果 ICE Agent 可用）
+        if (self.ice_agent) |agent| {
+            // 生成 ICE username fragment 和 password
+            // TODO: 实际实现应使用随机生成的值
+            const ice_ufrag = try allocator.dupe(u8, "zco-ufrag");
+            const ice_pwd = try allocator.dupe(u8, "zco-pwd");
+
+            offer.ice_ufrag = ice_ufrag;
+            offer.ice_pwd = ice_pwd;
+
+            // 添加 ICE 属性到媒体描述
+            try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                .name = try allocator.dupe(u8, "ice-ufrag"),
+                .value = try allocator.dupe(u8, ice_ufrag),
+            });
+            try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                .name = try allocator.dupe(u8, "ice-pwd"),
+                .value = try allocator.dupe(u8, ice_pwd),
+            });
+
+            // TODO: 添加 ICE candidates（需要等待候选收集完成）
+            // 如果已有本地候选，添加到 SDP
+            const local_candidates = agent.getLocalCandidates();
+            for (local_candidates) |c| {
+                // 将 candidate 转换为 SDP candidate 格式
+                const candidate_str = try c.toSdpCandidate(allocator);
+                defer allocator.free(candidate_str);
+
+                try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                    .name = try allocator.dupe(u8, "candidate"),
+                    .value = try allocator.dupe(u8, candidate_str),
+                });
+            }
+        }
+
+        // 5. 添加 DTLS 指纹（如果 DTLS Context 已初始化）
+        if (self.dtls_context) |dtls_ctx| {
+            _ = dtls_ctx; // 暂时未使用
+            // TODO: 从 DTLS context 获取证书并计算指纹
+            // 当前使用占位符
+            const fingerprint_hash = try allocator.dupe(u8, "sha-256");
+            const fingerprint_value = try allocator.dupe(u8, "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00");
+
+            offer.fingerprint = SessionDescription.Fingerprint{
+                .hash = fingerprint_hash,
+                .value = fingerprint_value,
+            };
+
+            // 添加 fingerprint 属性到媒体描述
+            const fingerprint_attr_value = try std.fmt.allocPrint(allocator, "{s} {s}", .{ fingerprint_hash, fingerprint_value });
+            try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                .name = try allocator.dupe(u8, "fingerprint"),
+                .value = fingerprint_attr_value,
+            });
+        } else {
+            // 如果没有 DTLS context，创建一个并生成证书
+            // TODO: 初始化 DTLS context 并生成自签名证书
+        }
+
+        // 6. 添加 RTCP 反馈和编解码器属性
+
+        // 添加 setup 属性（DTLS role）
+        try audio_media_desc.attributes.append(SessionDescription.Attribute{
+            .name = try allocator.dupe(u8, "setup"),
+            .value = try allocator.dupe(u8, "actpass"), // 可以是 actpass, active, passive
+        });
+
+        // 添加 rtcp-mux（复用 RTCP）
+        try audio_media_desc.attributes.append(SessionDescription.Attribute{
+            .name = try allocator.dupe(u8, "rtcp-mux"),
+            .value = null,
+        });
 
         // 创建堆分配的对象
         const offer_ptr = try allocator.create(SessionDescription);
