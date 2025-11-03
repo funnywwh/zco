@@ -3,6 +3,7 @@ const zco = @import("zco");
 const nets = @import("nets");
 const Candidate = @import("./candidate.zig").Candidate;
 const Stun = @import("./stun.zig").Stun;
+const Turn = @import("./turn.zig").Turn;
 
 /// ICE Agent 实现
 /// 负责 Candidate 收集、Connectivity Checks 和连接建立
@@ -26,6 +27,9 @@ pub const IceAgent = struct {
     // STUN 配置
     stun_servers: std.ArrayList(StunServer),
 
+    // TURN 配置
+    turn_servers: std.ArrayList(TurnServer),
+
     // 检查状态
     check_list: std.ArrayList(Check),
 
@@ -40,6 +44,9 @@ pub const IceAgent = struct {
 
     // STUN 客户端（用于 Server Reflexive Candidate）
     stun: ?*Stun = null,
+
+    // TURN 客户端（用于 Relay Candidate）
+    turn: ?*Turn = null,
 
     /// ICE 状态枚举
     pub const State = enum {
@@ -80,9 +87,25 @@ pub const IceAgent = struct {
         username: ?[]const u8 = null,
         password: ?[]const u8 = null,
 
-        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        pub fn deinit(self: *StunServer, allocator: std.mem.Allocator) void {
             if (self.username) |u| allocator.free(u);
             if (self.password) |p| allocator.free(p);
+        }
+    };
+
+    /// TURN Server 配置
+    pub const TurnServer = struct {
+        address: std.net.Address,
+        username: []const u8,
+        password: []const u8,
+        realm: ?[]const u8 = null,
+        nonce: ?[]const u8 = null,
+
+        pub fn deinit(self: *TurnServer, allocator: std.mem.Allocator) void {
+            allocator.free(self.username);
+            allocator.free(self.password);
+            if (self.realm) |r| allocator.free(r);
+            if (self.nonce) |n| allocator.free(n);
         }
     };
 
@@ -118,6 +141,7 @@ pub const IceAgent = struct {
             .candidate_pairs = std.ArrayList(CandidatePair).init(allocator),
             .state = .new,
             .stun_servers = std.ArrayList(StunServer).init(allocator),
+            .turn_servers = std.ArrayList(TurnServer).init(allocator),
             .check_list = std.ArrayList(Check).init(allocator),
             .selected_pair = null,
             .component_id = component_id,
@@ -149,6 +173,12 @@ pub const IceAgent = struct {
         }
         self.stun_servers.deinit();
 
+        // 清理 TURN 服务器
+        for (self.turn_servers.items) |*server| {
+            server.deinit(self.allocator);
+        }
+        self.turn_servers.deinit();
+
         // 清理 Checks
         self.check_list.deinit();
 
@@ -162,6 +192,11 @@ pub const IceAgent = struct {
             // STUN 目前没有 deinit，需要添加
             // TODO: 添加 STUN deinit 方法
             self.allocator.destroy(self.stun.?);
+        }
+
+        // 清理 TURN 客户端
+        if (self.turn) |turn| {
+            turn.deinit();
         }
 
         self.allocator.destroy(self);
@@ -204,6 +239,33 @@ pub const IceAgent = struct {
             server.password = try self.allocator.dupe(u8, p);
         }
         try self.stun_servers.append(server);
+    }
+
+    /// 添加 TURN 服务器
+    pub fn addTurnServer(
+        self: *Self,
+        address: std.net.Address,
+        username: []const u8,
+        password: []const u8,
+        realm: ?[]const u8,
+        nonce: ?[]const u8,
+    ) !void {
+        var server = TurnServer{
+            .address = address,
+            .username = try self.allocator.dupe(u8, username),
+            .password = try self.allocator.dupe(u8, password),
+            .realm = null,
+            .nonce = null,
+        };
+        errdefer server.deinit(self.allocator);
+
+        if (realm) |r| {
+            server.realm = try self.allocator.dupe(u8, r);
+        }
+        if (nonce) |n| {
+            server.nonce = try self.allocator.dupe(u8, n);
+        }
+        try self.turn_servers.append(server);
     }
 
     /// 开始收集 Host Candidates
@@ -362,6 +424,68 @@ pub const IceAgent = struct {
             // 计算优先级
             const type_pref = Candidate.getTypePreference(.server_reflexive);
             candidate.calculatePriority(type_pref, 65534); // 稍低于 Host
+
+            try self.local_candidates.append(candidate);
+        }
+    }
+
+    /// 收集 Relay Candidates（通过 TURN 服务器）
+    /// 向 TURN 服务器发送 Allocation 请求，获取中继地址
+    pub fn gatherRelayCandidates(self: *Self) !void {
+        if (self.turn_servers.items.len == 0) {
+            return; // 没有 TURN 服务器配置
+        }
+
+        // 为每个 TURN 服务器收集 Relay Candidate
+        for (self.turn_servers.items, 0..) |*server, i| {
+            // 创建 TURN 客户端（如果需要）
+            if (self.turn == null) {
+                self.turn = try Turn.init(
+                    self.allocator,
+                    self.schedule,
+                    server.address,
+                    server.username,
+                    server.password,
+                );
+            }
+
+            const turn = self.turn.?;
+
+            // 发送 Allocation 请求
+            // 注意：这里简化处理，实际应该处理认证（realm/nonce）
+            const allocation = turn.allocate() catch {
+                // Allocation 失败，跳过这个 TURN 服务器
+                continue;
+            };
+
+            // 从 Allocation 中提取 relayed_address
+            const relayed_address = allocation.relayed_address;
+
+            // 创建 Relay Candidate
+            const foundation = try std.fmt.allocPrint(self.allocator, "relay-{}-{}", .{ self.component_id, i });
+            const transport = try self.allocator.dupe(u8, "udp");
+            errdefer self.allocator.free(foundation);
+            errdefer self.allocator.free(transport);
+
+            const candidate = try self.allocator.create(Candidate);
+            errdefer self.allocator.destroy(candidate);
+
+            candidate.* = try Candidate.init(
+                self.allocator,
+                foundation,
+                self.component_id,
+                transport,
+                relayed_address,
+                .relayed,
+            );
+
+            // 设置相关地址（TURN 服务器地址）
+            candidate.related_address = server.address;
+            candidate.related_port = null;
+
+            // 计算优先级（Relay Candidate 优先级最低）
+            const type_pref = Candidate.getTypePreference(.relayed);
+            candidate.calculatePriority(type_pref, 65534);
 
             try self.local_candidates.append(candidate);
         }

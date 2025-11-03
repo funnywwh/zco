@@ -111,6 +111,16 @@ pub fn build(b: *std.Build) void {
     agent_tests.root_module.addImport("nets", nets);
     const run_agent_tests = b.addRunArtifact(agent_tests);
 
+    // TURN 测试
+    const turn_tests = b.addTest(.{
+        .root_source_file = b.path("src/ice/turn_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    turn_tests.root_module.addImport("zco", zco);
+    turn_tests.root_module.addImport("nets", nets);
+    const run_turn_tests = b.addRunArtifact(turn_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -120,4 +130,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_stun_tests.step);
     test_step.dependOn(&run_candidate_tests.step);
     test_step.dependOn(&run_agent_tests.step);
+    test_step.dependOn(&run_turn_tests.step);
 }

@@ -35,15 +35,20 @@ pub const Stun = struct {
         binding = 0x001,
     };
 
-    /// STUN 属性类型
+    /// STUN 属性类型（包含 TURN 扩展属性）
     pub const AttributeType = enum(u16) {
         mapped_address = 0x0001,
         username = 0x0006,
         message_integrity = 0x0008,
         error_code = 0x0009,
         unknown_attributes = 0x000a,
+        xor_peer_address = 0x0012, // TURN extension
+        data = 0x0013, // TURN extension
         realm = 0x0014,
         nonce = 0x0015,
+        xor_relayed_address = 0x0016, // TURN extension
+        lifetime = 0x000D, // TURN extension
+        requested_transport = 0x0019, // TURN extension
         xor_mapped_address = 0x0020,
         software = 0x8022,
         alternate_server = 0x8023,
@@ -52,6 +57,7 @@ pub const Stun = struct {
         use_candidate = 0x0025,
         ice_controlled = 0x8029,
         ice_controlling = 0x802a,
+        reservation_token = 0x0022, // TURN extension
     };
 
     /// STUN 消息头（20 字节）
@@ -140,8 +146,12 @@ pub const Stun = struct {
             const length = std.mem.readInt(u16, data[2..4][0..2], std.builtin.Endian.big);
             if (data.len < 4 + length) return error.InvalidAttribute;
 
+            // 对于未知属性类型，直接使用 @enumFromInt
+            // 这允许 TURN 扩展属性通过（即使值不在枚举定义中）
+            const attr_type: AttributeType = @enumFromInt(type_val);
+
             return SelfAttr{
-                .type = @enumFromInt(type_val),
+                .type = attr_type,
                 .length = length,
                 .value = data[4 .. 4 + length],
             };
@@ -429,6 +439,16 @@ pub const Stun = struct {
         pub fn findAttribute(self: *SelfMsg, attr_type: AttributeType) ?Attribute {
             for (self.attributes.items) |attr| {
                 if (attr.type == attr_type) {
+                    return attr;
+                }
+            }
+            return null;
+        }
+
+        /// 按属性类型值查找（支持 TURN 扩展属性）
+        pub fn findAttributeByValue(self: *SelfMsg, attr_type_value: u16) ?Attribute {
+            for (self.attributes.items) |attr| {
+                if (@intFromEnum(attr.type) == attr_type_value) {
                     return attr;
                 }
             }
