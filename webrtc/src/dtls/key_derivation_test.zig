@@ -36,7 +36,6 @@ test "KeyDerivation deriveSrtpKeys client" {
 }
 
 test "KeyDerivation deriveSrtpKeys server" {
-
     var master_secret: [48]u8 = undefined;
     @memset(&master_secret, 0x01);
 

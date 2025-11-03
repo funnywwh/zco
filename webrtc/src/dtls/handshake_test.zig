@@ -64,7 +64,7 @@ test "ClientHello encode and parse" {
     const session_id = try allocator.dupe(u8, "test_session");
     defer allocator.free(session_id);
 
-    const cookie = try allocator.dupe(u8, &[_]u8{0x01, 0x02});
+    const cookie = try allocator.dupe(u8, &[_]u8{ 0x01, 0x02 });
     defer allocator.free(cookie);
 
     const cipher_suites = &[_]u16{0xc02b};
@@ -271,4 +271,3 @@ test "HandshakeHeader all message types" {
         try testing.expect(parsed.msg_type == msg_type);
     }
 }
-
