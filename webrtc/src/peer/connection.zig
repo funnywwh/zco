@@ -117,8 +117,8 @@ pub const PeerConnection = struct {
     configuration: Configuration,
 
     // 内部组件
-    ice_agent: ?*ice.Agent = null,
-    dtls_context: ?*dtls.Context = null,
+    ice_agent: ?*ice.agent.IceAgent = null,
+    dtls_certificate: ?*dtls.Certificate = null, // DTLS 证书（用于指纹计算）
     srtp_sender: ?*srtp.Transform = null,
     srtp_receiver: ?*srtp.Transform = null,
     sctp_association: ?*sctp.Association = null,
@@ -156,7 +156,9 @@ pub const PeerConnection = struct {
             agent.component_id = 1;
         }
 
-        // TODO: 初始化 DTLS Context（需要时生成证书）
+        // 初始化 DTLS 证书（生成自签名证书）
+        self.dtls_certificate = try Self.initDtlsCertificate(allocator);
+        errdefer if (self.dtls_certificate) |cert| cert.deinit();
 
         return self;
     }
@@ -175,8 +177,8 @@ pub const PeerConnection = struct {
             transform.ctx.deinit();
         }
 
-        if (self.dtls_context) |ctx| {
-            ctx.deinit();
+        if (self.dtls_certificate) |cert| {
+            cert.deinit();
         }
 
         if (self.ice_agent) |agent| {
@@ -229,6 +231,20 @@ pub const PeerConnection = struct {
         // 确保至少 22 个字符
         const result = try buffer.toOwnedSlice();
         return if (result.len >= 22) result else try allocator.dupe(u8, "zco-pwd-default-at-least-22-chars");
+    }
+
+    /// 初始化 DTLS 证书（生成自签名证书）
+    fn initDtlsCertificate(allocator: std.mem.Allocator) !*dtls.Certificate {
+        // 生成自签名证书
+        const cert_info = dtls.Certificate.CertificateInfo{
+            .subject = "CN=ZCO WebRTC",
+            .issuer = "CN=ZCO WebRTC", // 自签名
+            .serial_number = "01",
+            .valid_from = std.time.timestamp() - 86400, // 从昨天开始
+            .valid_to = std.time.timestamp() + (365 * 86400), // 一年有效期
+        };
+
+        return try dtls.Certificate.generateSelfSigned(allocator, cert_info);
     }
 
     /// 创建 Offer
@@ -313,29 +329,31 @@ pub const PeerConnection = struct {
             }
         }
 
-        // 5. 添加 DTLS 指纹（如果 DTLS Context 已初始化）
-        if (self.dtls_context) |dtls_ctx| {
-            _ = dtls_ctx; // 暂时未使用
-            // TODO: 从 DTLS context 获取证书并计算指纹
-            // 当前使用占位符
-            const fingerprint_hash = try allocator.dupe(u8, "sha-256");
-            const fingerprint_value = try allocator.dupe(u8, "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00");
+        // 5. 添加 DTLS 指纹
+        // 从证书计算真实指纹
+        const fingerprint_hash = try allocator.dupe(u8, "sha-256");
+        const fingerprint_formatted = if (self.dtls_certificate) |cert| blk: {
+            // 使用真实证书的指纹
+            const fingerprint = cert.computeFingerprint();
+            break :blk try cert.formatFingerprint(allocator);
+        } else blk: {
+            // 如果没有证书，生成随机指纹（不应发生）
+            var random_fingerprint: [32]u8 = undefined;
+            crypto.random.bytes(&random_fingerprint);
+            break :blk try dtls.KeyDerivation.formatFingerprint(random_fingerprint, allocator);
+        };
+        
+        offer.fingerprint = SessionDescription.Fingerprint{
+            .hash = fingerprint_hash,
+            .value = fingerprint_formatted,
+        };
 
-            offer.fingerprint = SessionDescription.Fingerprint{
-                .hash = fingerprint_hash,
-                .value = fingerprint_value,
-            };
-
-            // 添加 fingerprint 属性到媒体描述
-            const fingerprint_attr_value = try std.fmt.allocPrint(allocator, "{s} {s}", .{ fingerprint_hash, fingerprint_value });
-            try audio_media_desc.attributes.append(SessionDescription.Attribute{
-                .name = try allocator.dupe(u8, "fingerprint"),
-                .value = fingerprint_attr_value,
-            });
-        } else {
-            // 如果没有 DTLS context，创建一个并生成证书
-            // TODO: 初始化 DTLS context 并生成自签名证书
-        }
+        // 添加 fingerprint 属性到媒体描述
+        const fingerprint_attr_value = try std.fmt.allocPrint(allocator, "{s} {s}", .{ fingerprint_hash, fingerprint_formatted });
+        try audio_media_desc.attributes.append(SessionDescription.Attribute{
+            .name = try allocator.dupe(u8, "fingerprint"),
+            .value = fingerprint_attr_value,
+        });
 
         // 6. 添加 RTCP 反馈和编解码器属性
 
@@ -461,25 +479,30 @@ pub const PeerConnection = struct {
                 }
             }
 
-            // 5. 添加 DTLS 指纹（如果 DTLS Context 已初始化）
-            if (self.dtls_context) |dtls_ctx| {
-                _ = dtls_ctx; // 暂时未使用
-                // TODO: 从 DTLS context 获取证书并计算指纹
-                const fingerprint_hash = try allocator.dupe(u8, "sha-256");
-                const fingerprint_value = try allocator.dupe(u8, "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00");
+            // 5. 添加 DTLS 指纹
+            // 从证书计算真实指纹
+            const fingerprint_hash = try allocator.dupe(u8, "sha-256");
+            const fingerprint_formatted = if (self.dtls_certificate) |cert| blk: {
+                // 使用真实证书的指纹
+                break :blk try cert.formatFingerprint(allocator);
+            } else blk: {
+                // 如果没有证书，生成随机指纹（不应发生）
+                var random_fingerprint: [32]u8 = undefined;
+                crypto.random.bytes(&random_fingerprint);
+                break :blk try dtls.KeyDerivation.formatFingerprint(random_fingerprint, allocator);
+            };
+            
+            answer.fingerprint = SessionDescription.Fingerprint{
+                .hash = fingerprint_hash,
+                .value = fingerprint_formatted,
+            };
 
-                answer.fingerprint = SessionDescription.Fingerprint{
-                    .hash = fingerprint_hash,
-                    .value = fingerprint_value,
-                };
-
-                // 添加 fingerprint 属性到媒体描述
-                const fingerprint_attr_value = try std.fmt.allocPrint(allocator, "{s} {s}", .{ fingerprint_hash, fingerprint_value });
-                try audio_media_desc.attributes.append(SessionDescription.Attribute{
-                    .name = try allocator.dupe(u8, "fingerprint"),
-                    .value = fingerprint_attr_value,
-                });
-            }
+            // 添加 fingerprint 属性到媒体描述
+            const fingerprint_attr_value = try std.fmt.allocPrint(allocator, "{s} {s}", .{ fingerprint_hash, fingerprint_formatted });
+            try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                .name = try allocator.dupe(u8, "fingerprint"),
+                .value = fingerprint_attr_value,
+            });
 
             // 6. 添加 RTCP 属性
             // setup 属性：如果 offer 是 actpass，answer 应该是 active 或 passive
