@@ -1,3 +1,10 @@
 const std = @import("std");
 
-// PeerConnection 模块将在后续阶段实现
+pub const connection = @import("./connection.zig");
+
+pub const PeerConnection = connection.PeerConnection;
+pub const SignalingState = connection.SignalingState;
+pub const IceConnectionState = connection.IceConnectionState;
+pub const IceGatheringState = connection.IceGatheringState;
+pub const ConnectionState = connection.ConnectionState;
+pub const Configuration = connection.Configuration;
