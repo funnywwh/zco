@@ -102,6 +102,12 @@ pub const Sdp = struct {
 
     /// 清理 SDP 资源
     pub fn deinit(self: *Self) void {
+        if (self.origin) |*o| {
+            self.allocator.free(o.username);
+            self.allocator.free(o.nettype);
+            self.allocator.free(o.addrtype);
+            self.allocator.free(o.address);
+        }
         if (self.session_name) |name| {
             self.allocator.free(name);
         }
@@ -496,7 +502,7 @@ pub const Sdp = struct {
 
     /// 解析 ICE candidate 字符串
     pub fn parseIceCandidate(candidate_str: []const u8, alloc: allocator) !IceCandidate {
-        // candidate format: foundation component transport priority address port typ [rel-address] [rel-port]
+        // candidate format: foundation component transport priority address port typ type-value [rel-address] [rel-port]
         var parts = std.mem.splitScalar(u8, candidate_str, ' ');
 
         _ = parts.next(); // Skip "candidate" keyword
@@ -507,6 +513,7 @@ pub const Sdp = struct {
         const priority_str = parts.next() orelse return error.InvalidCandidate;
         const address = parts.next() orelse return error.InvalidCandidate;
         const port_str = parts.next() orelse return error.InvalidCandidate;
+        _ = parts.next(); // Skip "typ" keyword
         const typ = parts.next() orelse return error.InvalidCandidate;
 
         var candidate = IceCandidate{

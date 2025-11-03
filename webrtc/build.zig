@@ -62,8 +62,26 @@ pub fn build(b: *std.Build) void {
     lib_unit_tests.root_module.addImport("nets", nets);
     lib_unit_tests.root_module.addImport("websocket", websocket);
 
+    // SDP 测试
+    const sdp_tests = b.addTest(.{
+        .root_source_file = b.path("src/signaling/sdp_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_sdp_tests = b.addRunArtifact(sdp_tests);
+
+    // 消息测试
+    const message_tests = b.addTest(.{
+        .root_source_file = b.path("src/signaling/message_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_message_tests = b.addRunArtifact(message_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
+    test_step.dependOn(&run_sdp_tests.step);
+    test_step.dependOn(&run_message_tests.step);
 }

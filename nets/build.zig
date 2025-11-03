@@ -57,7 +57,6 @@ pub fn build(b: *std.Build) void {
         .single_threaded = single_thread,
     });
 
-
     exe.root_module.addOptions("opts", threads_option);
 
     exe.root_module.addImport("zco", zco);
@@ -102,6 +101,16 @@ pub fn build(b: *std.Build) void {
     lib_unit_tests.root_module.addImport("zco", zco);
     lib_unit_tests.root_module.addImport("nets", lib.root_module);
 
+    // UDP 测试
+    const udp_tests = b.addTest(.{
+        .root_source_file = b.path("src/udp_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    udp_tests.root_module.addImport("zco", zco);
+    udp_tests.root_module.addImport("nets", lib.root_module);
+    const run_udp_tests = b.addRunArtifact(udp_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const exe_unit_tests = b.addTest(.{
@@ -120,4 +129,5 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
+    test_step.dependOn(&run_udp_tests.step);
 }

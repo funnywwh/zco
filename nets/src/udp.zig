@@ -9,7 +9,6 @@ pub const Udp = struct {
 
     xobj: ?zco.xev.UDP = null,
     schedule: *zco.Schedule,
-    udp_state: ?zco.xev.UDP.State = null,
 
     pub const Error = anyerror;
 
@@ -24,10 +23,6 @@ pub const Udp = struct {
 
     /// 清理 UDP 资源
     pub fn deinit(self: *Self) void {
-        if (self.udp_state) |*state| {
-            // UDP state 会在 close 时清理
-            _ = state;
-        }
         const allocator = self.schedule.allocator;
         allocator.destroy(self);
     }
@@ -37,13 +32,22 @@ pub const Udp = struct {
         const xobj = try zco.xev.UDP.init(address);
         try xobj.bind(address);
         self.xobj = xobj;
-        self.udp_state = .{};
     }
 
     /// 异步读取 UDP 数据（带地址信息）
     pub fn recvFrom(self: *Self, buffer: []u8) !struct { data: []u8, addr: std.net.Address } {
         const xobj = self.xobj orelse return error.NotInit;
-        const state = &self.udp_state.?;
+        // UDP State 需要初始化 op 字段，这里初始化为 recv 操作
+        var state: zco.xev.UDP.State = undefined;
+        state.userdata = null;
+        state.op = .{
+            .recv = .{
+                .buf = .{ .slice = buffer },
+                .addr_buffer = undefined,
+                .msghdr = undefined,
+                .iov = undefined,
+            },
+        };
 
         var c_read = zco.xev.Completion{};
         const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
@@ -61,7 +65,7 @@ pub const Udp = struct {
         xobj.read(
             &(self.schedule.xLoop.?),
             &c_read,
-            state,
+            &state,
             .{ .slice = buffer },
             Result,
             &result,
@@ -99,7 +103,17 @@ pub const Udp = struct {
     /// 异步发送 UDP 数据到指定地址
     pub fn sendTo(self: *Self, buffer: []const u8, address: std.net.Address) !usize {
         const xobj = self.xobj orelse return error.NotInit;
-        const state = &self.udp_state.?;
+        // UDP State 需要初始化 op 字段，这里初始化为 send 操作
+        var state: zco.xev.UDP.State = undefined;
+        state.userdata = null;
+        state.op = .{
+            .send = .{
+                .buf = .{ .slice = buffer },
+                .addr = address,
+                .msghdr = undefined,
+                .iov = undefined,
+            },
+        };
 
         var c_write = zco.xev.Completion{};
         const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
@@ -116,7 +130,7 @@ pub const Udp = struct {
         xobj.write(
             &(self.schedule.xLoop.?),
             &c_write,
-            state,
+            &state,
             address,
             .{ .slice = buffer },
             Result,
@@ -127,7 +141,6 @@ pub const Udp = struct {
                     _: *zco.xev.Loop,
                     _: *zco.xev.Completion,
                     _: *zco.xev.UDP.State,
-                    _: std.net.Address,
                     _: zco.xev.UDP,
                     _: zco.xev.WriteBuffer,
                     r: zco.xev.WriteError!usize,
@@ -184,7 +197,6 @@ pub const Udp = struct {
             };
 
             self.xobj = null;
-            self.udp_state = null;
         }
     }
 };
