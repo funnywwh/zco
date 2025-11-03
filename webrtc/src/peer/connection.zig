@@ -1,5 +1,6 @@
 const std = @import("std");
 const zco = @import("zco");
+const crypto = std.crypto;
 const ice = @import("../ice/root.zig");
 const dtls = @import("../dtls/root.zig");
 const srtp = @import("../srtp/root.zig");
@@ -193,6 +194,43 @@ pub const PeerConnection = struct {
         self.allocator.destroy(self);
     }
 
+    /// 生成随机 ICE username fragment（4-256 字符，至少 4 个字符）
+    fn generateIceUfrag(allocator: std.mem.Allocator) ![]u8 {
+        // ICE-ufrag 应该是至少 4 个字符的随机字符串
+        // 通常使用 base64 编码的随机字节
+        var random_bytes: [16]u8 = undefined;
+        crypto.random.bytes(&random_bytes);
+
+        // 使用 base64 编码（简化：使用十六进制编码，至少 4 字符）
+        var buffer = std.ArrayList(u8).init(allocator);
+        errdefer buffer.deinit();
+        for (random_bytes) |byte| {
+            try buffer.writer().print("{X:0>2}", .{byte});
+        }
+
+        // 确保至少 4 个字符
+        const result = try buffer.toOwnedSlice();
+        return if (result.len >= 4) result else try allocator.dupe(u8, "zco-ufrag-default");
+    }
+
+    /// 生成随机 ICE password（22-256 字符，至少 22 个字符）
+    fn generateIcePwd(allocator: std.mem.Allocator) ![]u8 {
+        // ICE-pwd 应该是至少 22 个字符的随机字符串
+        var random_bytes: [32]u8 = undefined;
+        crypto.random.bytes(&random_bytes);
+
+        // 使用 base64 编码（简化：使用十六进制编码）
+        var buffer = std.ArrayList(u8).init(allocator);
+        errdefer buffer.deinit();
+        for (random_bytes) |byte| {
+            try buffer.writer().print("{X:0>2}", .{byte});
+        }
+
+        // 确保至少 22 个字符
+        const result = try buffer.toOwnedSlice();
+        return if (result.len >= 22) result else try allocator.dupe(u8, "zco-pwd-default-at-least-22-chars");
+    }
+
     /// 创建 Offer
     /// 生成 SDP offer 描述
     pub fn createOffer(self: *Self, allocator: std.mem.Allocator) !*SessionDescription {
@@ -243,10 +281,9 @@ pub const PeerConnection = struct {
 
         // 4. 添加 ICE 属性（如果 ICE Agent 可用）
         if (self.ice_agent) |agent| {
-            // 生成 ICE username fragment 和 password
-            // TODO: 实际实现应使用随机生成的值
-            const ice_ufrag = try allocator.dupe(u8, "zco-ufrag");
-            const ice_pwd = try allocator.dupe(u8, "zco-pwd");
+            // 生成随机 ICE username fragment 和 password
+            const ice_ufrag = try Self.generateIceUfrag(allocator);
+            const ice_pwd = try Self.generateIcePwd(allocator);
 
             offer.ice_ufrag = ice_ufrag;
             offer.ice_pwd = ice_pwd;
@@ -324,17 +361,16 @@ pub const PeerConnection = struct {
     /// 创建 Answer
     /// 响应远程 offer，生成 SDP answer
     pub fn createAnswer(self: *Self, allocator: std.mem.Allocator) !*SessionDescription {
-        // TODO: 实现完整的 answer 生成
         // 需要基于 remote_description 生成
 
-        if (self.remote_description == null) {
+        const remote_desc = self.remote_description orelse {
             return error.NoRemoteDescription;
-        }
+        };
 
         var answer = SessionDescription.init(allocator);
         errdefer answer.deinit();
 
-        // 基础信息（类似 offer）
+        // 1. 基础信息（类似 offer，但使用本地信息）
         answer.version = 0;
         const origin = SessionDescription.Origin{
             .username = try allocator.dupe(u8, "zco"),
@@ -348,7 +384,126 @@ pub const PeerConnection = struct {
 
         answer.session_name = try allocator.dupe(u8, "ZCO WebRTC Session");
 
-        // TODO: 添加媒体描述和 ICE 信息
+        // 2. 添加连接信息（基于 remote offer 或使用默认值）
+        const connection = SessionDescription.Connection{
+            .nettype = "IN",
+            .addrtype = "IP4",
+            .address = try allocator.dupe(u8, "0.0.0.0"),
+        };
+        answer.connection = connection;
+
+        // 3. 遍历 remote offer 的媒体描述，为每个媒体生成 answer
+        for (remote_desc.media_descriptions.items) |remote_media| {
+            // 生成对应的媒体描述（只接受支持的媒体类型）
+            if (!std.mem.eql(u8, remote_media.media_type, "audio")) {
+                // 暂时只支持音频，跳过其他媒体类型
+                continue;
+            }
+
+            // 创建音频媒体描述（复用相同的格式）
+            var audio_formats = std.ArrayList([]const u8).init(allocator);
+            // 从 remote offer 中选择支持的格式，或使用默认值
+            // 简化：使用与 offer 相同的格式（实际应该协商）
+            if (remote_media.formats.items.len > 0) {
+                // 接受第一个格式作为示例（实际应协商）
+                for (remote_media.formats.items) |fmt| {
+                    // 只接受已知的音频格式（0=PCMU, 8=PCMA）
+                    if (std.mem.eql(u8, fmt, "0") or std.mem.eql(u8, fmt, "8")) {
+                        try audio_formats.append(try allocator.dupe(u8, fmt));
+                    }
+                }
+            } else {
+                // 如果没有格式，使用默认值
+                try audio_formats.append(try allocator.dupe(u8, "0")); // PCMU
+            }
+
+            const audio_media = SessionDescription.MediaDescription{
+                .media_type = try allocator.dupe(u8, "audio"),
+                .port = remote_media.port, // 使用相同的端口（或 9 表示禁用）
+                .proto = try allocator.dupe(u8, "UDP/TLS/RTP/SAVPF"), // 必须与 offer 匹配
+                .formats = audio_formats,
+                .bandwidths = std.ArrayList(SessionDescription.Bandwidth).init(allocator),
+                .attributes = std.ArrayList(SessionDescription.Attribute).init(allocator),
+            };
+            try answer.media_descriptions.append(audio_media);
+
+            // 获取媒体描述引用
+            const audio_media_desc = &answer.media_descriptions.items[answer.media_descriptions.items.len - 1];
+
+            // 4. 添加 ICE 属性（生成新的随机值）
+            if (self.ice_agent) |agent| {
+                const ice_ufrag = try Self.generateIceUfrag(allocator);
+                const ice_pwd = try Self.generateIcePwd(allocator);
+
+                answer.ice_ufrag = ice_ufrag;
+                answer.ice_pwd = ice_pwd;
+
+                // 添加 ICE 属性到媒体描述
+                try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                    .name = try allocator.dupe(u8, "ice-ufrag"),
+                    .value = try allocator.dupe(u8, ice_ufrag),
+                });
+                try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                    .name = try allocator.dupe(u8, "ice-pwd"),
+                    .value = try allocator.dupe(u8, ice_pwd),
+                });
+
+                // 添加 ICE candidates（如果已收集）
+                const local_candidates = agent.getLocalCandidates();
+                for (local_candidates) |c| {
+                    const candidate_str = try c.toSdpCandidate(allocator);
+                    defer allocator.free(candidate_str);
+
+                    try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                        .name = try allocator.dupe(u8, "candidate"),
+                        .value = try allocator.dupe(u8, candidate_str),
+                    });
+                }
+            }
+
+            // 5. 添加 DTLS 指纹（如果 DTLS Context 已初始化）
+            if (self.dtls_context) |dtls_ctx| {
+                _ = dtls_ctx; // 暂时未使用
+                // TODO: 从 DTLS context 获取证书并计算指纹
+                const fingerprint_hash = try allocator.dupe(u8, "sha-256");
+                const fingerprint_value = try allocator.dupe(u8, "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00");
+
+                answer.fingerprint = SessionDescription.Fingerprint{
+                    .hash = fingerprint_hash,
+                    .value = fingerprint_value,
+                };
+
+                // 添加 fingerprint 属性到媒体描述
+                const fingerprint_attr_value = try std.fmt.allocPrint(allocator, "{s} {s}", .{ fingerprint_hash, fingerprint_value });
+                try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                    .name = try allocator.dupe(u8, "fingerprint"),
+                    .value = fingerprint_attr_value,
+                });
+            }
+
+            // 6. 添加 RTCP 属性
+            // setup 属性：如果 offer 是 actpass，answer 应该是 active 或 passive
+            // 简化：设置为 active
+            try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                .name = try allocator.dupe(u8, "setup"),
+                .value = try allocator.dupe(u8, "active"), // answer 通常是 active
+            });
+
+            // rtcp-mux（如果 offer 中有，answer 中也要有）
+            var has_rtcp_mux = false;
+            for (remote_media.attributes.items) |attr| {
+                if (std.mem.eql(u8, attr.name, "rtcp-mux")) {
+                    has_rtcp_mux = true;
+                    break;
+                }
+            }
+            if (has_rtcp_mux) {
+                try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                    .name = try allocator.dupe(u8, "rtcp-mux"),
+                    .value = null,
+                });
+            }
+        }
 
         // 创建堆分配的对象
         const answer_ptr = try allocator.create(SessionDescription);
