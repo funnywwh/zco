@@ -4,8 +4,10 @@ const std = @import("std");
 pub const record = @import("./record.zig");
 pub const handshake = @import("./handshake.zig");
 pub const key_derivation = @import("./key_derivation.zig");
+pub const certificate = @import("./certificate.zig");
 
 // 导出常用类型
 pub const Record = record.Record;
 pub const Handshake = handshake.Handshake;
 pub const KeyDerivation = key_derivation.KeyDerivation;
+pub const Certificate = certificate.Certificate;
