@@ -28,8 +28,7 @@ pub const Ecdh = struct {
 
         pub fn generate(_: std.mem.Allocator) !PrivateKey {
             // 使用 P-256 生成随机标量
-            const scalar = P256.scalar.random(.little);
-            const scalar_bytes = scalar.toBytes(.little);
+            const scalar_bytes = P256.scalar.random(.little);
             return PrivateKey{ .scalar_bytes = scalar_bytes };
         }
 
