@@ -210,6 +210,14 @@ pub fn build(b: *std.Build) void {
     rtp_rtcp_tests.root_module.addImport("zco", zco);
     const run_rtp_rtcp_tests = b.addRunArtifact(rtp_rtcp_tests);
 
+    const sctp_chunk_tests = b.addTest(.{
+        .root_source_file = b.path("src/sctp/chunk_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    sctp_chunk_tests.root_module.addImport("zco", zco);
+    const run_sctp_chunk_tests = b.addRunArtifact(sctp_chunk_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -231,4 +239,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_rtp_packet_tests.step);
     test_step.dependOn(&run_rtp_ssrc_tests.step);
     test_step.dependOn(&run_rtp_rtcp_tests.step);
+    test_step.dependOn(&run_sctp_chunk_tests.step);
 }
