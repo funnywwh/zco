@@ -1,3 +1,7 @@
 const std = @import("std");
 
-// DTLS 模块将在后续阶段实现
+/// DTLS 模块导出
+pub const record = @import("./record.zig");
+
+// 导出常用类型
+pub const Record = record.Record;
