@@ -16,5 +16,5 @@ pub const SignalingServer = signaling.server.SignalingServer;
 pub const Sdp = signaling.sdp.Sdp;
 pub const Stun = ice.stun.Stun;
 pub const Candidate = ice.candidate.Candidate;
-// pub const IceAgent = ice.agent.IceAgent;
+pub const IceAgent = ice.agent.IceAgent;
 // pub const PeerConnection = peer.connection.PeerConnection;
