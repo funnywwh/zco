@@ -167,7 +167,7 @@ pub const Transform = struct {
             encrypted_payload,
             allocator,
         );
-        errdefer allocator.free(decrypted_payload);
+        // 注意：decrypted_payload 会在函数返回后被调用者释放，不需要 errdefer
 
         // 步骤 10: 构建 RTP 包（RTP 头 + 解密载荷）
         const rtp_packet = try allocator.alloc(u8, rtp_header.len + decrypted_payload.len);
@@ -290,7 +290,7 @@ pub const Transform = struct {
             encrypted_payload,
             allocator,
         );
-        errdefer allocator.free(decrypted_payload);
+        defer allocator.free(decrypted_payload); // 在函数返回前释放
 
         // 构建 RTCP 包：RTCP 头 + 解密载荷
         const rtcp_packet = try allocator.alloc(u8, rtcp_header.len + decrypted_payload.len);
