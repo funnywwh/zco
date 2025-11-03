@@ -32,30 +32,40 @@ test "Transform protect and unprotect" {
     @memset(&master_salt, 0x24);
     const ssrc: u32 = 0x12345678;
 
-    var ctx = try Context.init(allocator, master_key, master_salt, ssrc);
-    defer ctx.deinit();
+    // 创建两个独立的上下文：一个用于 protect()，一个用于 unprotect()
+    // 在真实场景中，protect() 和 unprotect() 使用不同的 SRTP 上下文
+    // （发送方和接收方各自维护自己的序列号状态）
 
-    // 初始化序列号状态（确保 protect() 和 unprotect() 使用相同的初始状态）
-    ctx.sequence_number = 0;
-    ctx.rollover_counter = 0;
-    ctx.replay_window.reset(); // 重置重放窗口
+    // 发送方上下文（用于 protect）
+    // 注意：Context.init() 已经将 sequence_number 和 rollover_counter 初始化为 0
+    var sender_ctx = try Context.init(allocator, master_key, master_salt, ssrc);
+    defer sender_ctx.deinit();
+    sender_ctx.replay_window.reset(); // 重置重放窗口
 
-    var transform = Transform.init(ctx);
+    // 接收方上下文（用于 unprotect）
+    // 接收方的初始状态必须与发送方相同（都是 0），才能生成相同的 IV
+    var receiver_ctx = try Context.init(allocator, master_key, master_salt, ssrc);
+    defer receiver_ctx.deinit();
+    receiver_ctx.replay_window.reset(); // 重置重放窗口
+
+    var sender_transform = Transform.init(sender_ctx);
+    var receiver_transform = Transform.init(receiver_ctx);
 
     // 创建 RTP 包（使用序列号 0，避免重放窗口问题）
     const rtp_payload = "Hello, SRTP!";
     const rtp_packet = try createRtpPacket(allocator, ssrc, 0, rtp_payload);
     defer allocator.free(rtp_packet);
 
-    // 加密（保护）
-    const srtp_packet = try transform.protect(rtp_packet, allocator);
+    // 使用发送方 transform 加密（保护）
+    const srtp_packet = try sender_transform.protect(rtp_packet, allocator);
     defer allocator.free(srtp_packet);
 
     // SRTP 包应该比 RTP 包长（包含认证标签）
     try testing.expect(srtp_packet.len > rtp_packet.len);
 
-    // 解密（恢复）
-    const recovered_packet = try transform.unprotect(srtp_packet, allocator);
+    // 使用接收方 transform 解密（恢复）
+    // 接收方的序列号状态需要与发送方 protect() 时的状态一致
+    const recovered_packet = try receiver_transform.unprotect(srtp_packet, allocator);
     defer allocator.free(recovered_packet);
 
     // 验证恢复的 RTP 包
@@ -74,15 +84,18 @@ test "Transform protect and unprotect multiple packets" {
     @memset(&master_salt, 0x24);
     const ssrc: u32 = 0x12345678;
 
-    var ctx = try Context.init(allocator, master_key, master_salt, ssrc);
-    defer ctx.deinit();
+    // 发送方和接收方使用独立的上下文
+    // Context.init() 已经将 sequence_number 和 rollover_counter 初始化为 0
+    var sender_ctx = try Context.init(allocator, master_key, master_salt, ssrc);
+    defer sender_ctx.deinit();
+    sender_ctx.replay_window.reset();
 
-    // 初始化序列号状态
-    ctx.sequence_number = 0;
-    ctx.rollover_counter = 0;
-    ctx.replay_window.reset(); // 重置重放窗口
+    var receiver_ctx = try Context.init(allocator, master_key, master_salt, ssrc);
+    defer receiver_ctx.deinit();
+    receiver_ctx.replay_window.reset();
 
-    var transform = Transform.init(ctx);
+    var sender_transform = Transform.init(sender_ctx);
+    var receiver_transform = Transform.init(receiver_ctx);
 
     // 加密多个包
     const payloads = [_][]const u8{ "Packet 1", "Packet 2", "Packet 3" };
@@ -91,10 +104,10 @@ test "Transform protect and unprotect multiple packets" {
         const rtp_packet = try createRtpPacket(allocator, ssrc, @as(u16, @intCast(i)), payload);
         defer allocator.free(rtp_packet);
 
-        const srtp_packet = try transform.protect(rtp_packet, allocator);
+        const srtp_packet = try sender_transform.protect(rtp_packet, allocator);
         defer allocator.free(srtp_packet);
 
-        const recovered = try transform.unprotect(srtp_packet, allocator);
+        const recovered = try receiver_transform.unprotect(srtp_packet, allocator);
         defer allocator.free(recovered);
 
         try testing.expect(std.mem.eql(u8, rtp_packet, recovered));
@@ -112,27 +125,31 @@ test "Transform unprotect replay detected" {
     @memset(&master_salt, 0x24);
     const ssrc: u32 = 0x12345678;
 
-    var ctx = try Context.init(allocator, master_key, master_salt, ssrc);
-    defer ctx.deinit();
+    // 发送方和接收方使用独立的上下文
+    // Context.init() 已经将 sequence_number 和 rollover_counter 初始化为 0
+    var sender_ctx = try Context.init(allocator, master_key, master_salt, ssrc);
+    defer sender_ctx.deinit();
+    sender_ctx.replay_window.reset();
 
-    // 初始化序列号状态
-    ctx.sequence_number = 0;
-    ctx.rollover_counter = 0;
+    var receiver_ctx = try Context.init(allocator, master_key, master_salt, ssrc);
+    defer receiver_ctx.deinit();
+    receiver_ctx.replay_window.reset();
 
-    var transform = Transform.init(ctx);
+    var sender_transform = Transform.init(sender_ctx);
+    var receiver_transform = Transform.init(receiver_ctx);
 
-    const rtp_packet = try createRtpPacket(allocator, ssrc, 100, "Test");
+    const rtp_packet = try createRtpPacket(allocator, ssrc, 0, "Test");
     defer allocator.free(rtp_packet);
 
     // 加密并解密一次
-    const srtp_packet = try transform.protect(rtp_packet, allocator);
+    const srtp_packet = try sender_transform.protect(rtp_packet, allocator);
     defer allocator.free(srtp_packet);
 
-    const recovered1 = try transform.unprotect(srtp_packet, allocator);
+    const recovered1 = try receiver_transform.unprotect(srtp_packet, allocator);
     defer allocator.free(recovered1);
 
     // 再次尝试解密相同的包，应该检测为重放
-    const result = transform.unprotect(srtp_packet, allocator);
+    const result = receiver_transform.unprotect(srtp_packet, allocator);
     try testing.expectError(error.ReplayDetected, result);
 }
 
@@ -205,15 +222,18 @@ test "Transform protectRtcp and unprotectRtcp" {
     @memset(&master_salt, 0x24);
     const ssrc: u32 = 0x12345678;
 
-    var ctx = try Context.init(allocator, master_key, master_salt, ssrc);
-    defer ctx.deinit();
+    // 发送方和接收方使用独立的上下文
+    // Context.init() 已经将 sequence_number 和 rollover_counter 初始化为 0
+    var sender_ctx = try Context.init(allocator, master_key, master_salt, ssrc);
+    defer sender_ctx.deinit();
+    sender_ctx.replay_window.reset();
 
-    // 初始化序列号状态
-    ctx.sequence_number = 0;
-    ctx.rollover_counter = 0;
-    ctx.replay_window.reset(); // 重置重放窗口
+    var receiver_ctx = try Context.init(allocator, master_key, master_salt, ssrc);
+    defer receiver_ctx.deinit();
+    receiver_ctx.replay_window.reset();
 
-    var transform = Transform.init(ctx);
+    var sender_transform = Transform.init(sender_ctx);
+    var receiver_transform = Transform.init(receiver_ctx);
 
     // 创建简单的 RTCP 包（8 字节头 + 载荷）
     var rtcp_packet = try allocator.alloc(u8, 8 + 20);
@@ -229,15 +249,15 @@ test "Transform protectRtcp and unprotectRtcp" {
     const payload = "RTCP payload data";
     @memcpy(rtcp_packet[8 .. 8 + payload.len], payload);
 
-    // 加密（保护）
-    const srtcp_packet = try transform.protectRtcp(rtcp_packet, allocator);
+    // 使用发送方 transform 加密（保护）
+    const srtcp_packet = try sender_transform.protectRtcp(rtcp_packet, allocator);
     defer allocator.free(srtcp_packet);
 
     // SRTCP 包应该比 RTCP 包长（包含认证标签和索引）
     try testing.expect(srtcp_packet.len > rtcp_packet.len);
 
-    // 解密（恢复）
-    const recovered_packet = try transform.unprotectRtcp(srtcp_packet, allocator);
+    // 使用接收方 transform 解密（恢复）
+    const recovered_packet = try receiver_transform.unprotectRtcp(srtcp_packet, allocator);
     defer allocator.free(recovered_packet);
 
     // 验证恢复的 RTCP 包

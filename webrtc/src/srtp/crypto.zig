@@ -9,7 +9,15 @@ pub const Crypto = struct {
     /// AES-128-CTR（Counter Mode）加密/解密
     /// SRTP 使用 CTR 模式，加密和解密使用相同的函数
     /// 遵循 RFC 3711 Section 4.1.1 (AES Counter Mode)
-    /// CTR 模式：对计数器块进行 AES 加密得到密钥流，然后 ciphertext = plaintext XOR key_stream
+    ///
+    /// CTR 模式工作原理：
+    /// 1. 将 IV 作为第一个计数器块
+    /// 2. 对每个计数器块进行 AES 块加密（ECB 模式），得到密钥流
+    /// 3. 将密钥流与明文进行 XOR，得到密文
+    ///
+    /// 注意：RFC 3711 中，SRTP 的 IV 是 16 字节
+    /// 在 CTR 模式中，整个 16 字节 IV 直接作为第一个计数器块使用
+    /// 后续计数器块通过递增 IV 的最低有效字节生成
     pub fn aes128Ctr(
         key: [16]u8,
         iv: [16]u8,
@@ -20,38 +28,24 @@ pub const Crypto = struct {
         const output = try allocator.alloc(u8, input.len);
         errdefer allocator.free(output);
 
-        // 实现 AES-128-CTR 模式
-        // CTR 模式：对计数器块进行 AES 加密得到密钥流，然后 XOR 明文
-        // 使用 Aes128Gcm 来执行块加密（虽然不是最优，但可以使用）
-        // 注意：我们需要将每个计数器块作为单独的输入进行加密
-
         const block_size = 16; // AES 块大小
-        const Aes128Gcm = crypto.aead.aes_gcm.Aes128Gcm;
+        const Aes128 = crypto.core.aes.Aes128;
 
-        // 将 IV 的前 12 字节作为 nonce，后 4 字节作为计数器起始值
-        const nonce = iv[0..12];
-        var counter_bytes: [4]u8 = undefined;
-        @memcpy(&counter_bytes, iv[12..16]);
-        var counter = std.mem.readInt(u32, &counter_bytes, .big);
+        // 初始化 AES 密钥调度（加密方向，用于生成密钥流）
+        var ctx = Aes128.initEnc(key);
+
+        // 将 IV 作为第一个计数器块
+        // 注意：RFC 3711 中，IV 的后 2 字节是 0，但整个 16 字节 IV 都用作计数器块的初始值
+        var counter_block: [block_size]u8 = undefined;
+        @memcpy(&counter_block, &iv);
 
         var input_offset: usize = 0;
 
         // 处理完整的块
         while (input_offset + block_size <= input.len) {
-            // 构建计数器块：nonce (12 字节) + counter (4 字节，大端序)
-            var counter_block: [block_size]u8 = undefined;
-            @memcpy(counter_block[0..12], nonce);
-            std.mem.writeInt(u32, counter_block[12..16], counter, .big);
-
-            // 使用 AES-GCM 加密计数器块（使用零 nonce，相当于 ECB 模式）
-            // 我们只使用加密后的块，忽略 tag
+            // 对计数器块进行 AES 块加密（ECB 模式），得到密钥流
             var key_stream: [block_size]u8 = undefined;
-            var tag: [Aes128Gcm.tag_length]u8 = undefined;
-            const zero_nonce: [12]u8 = .{0} ** 12;
-            const ad: []const u8 = &[_]u8{};
-
-            // 对计数器块进行加密，得到密钥流
-            Aes128Gcm.encrypt(&key_stream, &tag, &counter_block, ad, zero_nonce, key);
+            ctx.encrypt(&key_stream, &counter_block);
 
             // XOR 操作：ciphertext = plaintext XOR key_stream
             for (0..block_size) |i| {
@@ -59,25 +53,27 @@ pub const Crypto = struct {
             }
 
             input_offset += block_size;
-            counter += 1;
+
+            // 递增计数器（从最低字节开始递增，大端序）
+            // RFC 3711 没有明确指定计数器递增的方式，但标准做法是从最低字节递增
+            var carry: u8 = 1;
+            var i: usize = block_size;
+            while (i > 0) {
+                i -= 1;
+                const sum = @as(u16, counter_block[i]) + @as(u16, carry);
+                counter_block[i] = @truncate(sum);
+                carry = @intFromBool(sum > 255);
+                if (carry == 0) break;
+            }
         }
 
         // 处理剩余的不完整块
         if (input_offset < input.len) {
             const remainder_len = input.len - input_offset;
 
-            // 构建计数器块
-            var counter_block: [block_size]u8 = undefined;
-            @memcpy(counter_block[0..12], nonce);
-            std.mem.writeInt(u32, counter_block[12..16], counter, .big);
-
-            // 加密计数器块得到密钥流
+            // 对计数器块进行 AES 块加密，得到密钥流
             var key_stream: [block_size]u8 = undefined;
-            var tag: [Aes128Gcm.tag_length]u8 = undefined;
-            const zero_nonce: [12]u8 = .{0} ** 12;
-            const ad: []const u8 = &[_]u8{};
-
-            Aes128Gcm.encrypt(&key_stream, &tag, &counter_block, ad, zero_nonce, key);
+            ctx.encrypt(&key_stream, &counter_block);
 
             // XOR 操作（只使用需要的字节）
             for (0..remainder_len) |i| {
@@ -115,16 +111,23 @@ pub const Crypto = struct {
         var salt_xor: [14]u8 = undefined;
 
         // 计算 XOR 值：SSRC (4 字节) + index (6 字节，u48 低 6 字节)
+        // RFC 3711: IV = (salt XOR (SSRC << 32 | index))
+        // IV 的前 14 字节 = salt[0..14] XOR (SSRC[4 bytes] | index[6 bytes, low] | 0[4 bytes])
         var xor_bytes: [14]u8 = undefined;
-        std.mem.writeInt(u32, xor_bytes[0..4], ssrc, .big);
-        // index 是 u48，写入到接下来的 6 字节（大端序）
-        // 将 u48 写入 6 字节大端序
+        std.mem.writeInt(u32, xor_bytes[0..4], ssrc, .big); // SSRC 在位置 0-3
+
+        // index 是 u48，写入到位置 4-9（6 字节，大端序）
+        // 注意：index 的 LSB 应该在位置 9，MSB 应该在位置 4
         var index_temp = index;
         for (0..6) |i| {
-            xor_bytes[9 - i] = @as(u8, @truncate(index_temp));
+            xor_bytes[9 - i] = @as(u8, @truncate(index_temp)); // 从位置 9 开始向位置 4 写入
             index_temp >>= 8;
         }
-        // 剩余 4 字节为零
+        // 位置 10-13 为零（实际上不应该有，因为我们只有 14 字节）
+        // 但 RFC 3711 中 IV 是 16 字节，所以实际上：
+        // xor_bytes[0..4] = SSRC
+        // xor_bytes[4..10] = index (6 bytes, big-endian)
+        // xor_bytes[10..14] = 0 (4 bytes, 因为 index 是 u48，但我们需要 16 字节的 XOR)
         @memset(xor_bytes[10..14], 0);
 
         // XOR Salt
@@ -142,6 +145,8 @@ pub const Crypto = struct {
 
     /// HMAC-SHA1 认证标签生成
     /// 遵循 RFC 3711 Section 4.2
+    /// 注意：SRTP 使用 HMAC-SHA1，但只使用前 10 字节（80 位）作为认证标签
+    /// 此函数返回完整的 20 字节 HMAC-SHA1 输出，调用者可以截取前 10 字节用于 SRTP
     pub fn hmacSha1(
         key: []const u8,
         data: []const u8,
@@ -160,6 +165,7 @@ pub const Crypto = struct {
     }
 
     /// 验证 HMAC-SHA1 认证标签
+    /// 注意：SRTP 使用 HMAC-SHA1，但只使用前 10 字节（80 位）作为认证标签
     pub fn verifyHmacSha1(
         key: []const u8,
         data: []const u8,
@@ -169,12 +175,15 @@ pub const Crypto = struct {
         defer _ = gpa.deinit();
         const allocator = gpa.allocator();
 
-        const computed_tag = Self.hmacSha1(key, data, allocator) catch return false;
-        defer allocator.free(computed_tag);
+        const computed_tag_full = Self.hmacSha1(key, data, allocator) catch return false;
+        defer allocator.free(computed_tag_full);
 
-        if (computed_tag.len != tag.len) return false;
+        // SRTP 使用 10 字节认证标签（RFC 3711 Section 4.2）
+        const tag_len = tag.len;
+        if (computed_tag_full.len < tag_len) return false;
 
-        return std.mem.eql(u8, computed_tag, tag);
+        // 只比较前 tag_len 字节
+        return std.mem.eql(u8, computed_tag_full[0..tag_len], tag);
     }
 
     pub const Error = error{
