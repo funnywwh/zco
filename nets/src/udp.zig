@@ -1,0 +1,190 @@
+const std = @import("std");
+const zco = @import("zco");
+const io = @import("io");
+const posix = std.posix;
+
+/// UDP socket 实现，基于 libxev 异步 IO
+pub const Udp = struct {
+    const Self = @This();
+
+    xobj: ?zco.xev.UDP = null,
+    schedule: *zco.Schedule,
+    udp_state: ?zco.xev.UDP.State = null,
+
+    pub const Error = anyerror;
+
+    /// 创建新的 UDP socket
+    pub fn init(schedule: *zco.Schedule) !*Udp {
+        const udp = try schedule.allocator.create(Udp);
+        udp.* = .{
+            .schedule = schedule,
+        };
+        return udp;
+    }
+
+    /// 清理 UDP 资源
+    pub fn deinit(self: *Self) void {
+        if (self.udp_state) |*state| {
+            // UDP state 会在 close 时清理
+            _ = state;
+        }
+        const allocator = self.schedule.allocator;
+        allocator.destroy(self);
+    }
+
+    /// 绑定地址到 UDP socket
+    pub fn bind(self: *Self, address: std.net.Address) !void {
+        const xobj = try zco.xev.UDP.init(address);
+        try xobj.bind(address);
+        self.xobj = xobj;
+        self.udp_state = .{};
+    }
+
+    /// 异步读取 UDP 数据（带地址信息）
+    pub fn recvFrom(self: *Self, buffer: []u8) !struct { data: []u8, addr: std.net.Address } {
+        const xobj = self.xobj orelse return error.NotInit;
+        const state = &self.udp_state.?;
+
+        var c_read = zco.xev.Completion{};
+        const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
+
+        const Result = struct {
+            co: *zco.Co,
+            size: anyerror!usize = 0,
+            addr: std.net.Address = undefined,
+        };
+
+        var result: Result = .{
+            .co = co,
+        };
+
+        xobj.read(
+            &(self.schedule.xLoop.?),
+            &c_read,
+            state,
+            .{ .slice = buffer },
+            Result,
+            &result,
+            struct {
+                fn callback(
+                    ud: ?*Result,
+                    _: *zco.xev.Loop,
+                    _: *zco.xev.Completion,
+                    _: *zco.xev.UDP.State,
+                    addr: std.net.Address,
+                    _: zco.xev.UDP,
+                    _: zco.xev.ReadBuffer,
+                    r: zco.xev.ReadError!usize,
+                ) zco.xev.CallbackAction {
+                    const _r = ud orelse unreachable;
+                    _r.addr = addr;
+                    _r.size = r;
+                    _r.co.Resume() catch |e| {
+                        std.log.err("nets udp recvFrom ResumeCo error:{s}", .{@errorName(e)});
+                    };
+                    return .disarm;
+                }
+            }.callback,
+        );
+
+        try co.Suspend();
+        const size = try result.size;
+
+        return .{
+            .data = buffer[0..size],
+            .addr = result.addr,
+        };
+    }
+
+    /// 异步发送 UDP 数据到指定地址
+    pub fn sendTo(self: *Self, buffer: []const u8, address: std.net.Address) !usize {
+        const xobj = self.xobj orelse return error.NotInit;
+        const state = &self.udp_state.?;
+
+        var c_write = zco.xev.Completion{};
+        const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
+
+        const Result = struct {
+            co: *zco.Co,
+            size: anyerror!usize = undefined,
+        };
+
+        var result: Result = .{
+            .co = co,
+        };
+
+        xobj.write(
+            &(self.schedule.xLoop.?),
+            &c_write,
+            state,
+            address,
+            .{ .slice = buffer },
+            Result,
+            &result,
+            struct {
+                fn callback(
+                    ud: ?*Result,
+                    _: *zco.xev.Loop,
+                    _: *zco.xev.Completion,
+                    _: *zco.xev.UDP.State,
+                    _: std.net.Address,
+                    _: zco.xev.UDP,
+                    _: zco.xev.WriteBuffer,
+                    r: zco.xev.WriteError!usize,
+                ) zco.xev.CallbackAction {
+                    const _r = ud orelse unreachable;
+                    _r.size = r;
+                    _r.co.Resume() catch |e| {
+                        std.log.err("nets udp sendTo ResumeCo error:{s}", .{@errorName(e)});
+                    };
+                    return .disarm;
+                }
+            }.callback,
+        );
+
+        try co.Suspend();
+        return result.size;
+    }
+
+    /// 关闭 UDP socket
+    pub fn close(self: *Self) void {
+        if (self.xobj) |xobj| {
+            const loop = &(self.schedule.xLoop orelse unreachable);
+            var c_close = zco.xev.Completion{};
+            const co: *zco.Co = self.schedule.runningCo orelse unreachable;
+
+            const Result = struct {
+                co: *zco.Co,
+                done: bool = false,
+            };
+
+            var result: Result = .{
+                .co = co,
+            };
+
+            xobj.close(loop, &c_close, Result, &result, struct {
+                fn callback(
+                    ud: ?*Result,
+                    _: *zco.xev.Loop,
+                    _: *zco.xev.Completion,
+                    _: zco.xev.UDP,
+                    _: zco.xev.CloseError!void,
+                ) zco.xev.CallbackAction {
+                    const _r = ud orelse unreachable;
+                    _r.done = true;
+                    _r.co.Resume() catch |e| {
+                        std.log.err("nets udp close ResumeCo error:{s}", .{@errorName(e)});
+                    };
+                    return .disarm;
+                }
+            }.callback);
+
+            co.Suspend() catch |e| {
+                std.log.err("nets udp close Suspend error:{s}", .{@errorName(e)});
+            };
+
+            self.xobj = null;
+            self.udp_state = null;
+        }
+    }
+};

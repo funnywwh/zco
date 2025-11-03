@@ -1,0 +1,21 @@
+.{
+    .name = .webrtc,
+    .version = "0.1.0",
+    .fingerprint = 0xaf856b4119fb05bd,
+    .dependencies = .{
+        .zco = .{
+            .path = "../",
+        },
+        .nets = .{
+            .path = "../nets",
+        },
+        .websocket = .{
+            .path = "../websocket",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
