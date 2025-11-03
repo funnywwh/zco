@@ -332,11 +332,9 @@ pub const PeerConnection = struct {
         // 5. 添加 DTLS 指纹
         // 从证书计算真实指纹
         const fingerprint_hash = try allocator.dupe(u8, "sha-256");
-        const fingerprint_formatted = if (self.dtls_certificate) |cert| blk: {
-            // 使用真实证书的指纹
-            const fingerprint = cert.computeFingerprint();
-            break :blk try cert.formatFingerprint(allocator);
-        } else blk: {
+        const fingerprint_formatted = if (self.dtls_certificate) |cert| 
+            try cert.formatFingerprint(allocator)
+        else blk: {
             // 如果没有证书，生成随机指纹（不应发生）
             var random_fingerprint: [32]u8 = undefined;
             crypto.random.bytes(&random_fingerprint);
@@ -482,10 +480,9 @@ pub const PeerConnection = struct {
             // 5. 添加 DTLS 指纹
             // 从证书计算真实指纹
             const fingerprint_hash = try allocator.dupe(u8, "sha-256");
-            const fingerprint_formatted = if (self.dtls_certificate) |cert| blk: {
-                // 使用真实证书的指纹
-                break :blk try cert.formatFingerprint(allocator);
-            } else blk: {
+            const fingerprint_formatted = if (self.dtls_certificate) |cert|
+                try cert.formatFingerprint(allocator)
+            else blk: {
                 // 如果没有证书，生成随机指纹（不应发生）
                 var random_fingerprint: [32]u8 = undefined;
                 crypto.random.bytes(&random_fingerprint);
