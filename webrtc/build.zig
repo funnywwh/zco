@@ -149,6 +149,14 @@ pub fn build(b: *std.Build) void {
     handshake_tests.root_module.addImport("nets", nets);
     const run_handshake_tests = b.addRunArtifact(handshake_tests);
 
+    // DTLS ECDHE 测试
+    const ecdh_tests = b.addTest(.{
+        .root_source_file = b.path("src/dtls/ecdh_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_ecdh_tests = b.addRunArtifact(ecdh_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -162,4 +170,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_record_tests.step);
     test_step.dependOn(&run_key_derivation_tests.step);
     test_step.dependOn(&run_handshake_tests.step);
+    test_step.dependOn(&run_ecdh_tests.step);
 }
