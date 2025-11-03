@@ -302,13 +302,14 @@ pub const IceAgent = struct {
 
         // 创建 Host Candidate
         const foundation = try std.fmt.allocPrint(self.allocator, "host-{}-0", .{self.component_id});
-        const transport = try self.allocator.dupe(u8, "udp");
         errdefer self.allocator.free(foundation);
+        const transport = try self.allocator.dupe(u8, "udp");
         errdefer self.allocator.free(transport);
 
         const candidate = try self.allocator.create(Candidate);
         errdefer self.allocator.destroy(candidate);
 
+        // Candidate.init() 会复制 foundation 和 transport，所以可以释放原始的
         candidate.* = try Candidate.init(
             self.allocator,
             foundation,
@@ -317,6 +318,10 @@ pub const IceAgent = struct {
             candidate_addr,
             .host,
         );
+        
+        // 释放原始分配的字符串（Candidate.init() 已经复制了）
+        self.allocator.free(foundation);
+        self.allocator.free(transport);
 
         // 计算优先级
         const type_pref = Candidate.getTypePreference(.host);
