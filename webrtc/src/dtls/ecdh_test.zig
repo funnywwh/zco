@@ -7,7 +7,7 @@ test "ECDH generateKeyPair" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const keypair = try Ecdh.generateKeyPair(allocator);
+    var keypair = try Ecdh.generateKeyPair(allocator);
     defer keypair.public.deinit(allocator);
 
     // 验证私钥长度
@@ -106,10 +106,10 @@ test "ECDH multiple key pairs" {
     const allocator = gpa.allocator();
 
     // 生成多个密钥对，验证它们不同
-    const keypair1 = try Ecdh.generateKeyPair(allocator);
+    var keypair1 = try Ecdh.generateKeyPair(allocator);
     defer keypair1.public.deinit(allocator);
 
-    const keypair2 = try Ecdh.generateKeyPair(allocator);
+    var keypair2 = try Ecdh.generateKeyPair(allocator);
     defer keypair2.public.deinit(allocator);
 
     // 私钥应该不同
