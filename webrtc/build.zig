@@ -121,6 +121,34 @@ pub fn build(b: *std.Build) void {
     turn_tests.root_module.addImport("nets", nets);
     const run_turn_tests = b.addRunArtifact(turn_tests);
 
+    // DTLS 记录层测试
+    const record_tests = b.addTest(.{
+        .root_source_file = b.path("src/dtls/record_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    record_tests.root_module.addImport("zco", zco);
+    record_tests.root_module.addImport("nets", nets);
+    const run_record_tests = b.addRunArtifact(record_tests);
+
+    // DTLS 密钥派生测试
+    const key_derivation_tests = b.addTest(.{
+        .root_source_file = b.path("src/dtls/key_derivation_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_key_derivation_tests = b.addRunArtifact(key_derivation_tests);
+
+    // DTLS 握手协议测试
+    const handshake_tests = b.addTest(.{
+        .root_source_file = b.path("src/dtls/handshake_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    handshake_tests.root_module.addImport("zco", zco);
+    handshake_tests.root_module.addImport("nets", nets);
+    const run_handshake_tests = b.addRunArtifact(handshake_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -131,4 +159,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_candidate_tests.step);
     test_step.dependOn(&run_agent_tests.step);
     test_step.dependOn(&run_turn_tests.step);
+    test_step.dependOn(&run_record_tests.step);
+    test_step.dependOn(&run_key_derivation_tests.step);
+    test_step.dependOn(&run_handshake_tests.step);
 }

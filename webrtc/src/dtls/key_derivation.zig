@@ -38,7 +38,8 @@ pub const KeyDerivation = struct {
             label_client_key,
             16,
         );
-        @memcpy(&result.client_master_key, &client_key);
+        defer std.heap.page_allocator.free(client_key);
+        @memcpy(&result.client_master_key, client_key[0..16]);
 
         // 派生服务器主密钥（16 字节）
         const server_key = try Self.exportKeyingMaterial(
@@ -48,7 +49,8 @@ pub const KeyDerivation = struct {
             label_server_key,
             16,
         );
-        @memcpy(&result.server_master_key, &server_key);
+        defer std.heap.page_allocator.free(server_key);
+        @memcpy(&result.server_master_key, server_key[0..16]);
 
         // 派生客户端 Salt（14 字节）
         const client_salt = try Self.exportKeyingMaterial(
@@ -58,6 +60,7 @@ pub const KeyDerivation = struct {
             label_client_salt,
             14,
         );
+        defer std.heap.page_allocator.free(client_salt);
         @memcpy(&result.client_master_salt, client_salt[0..14]);
 
         // 派生服务器 Salt（14 字节）
@@ -68,6 +71,7 @@ pub const KeyDerivation = struct {
             label_server_salt,
             14,
         );
+        defer std.heap.page_allocator.free(server_salt);
         @memcpy(&result.server_master_salt, server_salt[0..14]);
 
         // 根据角色交换密钥
@@ -157,7 +161,7 @@ pub const KeyDerivation = struct {
     /// 使用 SHA-256 哈希证书
     pub fn computeFingerprint(certificate: []const u8) ![32]u8 {
         var fingerprint: [32]u8 = undefined;
-        crypto.hash.Sha256.hash(certificate, &fingerprint, .{});
+        crypto.hash.sha2.Sha256.hash(certificate, &fingerprint, .{});
         return fingerprint;
     }
 
@@ -178,4 +182,3 @@ pub const KeyDerivation = struct {
         OutOfMemory,
     };
 };
-

@@ -303,7 +303,7 @@ pub const Handshake = struct {
     /// 初始化 DTLS 握手
     pub fn init(allocator: std.mem.Allocator, record: *Record) !*Self {
         const self = try allocator.create(Self);
-        
+
         // 生成随机数
         var client_random: [32]u8 = undefined;
         crypto.random.bytes(&client_random);
@@ -422,11 +422,11 @@ pub const Handshake = struct {
 
         // 使用 SHA256 作为 PRF（简化实现）
         var hash: [32]u8 = undefined;
-        crypto.hash.Sha256.hash(&prf_input, &hash, .{});
+        crypto.hash.sha2.Sha256.hash(&prf_input, &hash, .{});
 
         // Master Secret 是 48 字节，重复哈希直到足够
         @memcpy(self.master_secret[0..32], &hash);
-        crypto.hash.Sha256.hash(&hash, &hash, .{});
+        crypto.hash.sha2.Sha256.hash(&hash, &hash, .{});
         @memcpy(self.master_secret[32..48], hash[0..16]);
     }
 
@@ -441,4 +441,3 @@ pub const Handshake = struct {
         OutOfMemory,
     };
 };
-
