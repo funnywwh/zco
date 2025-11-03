@@ -207,6 +207,12 @@ pub fn main() !void {
 - **运行**: `cd benchmarks && ./quick_test.sh`
 - **说明**: 提供完整的性能测试和对比分析
 
+### 6. WebRTC 模块 (`webrtc/`) 🚧 (开发中)
+- **功能**: 完整的 WebRTC 协议栈实现
+- **状态**: 阶段1已完成（UDP、SDP、信令服务器）
+- **运行**: `cd webrtc && zig build run`
+- **说明**: 支持音视频通话，从零实现所有协议
+
 ## 性能测试
 
 ### 协程性能测试
@@ -364,6 +370,93 @@ cd benchmarks
 - [x] 协程池管理（已实现）
 - [ ] WebSocket 客户端支持
 - [ ] 更多网络协议支持（HTTP/2, gRPC 等）
+
+## WebRTC 实现路线图
+
+ZCO 正在实现完整的 WebRTC 协议栈，支持音视频通话功能。这是一个长期项目，预计需要 20-30 周的开发时间。
+
+### 阶段 1: 基础网络和信令层 ✅ (已完成)
+- [x] UDP socket 支持扩展（基于 libxev 异步 IO）
+- [x] SDP 协议解析器和生成器（RFC 4566）
+- [x] WebSocket 信令服务器
+- [x] 房间管理和用户配对
+- [x] offer/answer/ICE candidate 消息路由
+
+### 阶段 2: ICE 和 NAT 穿透 🔄 (进行中)
+- [ ] STUN 协议实现（RFC 5389）
+- [ ] ICE Agent 实现
+  - [ ] Candidate 收集（Host/ServerReflexive/Relay）
+  - [ ] 优先级计算
+  - [ ] Connectivity Checks
+  - [ ] ICE 状态机
+- [ ] TURN 协议实现（RFC 5766，可选）
+
+### 阶段 3: DTLS 握手和安全
+- [ ] DTLS 记录层实现（RFC 6347）
+- [ ] DTLS 握手协议
+- [ ] 证书处理（自签名证书生成/验证）
+- [ ] Cipher Suite 支持（AES-128-GCM）
+- [ ] DTLS-SRTP 密钥派生
+
+### 阶段 4: SRTP 媒体加密
+- [ ] SRTP 上下文初始化
+- [ ] Master Key 和 Salt 派生
+- [ ] SRTP/SRTCP 包加密/解密
+- [ ] Replay Protection
+
+### 阶段 5: RTP/RTCP 媒体传输
+- [ ] RTP 包解析和构建
+- [ ] SSRC 管理和序列号处理
+- [ ] RTCP 协议实现（SR/RR/SDES/BYE）
+- [ ] 带宽和统计信息收集
+
+### 阶段 6: SCTP 数据通道
+- [ ] SCTP 关联建立
+- [ ] SCTP 块格式处理
+- [ ] 流控制和有序/无序传输
+- [ ] 数据通道封装（RFC 8832）
+
+### 阶段 7: 媒体处理
+- [ ] 音频编解码器接口
+- [ ] Opus 编码器/解码器（RFC 6716）
+- [ ] G.711 (PCMU/PCMA) 支持
+- [ ] 视频编解码器接口
+- [ ] VP8/VP9 基础解码器
+- [ ] MediaStreamTrack 抽象
+
+### 阶段 8: PeerConnection 整合
+- [ ] RTCPeerConnection 实现
+- [ ] createOffer/createAnswer
+- [ ] setLocalDescription/setRemoteDescription
+- [ ] addTrack/removeTrack
+- [ ] RTCRtpTransceiver 实现
+
+### 阶段 9: 测试和示例
+- [ ] 单元测试（每个模块）
+- [ ] 集成测试（端到端）
+- [ ] 浏览器兼容性测试
+- [ ] 音视频通话示例应用
+
+### 技术要点
+- **从零实现**: 所有协议均从零实现，不依赖外部库
+- **协程驱动**: 充分利用 ZCO 协程实现异步处理
+- **性能优化**: 零拷贝技术、环形缓冲区、协程池
+- **完整支持**: 信令、P2P、DTLS、SRTP、数据通道、媒体流
+
+### 项目结构
+```
+webrtc/
+├── signaling/  # 信令层（SDP、WebSocket服务器）
+├── ice/        # ICE 协议
+├── dtls/       # DTLS 协议
+├── srtp/       # SRTP 协议
+├── rtp/        # RTP/RTCP 协议
+├── sctp/       # SCTP 数据通道
+├── media/      # 媒体处理
+└── peer/       # PeerConnection
+```
+
+详细实现计划请查看 [`docs/WEBRTC_IMPLEMENTATION_PLAN.md`](docs/WEBRTC_IMPLEMENTATION_PLAN.md)
 
 ## 贡献指南
 
