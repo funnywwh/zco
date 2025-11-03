@@ -156,7 +156,6 @@ test "SCTP Stream processDataChunk wrong sequence" {
     // 手动创建序列号不匹配的 DATA 块
     const test_data = "Wrong sequence";
     const user_data = try allocator.alloc(u8, test_data.len);
-    defer allocator.free(user_data);
     @memcpy(user_data, test_data);
 
     var data_chunk = chunk.DataChunk{
@@ -166,11 +165,12 @@ test "SCTP Stream processDataChunk wrong sequence" {
         .stream_id = 1,
         .stream_sequence = 5, // 错误的序列号（期望是 0）
         .payload_protocol_id = 51,
-        .user_data = user_data,
+        .user_data = user_data, // user_data 的所有权转移给 data_chunk
     };
-    defer data_chunk.deinit(allocator);
+    defer data_chunk.deinit(allocator); // 这会释放 user_data
 
     // 处理 DATA 块（序列号不匹配，应该返回 false）
+    // 注意：processDataChunk 不会修改 data_chunk，但需要确保 user_data 在之后被正确释放
     const can_process = try s.processDataChunk(allocator, &data_chunk);
     try testing.expect(can_process == false);
     try testing.expect(s.expected_sequence == 0); // 序列号未更新

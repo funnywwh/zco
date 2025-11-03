@@ -213,7 +213,10 @@ pub const DataChannel = struct {
         };
         errdefer dcep_open.deinit(allocator);
 
-        return try dcep_open.encode(allocator);
+        const encoded = try dcep_open.encode(allocator);
+        dcep_open.deinit(allocator); // 释放临时分配的 label 和 protocol
+        
+        return encoded;
     }
 
     /// 处理接收到的 DCEP Open 消息

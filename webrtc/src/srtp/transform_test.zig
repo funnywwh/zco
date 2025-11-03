@@ -38,12 +38,13 @@ test "Transform protect and unprotect" {
     // 初始化序列号状态（确保 protect() 和 unprotect() 使用相同的初始状态）
     ctx.sequence_number = 0;
     ctx.rollover_counter = 0;
+    ctx.replay_window.reset(); // 重置重放窗口
 
     var transform = Transform.init(ctx);
 
-    // 创建 RTP 包
+    // 创建 RTP 包（使用序列号 0，避免重放窗口问题）
     const rtp_payload = "Hello, SRTP!";
-    const rtp_packet = try createRtpPacket(allocator, ssrc, 100, rtp_payload);
+    const rtp_packet = try createRtpPacket(allocator, ssrc, 0, rtp_payload);
     defer allocator.free(rtp_packet);
 
     // 加密（保护）
@@ -79,6 +80,7 @@ test "Transform protect and unprotect multiple packets" {
     // 初始化序列号状态
     ctx.sequence_number = 0;
     ctx.rollover_counter = 0;
+    ctx.replay_window.reset(); // 重置重放窗口
 
     var transform = Transform.init(ctx);
 
@@ -209,6 +211,7 @@ test "Transform protectRtcp and unprotectRtcp" {
     // 初始化序列号状态
     ctx.sequence_number = 0;
     ctx.rollover_counter = 0;
+    ctx.replay_window.reset(); // 重置重放窗口
 
     var transform = Transform.init(ctx);
 

@@ -114,7 +114,8 @@ test "SCTP Association state transitions" {
     try testing.expect(!assoc.isEstablished());
 
     // 发送 INIT
-    _ = try assoc.sendInit(allocator, 6000);
+    const init_data = try assoc.sendInit(allocator, 6000);
+    defer allocator.free(init_data);
     try testing.expect(assoc.getState() == .cookie_wait);
 }
 

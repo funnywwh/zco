@@ -88,6 +88,29 @@ pub const Transform = struct {
         // 提取序列号
         const sequence_number = std.mem.readInt(u16, rtp_header[2..4], .big);
 
+        // 首先检查重放保护（在认证前，使用当前上下文状态）
+        // 注意：checkReplay 内部会调用 update，但我们会在认证失败时恢复
+        const saved_replay_last = self.ctx.replay_window.last_sequence;
+        const saved_replay_bitmap = self.ctx.replay_window.bitmap;
+        if (self.ctx.replay_window.checkReplay(sequence_number)) {
+            // 恢复重放窗口状态（checkReplay 可能已经更新了窗口）
+            self.ctx.replay_window.last_sequence = saved_replay_last;
+            self.ctx.replay_window.bitmap = saved_replay_bitmap;
+            return error.ReplayDetected;
+        }
+        // checkReplay 返回 false 时已经更新了窗口，我们需要在认证失败时恢复
+        
+        // 临时保存当前序列号状态（用于在认证失败时恢复）
+        const saved_sequence = self.ctx.sequence_number;
+        const saved_roc = self.ctx.rollover_counter;
+        
+        // 更新序列号以生成正确的 IV（与 protect() 时的状态一致）
+        // 在 protect() 时，序列号是在加密前更新的
+        self.ctx.updateSequence(sequence_number);
+        
+        // 生成 IV（使用更新后的序列号）
+        const iv = self.ctx.generateIV();
+        
         // 构建认证数据：RTP 头 + 加密载荷（与 protect() 一致）
         var auth_data = std.ArrayList(u8).init(allocator);
         defer auth_data.deinit();
@@ -101,19 +124,15 @@ pub const Transform = struct {
             auth_data.items,
             auth_tag,
         )) {
+            // 认证失败，恢复所有状态
+            self.ctx.sequence_number = saved_sequence;
+            self.ctx.rollover_counter = saved_roc;
+            self.ctx.replay_window.last_sequence = saved_replay_last;
+            self.ctx.replay_window.bitmap = saved_replay_bitmap;
             return error.AuthenticationFailed;
         }
-
-        // 检查重放保护（在认证通过后）
-        if (self.ctx.replay_window.checkReplay(sequence_number)) {
-            return error.ReplayDetected;
-        }
-
-        // 更新上下文序列号（解密时需要更新以生成正确的 IV，与 protect() 时一致）
-        self.ctx.updateSequence(sequence_number);
-
-        // 生成 IV（使用更新后的序列号）
-        const iv = self.ctx.generateIV();
+        
+        // 认证通过，重放窗口已在 checkReplay 中更新，序列号状态也已更新
 
         // 解密载荷（AES-128-CTR 解密）
         const decrypted_payload = try srtp_crypto.Crypto.aes128CtrDecrypt(
