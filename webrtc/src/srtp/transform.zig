@@ -37,22 +37,22 @@ pub const Transform = struct {
         // 生成 IV（使用更新后的序列号）
         const iv = self.ctx.generateIV();
 
-        // 加密载荷（AES-128-GCM 返回加密数据 + tag）
-        const encrypted_with_tag = try srtp_crypto.Crypto.aes128Ctr(
+        // 加密载荷（AES-128-CTR 返回加密数据，无 tag）
+        const encrypted_payload = try srtp_crypto.Crypto.aes128Ctr(
             self.ctx.session_key,
             iv,
             rtp_payload,
             allocator,
         );
-        defer allocator.free(encrypted_with_tag);
+        defer allocator.free(encrypted_payload);
 
-        // 构建认证数据：RTP 头 + 加密载荷（包含整个 encrypted_with_tag，即加密数据+AES-GCM tag）
-        // 注意：由于使用 AES-GCM 作为占位，这里包含整个加密结果
+        // 构建认证数据：RTP 头 + 加密载荷
+        // SRTP 认证数据不包含认证标签本身
         var auth_data = std.ArrayList(u8).init(allocator);
         defer auth_data.deinit();
 
         try auth_data.appendSlice(rtp_header);
-        try auth_data.appendSlice(encrypted_with_tag);
+        try auth_data.appendSlice(encrypted_payload);
 
         // 生成认证标签（HMAC-SHA1，10 字节）
         const auth_tag = try srtp_crypto.Crypto.hmacSha1(
@@ -62,12 +62,12 @@ pub const Transform = struct {
         );
         defer allocator.free(auth_tag);
 
-        // 构建 SRTP 包：RTP 头 + 加密载荷（包含 AES-GCM tag） + SRTP 认证标签
-        const srtp_packet = try allocator.alloc(u8, rtp_header.len + encrypted_with_tag.len + 10);
+        // 构建 SRTP 包：RTP 头 + 加密载荷 + SRTP 认证标签
+        const srtp_packet = try allocator.alloc(u8, rtp_header.len + encrypted_payload.len + 10);
 
         @memcpy(srtp_packet[0..rtp_header.len], rtp_header);
-        @memcpy(srtp_packet[rtp_header.len .. rtp_header.len + encrypted_with_tag.len], encrypted_with_tag);
-        @memcpy(srtp_packet[rtp_header.len + encrypted_with_tag.len ..], auth_tag[0..10]);
+        @memcpy(srtp_packet[rtp_header.len .. rtp_header.len + encrypted_payload.len], encrypted_payload);
+        @memcpy(srtp_packet[rtp_header.len + encrypted_payload.len ..], auth_tag[0..10]);
 
         return srtp_packet;
     }
@@ -81,19 +81,19 @@ pub const Transform = struct {
 
         const rtp_header = srtp_packet[0..12];
         const auth_tag_len = 10; // SRTP 认证标签长度
-        const encrypted_with_tag_len = srtp_packet.len - 12 - auth_tag_len;
-        const encrypted_with_tag = srtp_packet[12 .. 12 + encrypted_with_tag_len];
+        const encrypted_payload_len = srtp_packet.len - 12 - auth_tag_len;
+        const encrypted_payload = srtp_packet[12 .. 12 + encrypted_payload_len];
         const auth_tag = srtp_packet[srtp_packet.len - auth_tag_len ..];
 
         // 提取序列号
         const sequence_number = std.mem.readInt(u16, rtp_header[2..4], .big);
 
-        // 构建认证数据：RTP 头 + 加密载荷（包含整个 encrypted_with_tag，与 protect() 一致）
+        // 构建认证数据：RTP 头 + 加密载荷（与 protect() 一致）
         var auth_data = std.ArrayList(u8).init(allocator);
         defer auth_data.deinit();
 
         try auth_data.appendSlice(rtp_header);
-        try auth_data.appendSlice(encrypted_with_tag);
+        try auth_data.appendSlice(encrypted_payload);
 
         // 验证认证标签
         if (!srtp_crypto.Crypto.verifyHmacSha1(
@@ -115,11 +115,11 @@ pub const Transform = struct {
         // 生成 IV（使用更新后的序列号）
         const iv = self.ctx.generateIV();
 
-        // 解密载荷（使用包含 AES-GCM tag 的完整加密数据）
+        // 解密载荷（AES-128-CTR 解密）
         const decrypted_payload = try srtp_crypto.Crypto.aes128CtrDecrypt(
             self.ctx.session_key,
             iv,
-            encrypted_with_tag,
+            encrypted_payload,
             allocator,
         );
         errdefer allocator.free(decrypted_payload);

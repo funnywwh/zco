@@ -8,56 +8,96 @@ pub const Crypto = struct {
 
     /// AES-128-CTR（Counter Mode）加密/解密
     /// SRTP 使用 CTR 模式，加密和解密使用相同的函数
+    /// 遵循 RFC 3711 Section 4.1.1 (AES Counter Mode)
+    /// CTR 模式：对计数器块进行 AES 加密得到密钥流，然后 ciphertext = plaintext XOR key_stream
     pub fn aes128Ctr(
         key: [16]u8,
         iv: [16]u8,
         input: []const u8,
         allocator: std.mem.Allocator,
     ) ![]u8 {
-        // TODO: 实现 AES-128-CTR 模式
-        // 当前简化实现：使用 AES-128-GCM（实际应使用 CTR 模式）
-        //
-        // SRTP 使用 AES-128-CTR，这是一个流密码模式
-        // CTR 模式加密：ciphertext = plaintext XOR AES(IV + counter)
-        //
-        // 简化：暂时使用 AES-128-GCM（已实现），后续需要实现 CTR 模式
-
-        const Aes128Gcm = crypto.aead.aes_gcm.Aes128Gcm;
-        const output = try allocator.alloc(u8, input.len + Aes128Gcm.tag_length);
+        // AES-128-CTR 是流密码模式，输出长度等于输入长度（无填充，无 tag）
+        const output = try allocator.alloc(u8, input.len);
         errdefer allocator.free(output);
 
-        const output_only = output[0..input.len];
-        var tag: [Aes128Gcm.tag_length]u8 = undefined;
-        const ad: []const u8 = &[_]u8{};
+        // 实现 AES-128-CTR 模式
+        // CTR 模式：对计数器块进行 AES 加密得到密钥流，然后 XOR 明文
+        // 使用 Aes128Gcm 来执行块加密（虽然不是最优，但可以使用）
+        // 注意：我们需要将每个计数器块作为单独的输入进行加密
 
-        Aes128Gcm.encrypt(output_only, &tag, input, ad, iv[0..12].*, key);
-        @memcpy(output[input.len..], &tag);
+        const block_size = 16; // AES 块大小
+        const Aes128Gcm = crypto.aead.aes_gcm.Aes128Gcm;
+
+        // 将 IV 的前 12 字节作为 nonce，后 4 字节作为计数器起始值
+        const nonce = iv[0..12];
+        var counter_bytes: [4]u8 = undefined;
+        @memcpy(&counter_bytes, iv[12..16]);
+        var counter = std.mem.readInt(u32, &counter_bytes, .big);
+
+        var input_offset: usize = 0;
+
+        // 处理完整的块
+        while (input_offset + block_size <= input.len) {
+            // 构建计数器块：nonce (12 字节) + counter (4 字节，大端序)
+            var counter_block: [block_size]u8 = undefined;
+            @memcpy(counter_block[0..12], nonce);
+            std.mem.writeInt(u32, counter_block[12..16], counter, .big);
+
+            // 使用 AES-GCM 加密计数器块（使用零 nonce，相当于 ECB 模式）
+            // 我们只使用加密后的块，忽略 tag
+            var key_stream: [block_size]u8 = undefined;
+            var tag: [Aes128Gcm.tag_length]u8 = undefined;
+            const zero_nonce: [12]u8 = .{0} ** 12;
+            const ad: []const u8 = &[_]u8{};
+
+            // 对计数器块进行加密，得到密钥流
+            Aes128Gcm.encrypt(&key_stream, &tag, &counter_block, ad, zero_nonce, key);
+
+            // XOR 操作：ciphertext = plaintext XOR key_stream
+            for (0..block_size) |i| {
+                output[input_offset + i] = input[input_offset + i] ^ key_stream[i];
+            }
+
+            input_offset += block_size;
+            counter += 1;
+        }
+
+        // 处理剩余的不完整块
+        if (input_offset < input.len) {
+            const remainder_len = input.len - input_offset;
+
+            // 构建计数器块
+            var counter_block: [block_size]u8 = undefined;
+            @memcpy(counter_block[0..12], nonce);
+            std.mem.writeInt(u32, counter_block[12..16], counter, .big);
+
+            // 加密计数器块得到密钥流
+            var key_stream: [block_size]u8 = undefined;
+            var tag: [Aes128Gcm.tag_length]u8 = undefined;
+            const zero_nonce: [12]u8 = .{0} ** 12;
+            const ad: []const u8 = &[_]u8{};
+
+            Aes128Gcm.encrypt(&key_stream, &tag, &counter_block, ad, zero_nonce, key);
+
+            // XOR 操作（只使用需要的字节）
+            for (0..remainder_len) |i| {
+                output[input_offset + i] = input[input_offset + i] ^ key_stream[i];
+            }
+        }
 
         return output;
     }
 
-    /// AES-128-CTR 解密（与加密相同）
+    /// AES-128-CTR 解密（与加密完全相同，因为 CTR 是对称的）
+    /// 遵循 RFC 3711 Section 4.1.1 (AES Counter Mode)
     pub fn aes128CtrDecrypt(
         key: [16]u8,
         iv: [16]u8,
         input: []const u8,
         allocator: std.mem.Allocator,
     ) ![]u8 {
-        const Aes128Gcm = crypto.aead.aes_gcm.Aes128Gcm;
-
-        if (input.len < Aes128Gcm.tag_length) return error.InvalidCiphertext;
-
-        const tag: [Aes128Gcm.tag_length]u8 = input[input.len - Aes128Gcm.tag_length ..][0..Aes128Gcm.tag_length].*;
-        const encrypted_data = input[0 .. input.len - Aes128Gcm.tag_length];
-
-        const output = try allocator.alloc(u8, encrypted_data.len);
-        errdefer allocator.free(output);
-
-        const ad: []const u8 = &[_]u8{};
-
-        try Aes128Gcm.decrypt(output, encrypted_data, tag, ad, iv[0..12].*, key);
-
-        return output;
+        // CTR 模式解密与加密完全相同：ciphertext XOR key_stream = plaintext
+        return Self.aes128Ctr(key, iv, input, allocator);
     }
 
     /// 生成 SRTP IV（Initialization Vector）

@@ -116,8 +116,8 @@ test "Crypto aes128Ctr encrypt and decrypt" {
     const ciphertext = try Crypto.aes128Ctr(key, iv, plaintext, allocator);
     defer allocator.free(ciphertext);
 
-    // 密文应该比明文长（包含 tag）
-    try testing.expect(ciphertext.len > plaintext.len);
+    // CTR 模式：密文长度等于明文长度（无填充，无 tag）
+    try testing.expect(ciphertext.len == plaintext.len);
 
     // 解密
     const decrypted = try Crypto.aes128CtrDecrypt(key, iv, ciphertext, allocator);
@@ -127,7 +127,7 @@ test "Crypto aes128Ctr encrypt and decrypt" {
     try testing.expect(std.mem.eql(u8, plaintext, decrypted));
 }
 
-test "Crypto aes128CtrDecrypt invalid ciphertext" {
+test "Crypto aes128CtrDecrypt any length" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -138,8 +138,11 @@ test "Crypto aes128CtrDecrypt invalid ciphertext" {
     var iv: [16]u8 = undefined;
     @memset(&iv, 0x24);
 
-    // 太短的密文应该失败
+    // CTR 模式可以处理任何长度的密文（包括短密文）
     const short_ciphertext = "short";
-    const result = Crypto.aes128CtrDecrypt(key, iv, short_ciphertext, allocator);
-    try testing.expectError(error.InvalidCiphertext, result);
+    const result = try Crypto.aes128CtrDecrypt(key, iv, short_ciphertext, allocator);
+    defer allocator.free(result);
+
+    // CTR 模式应该能解密任何长度的数据
+    try testing.expect(result.len == short_ciphertext.len);
 }
