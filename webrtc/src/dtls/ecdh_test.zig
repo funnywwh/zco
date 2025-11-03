@@ -24,10 +24,10 @@ test "ECDH computeSharedSecret" {
     const allocator = gpa.allocator();
 
     // 生成两个密钥对（模拟 Alice 和 Bob）
-    const alice = try Ecdh.generateKeyPair(allocator);
+    var alice = try Ecdh.generateKeyPair(allocator);
     defer alice.public.deinit(allocator);
 
-    const bob = try Ecdh.generateKeyPair(allocator);
+    var bob = try Ecdh.generateKeyPair(allocator);
     defer bob.public.deinit(allocator);
 
     // Alice 计算共享密钥：使用自己的私钥和 Bob 的公钥
@@ -46,7 +46,7 @@ test "ECDH PublicKey fromBytes and toBytes" {
     const allocator = gpa.allocator();
 
     // 生成密钥对
-    const keypair = try Ecdh.generateKeyPair(allocator);
+    var keypair = try Ecdh.generateKeyPair(allocator);
     defer keypair.public.deinit(allocator);
 
     // 导出公钥字节
@@ -71,7 +71,7 @@ test "ECDH PrivateKey fromBytes" {
     const allocator = gpa.allocator();
 
     // 生成密钥对
-    const keypair = try Ecdh.generateKeyPair(allocator);
+    var keypair = try Ecdh.generateKeyPair(allocator);
     defer keypair.public.deinit(allocator);
 
     // 从字节恢复私钥
@@ -93,7 +93,7 @@ test "ECDH validatePublicKey" {
     const allocator = gpa.allocator();
 
     // 生成密钥对
-    const keypair = try Ecdh.generateKeyPair(allocator);
+    var keypair = try Ecdh.generateKeyPair(allocator);
     defer keypair.public.deinit(allocator);
 
     // 验证公钥有效性
@@ -130,10 +130,10 @@ test "ECDH shared secret consistency" {
     const allocator = gpa.allocator();
 
     // 生成两个密钥对（模拟 Alice 和 Bob）
-    const alice = try Ecdh.generateKeyPair(allocator);
+    var alice = try Ecdh.generateKeyPair(allocator);
     defer alice.public.deinit(allocator);
 
-    const bob = try Ecdh.generateKeyPair(allocator);
+    var bob = try Ecdh.generateKeyPair(allocator);
     defer bob.public.deinit(allocator);
 
     // 计算共享密钥
