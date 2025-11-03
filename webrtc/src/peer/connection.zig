@@ -119,6 +119,8 @@ pub const PeerConnection = struct {
     // 内部组件
     ice_agent: ?*ice.agent.IceAgent = null,
     dtls_certificate: ?*dtls.Certificate = null, // DTLS 证书（用于指纹计算）
+    dtls_record: ?*dtls.Record = null, // DTLS 记录层
+    dtls_handshake: ?*dtls.Handshake = null, // DTLS 握手协议
     srtp_sender: ?*srtp.Transform = null,
     srtp_receiver: ?*srtp.Transform = null,
     sctp_association: ?*sctp.Association = null,
@@ -160,6 +162,14 @@ pub const PeerConnection = struct {
         self.dtls_certificate = try Self.initDtlsCertificate(allocator);
         errdefer if (self.dtls_certificate) |cert| cert.deinit();
 
+        // 初始化 DTLS 记录层
+        self.dtls_record = try dtls.Record.init(allocator, schedule);
+        errdefer if (self.dtls_record) |record| record.deinit();
+
+        // 初始化 DTLS 握手协议
+        self.dtls_handshake = try dtls.Handshake.init(allocator, self.dtls_record.?);
+        errdefer if (self.dtls_handshake) |handshake| handshake.deinit();
+
         return self;
     }
 
@@ -175,6 +185,14 @@ pub const PeerConnection = struct {
 
         if (self.srtp_sender) |transform| {
             transform.ctx.deinit();
+        }
+
+        if (self.dtls_handshake) |handshake| {
+            handshake.deinit();
+        }
+
+        if (self.dtls_record) |record| {
+            record.deinit();
         }
 
         if (self.dtls_certificate) |cert| {
@@ -655,7 +673,81 @@ pub const PeerConnection = struct {
                     std.log.warn("Failed to start connectivity checks: {}", .{err});
                     self.ice_connection_state = .failed;
                 };
+                
+                // TODO: 监听 ICE 连接状态变化，在连接成功时启动 DTLS 握手
+                // 当 ICE 连接状态变为 .connected 或 .completed 时，调用 startDtlsHandshake()
+                // 简化：在当前检查成功后假设连接建立（实际应通过回调或事件机制）
             }
+        }
+    }
+
+    /// 启动 DTLS 握手流程
+    /// 在 ICE 连接成功后被调用
+    pub fn startDtlsHandshake(self: *Self) !void {
+        if (self.dtls_handshake) |handshake| {
+            _ = self.dtls_record; // 确保 record 已初始化
+            // 确定 DTLS role：根据 SDP 中的 setup 属性
+            // setup=actpass (offer) -> 等待 answer 确定 role
+            // setup=active (answer) -> 客户端
+            // setup=passive (answer) -> 服务器
+            // 简化：根据 local/remote description 确定
+            const is_client = self.determineDtlsRole();
+            
+            if (is_client) {
+                // 客户端：发送 ClientHello
+                try self.sendClientHello(handshake);
+            } else {
+                // 服务器：等待 ClientHello
+                // TODO: 实现服务器端握手流程
+                std.log.info("DTLS server mode: waiting for ClientHello", .{});
+            }
+        }
+    }
+
+    /// 确定 DTLS role（客户端或服务器）
+    /// 返回 true 表示客户端，false 表示服务器
+    fn determineDtlsRole(self: *Self) bool {
+        // 简化逻辑：
+        // - 如果本地有 offer，则作为服务器（等待客户端连接）
+        // - 如果远程有 offer，则作为客户端（主动连接）
+        // 实际应该根据 SDP 中的 setup 属性确定
+        
+        // TODO: 从 SDP 中解析 setup 属性
+        // 当前简化：如果本地描述先设置，作为服务器；否则作为客户端
+        if (self.local_description != null and self.remote_description == null) {
+            return false; // 服务器
+        }
+        return true; // 客户端
+    }
+
+    /// 发送 ClientHello（DTLS 客户端）
+    fn sendClientHello(self: *Self, handshake: *dtls.Handshake) !void {
+        // 检查是否有可用的 UDP socket（从 ICE Agent 获取）
+        if (self.ice_agent) |agent| {
+            if (agent.udp) |udp| {
+                // 设置 DTLS Record 的 UDP socket
+                if (self.dtls_record) |record| {
+                    record.setUdp(udp);
+                    
+                    // 获取远程地址（从 ICE selected pair）
+                    if (agent.getSelectedPair()) |pair| {
+                        // 构建远程地址
+                        const remote_address = std.net.Address.initIp(pair.remote.address, pair.remote.port);
+                        
+                        // 发送 ClientHello
+                        try handshake.sendClientHello(remote_address);
+                        std.log.info("DTLS ClientHello sent to {}:{}", .{ pair.remote.address, pair.remote.port });
+                    } else {
+                        return error.NoSelectedPair;
+                    }
+                } else {
+                    return error.NoDtlsRecord;
+                }
+            } else {
+                return error.NoUdpSocket;
+            }
+        } else {
+            return error.NoIceAgent;
         }
     }
 
