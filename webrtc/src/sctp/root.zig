@@ -3,8 +3,8 @@ const std = @import("std");
 /// SCTP 模块导出
 pub const chunk = @import("./chunk.zig");
 pub const association = @import("./association.zig");
+pub const stream = @import("./stream.zig");
 // TODO: 实现其他模块
-// pub const stream = @import("./stream.zig");
 // pub const datachannel = @import("./datachannel.zig");
 
 // 导出常用类型
@@ -19,3 +19,6 @@ pub const CookieEchoChunk = chunk.CookieEchoChunk;
 pub const CookieAckChunk = chunk.CookieAckChunk;
 pub const Association = association.Association;
 pub const AssociationState = association.AssociationState;
+pub const Stream = stream.Stream;
+pub const StreamState = stream.StreamState;
+pub const StreamManager = stream.StreamManager;
