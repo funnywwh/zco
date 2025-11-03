@@ -109,24 +109,51 @@ pub const Record = struct {
         }
 
         /// 加密数据（AES-128-GCM）
-        /// TODO: 完善 AES-GCM 加密实现（需要修复 API 调用）
         pub fn encrypt(self: Cipher, plaintext: []const u8, allocator: std.mem.Allocator) ![]u8 {
-            _ = self; // 暂时未实现
-            // 简化：直接返回明文（实际应加密）
-            const ciphertext = try allocator.alloc(u8, plaintext.len + 16);
-            @memcpy(ciphertext[0..plaintext.len], plaintext);
-            @memset(ciphertext[plaintext.len..], 0); // 简化：tag 置零
+            // AES-128-GCM 加密
+            const Aes128Gcm = crypto.aead.aes_gcm.Aes128Gcm;
+            
+            // 分配密文空间（明文 + tag）
+            const ciphertext = try allocator.alloc(u8, plaintext.len + Aes128Gcm.tag_length);
+            errdefer allocator.free(ciphertext);
+            
+            // 密文部分（不包括 tag）
+            const ciphertext_only = ciphertext[0..plaintext.len];
+            // Tag 部分
+            var tag: [Aes128Gcm.tag_length]u8 = undefined;
+            
+            // 关联数据（AAD）：DTLS 记录头（简化：使用空数据）
+            const ad: []const u8 = &[_]u8{};
+            
+            // 执行加密
+            Aes128Gcm.encrypt(ciphertext_only, &tag, plaintext, ad, self.iv, self.key);
+            
+            // 将 tag 追加到密文后面
+            @memcpy(ciphertext[plaintext.len..], &tag);
+            
             return ciphertext;
         }
 
         /// 解密数据（AES-128-GCM）
-        /// TODO: 完善 AES-GCM 解密实现（需要修复 API 调用）
         pub fn decrypt(self: Cipher, ciphertext: []const u8, allocator: std.mem.Allocator) ![]u8 {
-            if (ciphertext.len < 16) return error.InvalidCiphertext;
-            _ = self; // 暂时未实现
-            // 简化：直接返回密文（实际应解密）
-            const plaintext = try allocator.alloc(u8, ciphertext.len - 16);
-            @memcpy(plaintext, ciphertext[0..plaintext.len]);
+            const Aes128Gcm = crypto.aead.aes_gcm.Aes128Gcm;
+            
+            if (ciphertext.len < Aes128Gcm.tag_length) return error.InvalidCiphertext;
+            
+            // 提取 tag 和密文
+            const tag: [Aes128Gcm.tag_length]u8 = ciphertext[ciphertext.len - Aes128Gcm.tag_length ..][0..Aes128Gcm.tag_length].*;
+            const encrypted_data = ciphertext[0..ciphertext.len - Aes128Gcm.tag_length];
+            
+            // 分配明文空间
+            const plaintext = try allocator.alloc(u8, encrypted_data.len);
+            errdefer allocator.free(plaintext);
+            
+            // 关联数据（AAD）：DTLS 记录头（简化：使用空数据）
+            const ad: []const u8 = &[_]u8{};
+            
+            // 执行解密
+            try Aes128Gcm.decrypt(plaintext, encrypted_data, tag, ad, self.iv, self.key);
+            
             return plaintext;
         }
     };
@@ -293,7 +320,7 @@ pub const Record = struct {
         return .{
             .content_type = header.content_type,
             .data = buffer[0..payload.len],
-            .from = result.from,
+            .from = result.addr,
         };
     }
 

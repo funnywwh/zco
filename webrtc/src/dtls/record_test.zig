@@ -65,28 +65,32 @@ test "DTLS ReplayWindow checkReplay future sequence" {
     try testing.expect(window.last_sequence == 150);
 }
 
-// TODO: AES-GCM 加密/解密测试需要修复 API 调用
-// test "DTLS Cipher encrypt and decrypt" {
-//     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-//     defer _ = gpa.deinit();
-//     const allocator = gpa.allocator();
-//
-//     const key = [_]u8{0} ** 16;
-//     const iv = [_]u8{0} ** 12;
-//     var cipher = Record.Cipher.init(key, iv);
-//
-//     const plaintext = "Hello, DTLS!";
-//     const ciphertext = try cipher.encrypt(plaintext, allocator);
-//     defer allocator.free(ciphertext);
-//
-//     // 密文应该比明文长（包含 tag）
-//     try testing.expect(ciphertext.len == plaintext.len + 16);
-//
-//     const decrypted = try cipher.decrypt(ciphertext, allocator);
-//     defer allocator.free(decrypted);
-//
-//     try testing.expectEqualStrings(plaintext, decrypted);
-// }
+test "DTLS Cipher encrypt and decrypt" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // 使用固定的密钥和 IV（仅用于测试）
+    var key: [16]u8 = undefined;
+    @memset(&key, 0x42);
+    
+    var iv: [12]u8 = undefined;
+    @memset(&iv, 0x24);
+    
+    var cipher = Record.Cipher.init(key, iv);
+
+    const plaintext = "Hello, DTLS!";
+    const ciphertext = try cipher.encrypt(plaintext, allocator);
+    defer allocator.free(ciphertext);
+
+    // 密文应该比明文长（包含 16 字节 tag）
+    try testing.expect(ciphertext.len == plaintext.len + 16);
+
+    const decrypted = try cipher.decrypt(ciphertext, allocator);
+    defer allocator.free(decrypted);
+
+    try testing.expectEqualStrings(plaintext, decrypted);
+}
 
 test "DTLS Cipher decrypt invalid ciphertext" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
