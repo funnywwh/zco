@@ -76,7 +76,30 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    message_tests.root_module.addImport("zco", zco);
+    message_tests.root_module.addImport("nets", nets);
+    message_tests.root_module.addImport("websocket", websocket);
     const run_message_tests = b.addRunArtifact(message_tests);
+
+    // STUN 测试
+    const stun_tests = b.addTest(.{
+        .root_source_file = b.path("src/ice/stun_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    stun_tests.root_module.addImport("zco", zco);
+    stun_tests.root_module.addImport("nets", nets);
+    const run_stun_tests = b.addRunArtifact(stun_tests);
+
+    // Candidate 测试
+    const candidate_tests = b.addTest(.{
+        .root_source_file = b.path("src/ice/candidate_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    candidate_tests.root_module.addImport("zco", zco);
+    candidate_tests.root_module.addImport("nets", nets);
+    const run_candidate_tests = b.addRunArtifact(candidate_tests);
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
@@ -84,4 +107,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_sdp_tests.step);
     test_step.dependOn(&run_message_tests.step);
+    test_step.dependOn(&run_stun_tests.step);
+    test_step.dependOn(&run_candidate_tests.step);
 }

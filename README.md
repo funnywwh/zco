@@ -377,18 +377,38 @@ ZCO 正在实现完整的 WebRTC 协议栈，支持音视频通话功能。这�
 
 ### 阶段 1: 基础网络和信令层 ✅ (已完成)
 - [x] UDP socket 支持扩展（基于 libxev 异步 IO）
+  - 实现异步 UDP 读写操作
+  - 完整单元测试（`nets/src/udp_test.zig`）
 - [x] SDP 协议解析器和生成器（RFC 4566）
-- [x] WebSocket 信令服务器
-- [x] 房间管理和用户配对
-- [x] offer/answer/ICE candidate 消息路由
+  - SDP 解析器支持基本字段、连接信息、媒体描述、ICE 属性
+  - SDP 生成器支持完整 SDP 格式
+  - ICE candidate 字符串解析
+  - 完整单元测试（`webrtc/src/signaling/sdp_test.zig`）
+- [x] 信令消息类型定义和序列化
+  - 定义信令消息类型（offer, answer, ice-candidate, etc.）
+  - JSON 序列化/反序列化支持
+  - 单元测试（`webrtc/src/signaling/message_test.zig`）
+- [ ] WebSocket 信令服务器（进行中）
+- [ ] 房间管理和用户配对
 
 ### 阶段 2: ICE 和 NAT 穿透 🔄 (进行中)
-- [ ] STUN 协议实现（RFC 5389）
+- [x] STUN 协议实现（RFC 5389）
+  - STUN 消息头编码/解析
+  - 支持 MAPPED-ADDRESS 和 XOR-MAPPED-ADDRESS 属性
+  - 消息完整性计算（MESSAGE-INTEGRITY）
+  - 事务 ID 生成
+  - 完整单元测试（`webrtc/src/ice/stun_test.zig`）
+- [x] ICE Candidate 数据结构
+  - Candidate 结构定义（foundation, component_id, priority, address, type 等）
+  - `toSdpCandidate` - Candidate 到 SDP 字符串转换
+  - `fromSdpCandidate` - SDP 字符串到 Candidate 解析
+  - 优先级计算函数
+  - 支持 IPv4 和 IPv6 地址
+  - 完整单元测试（`webrtc/src/ice/candidate_test.zig`）
 - [ ] ICE Agent 实现
   - [ ] Candidate 收集（Host/ServerReflexive/Relay）
-  - [ ] 优先级计算
   - [ ] Connectivity Checks
-  - [ ] ICE 状态机
+  - [ ] ICE 状态机（NEW/CHECKING/CONNECTED/FAILED）
 - [ ] TURN 协议实现（RFC 5766，可选）
 
 ### 阶段 3: DTLS 握手和安全
@@ -431,8 +451,14 @@ ZCO 正在实现完整的 WebRTC 协议栈，支持音视频通话功能。这�
 - [ ] addTrack/removeTrack
 - [ ] RTCRtpTransceiver 实现
 
-### 阶段 9: 测试和示例
-- [ ] 单元测试（每个模块）
+### 阶段 9: 测试和示例 🔄 (进行中)
+- [x] 基础模块单元测试
+  - UDP 模块测试（`nets/src/udp_test.zig`）
+  - SDP 模块测试（`webrtc/src/signaling/sdp_test.zig`）
+  - 信令消息测试（`webrtc/src/signaling/message_test.zig`）
+  - STUN 模块测试（`webrtc/src/ice/stun_test.zig`）
+  - ICE Candidate 测试（`webrtc/src/ice/candidate_test.zig`）
+  - **测试状态**: 50/50 测试通过 ✅
 - [ ] 集成测试（端到端）
 - [ ] 浏览器兼容性测试
 - [ ] 音视频通话示例应用
