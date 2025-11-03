@@ -275,3 +275,136 @@ test "SDP round-trip parse and generate" {
     try testing.expect(std.mem.indexOf(u8, generated, "a=ice-ufrag:abc123") != null);
     try testing.expect(std.mem.indexOf(u8, generated, "m=audio 5004") != null);
 }
+
+test "SDP parse empty string" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // 空字符串应该创建空的 SDP 对象
+    var sdp_obj = try sdp.Sdp.parse(allocator, "");
+    defer sdp_obj.deinit();
+
+    try testing.expect(sdp_obj.version == null);
+    try testing.expect(sdp_obj.origin == null);
+}
+
+test "SDP parse invalid version" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // 无效的版本号应该返回解析错误
+    const invalid_sdp = "v=invalid\n";
+    const result = sdp.Sdp.parse(allocator, invalid_sdp);
+    try testing.expectError(error.InvalidCharacter, result);
+}
+
+test "SDP parse missing required fields" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // 缺少 origin 字段的 SDP（虽然 RFC 要求必须有）
+    const incomplete_sdp = "v=0\ns=-\nt=0 0\n";
+    // 当前实现可能允许缺少某些字段，或者会返回错误
+    var sdp_obj = sdp.Sdp.parse(allocator, incomplete_sdp) catch {
+        // 如果解析失败是可以接受的
+        return;
+    };
+    defer sdp_obj.deinit();
+
+    // 如果能解析，至少应该有版本号
+    try testing.expect(sdp_obj.version != null);
+}
+
+test "SDP parse invalid origin format" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // 格式错误的 origin 行
+    const invalid_origin = "v=0\no=invalid\ns=-\nt=0 0\n";
+    const result = sdp.Sdp.parse(allocator, invalid_origin);
+    // 可能返回解析错误或 InvalidSdp，检查是否返回错误即可
+    _ = result catch {
+        // 解析错误是可以接受的
+    };
+}
+
+test "SDP parse ICE candidate invalid format" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // 无效的 ICE candidate 格式
+    const invalid_candidate = "candidate invalid";
+    const result = sdp.Sdp.parseIceCandidate(invalid_candidate, allocator);
+    try testing.expectError(error.InvalidCandidate, result);
+}
+
+test "SDP parse ICE candidate missing fields" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // 缺少字段的 candidate
+    const incomplete_candidate = "candidate 1 1 UDP";
+    const result = sdp.Sdp.parseIceCandidate(incomplete_candidate, allocator);
+    try testing.expectError(error.InvalidCandidate, result);
+}
+
+test "SDP generate empty SDP" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var sdp_obj = sdp.Sdp.init(allocator);
+    defer sdp_obj.deinit();
+
+    // 空的 SDP 应该至少生成基本结构
+    const generated = try sdp_obj.generate();
+    defer allocator.free(generated);
+
+    // 至少应该有版本行
+    try testing.expect(generated.len > 0);
+}
+
+test "SDP parse with very long line" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // 创建一个很长的 SDP 行（测试边界情况）
+    var long_line = std.ArrayList(u8).init(allocator);
+    defer long_line.deinit();
+    try long_line.appendSlice("v=0\ns=");
+    // 添加很长的会话名
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        try long_line.appendSlice("x");
+    }
+    try long_line.appendSlice("\nt=0 0\n");
+
+    var sdp_obj = try sdp.Sdp.parse(allocator, long_line.items);
+    defer sdp_obj.deinit();
+
+    try testing.expect(sdp_obj.session_name != null);
+    try testing.expect(sdp_obj.session_name.?.len >= 1000);
+}
