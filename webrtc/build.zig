@@ -186,6 +186,22 @@ pub fn build(b: *std.Build) void {
     });
     const run_srtp_transform_tests = b.addRunArtifact(srtp_transform_tests);
 
+    const rtp_packet_tests = b.addTest(.{
+        .root_source_file = b.path("src/rtp/packet_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    rtp_packet_tests.root_module.addImport("zco", zco);
+    const run_rtp_packet_tests = b.addRunArtifact(rtp_packet_tests);
+
+    const rtp_ssrc_tests = b.addTest(.{
+        .root_source_file = b.path("src/rtp/ssrc_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    rtp_ssrc_tests.root_module.addImport("zco", zco);
+    const run_rtp_ssrc_tests = b.addRunArtifact(rtp_ssrc_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -204,4 +220,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_srtp_crypto_tests.step);
     test_step.dependOn(&run_srtp_context_tests.step);
     test_step.dependOn(&run_srtp_transform_tests.step);
+    test_step.dependOn(&run_rtp_packet_tests.step);
+    test_step.dependOn(&run_rtp_ssrc_tests.step);
 }

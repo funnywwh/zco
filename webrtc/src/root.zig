@@ -18,4 +18,5 @@ pub const Stun = ice.stun.Stun;
 pub const Candidate = ice.candidate.Candidate;
 pub const IceAgent = ice.agent.IceAgent;
 pub const Turn = ice.turn.Turn;
+pub const Packet = rtp.packet.Packet;
 // pub const PeerConnection = peer.connection.PeerConnection;
