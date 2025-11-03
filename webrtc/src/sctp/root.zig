@@ -4,8 +4,7 @@ const std = @import("std");
 pub const chunk = @import("./chunk.zig");
 pub const association = @import("./association.zig");
 pub const stream = @import("./stream.zig");
-// TODO: 实现其他模块
-// pub const datachannel = @import("./datachannel.zig");
+pub const datachannel = @import("./datachannel.zig");
 
 // 导出常用类型
 pub const CommonHeader = chunk.CommonHeader;
@@ -22,3 +21,9 @@ pub const AssociationState = association.AssociationState;
 pub const Stream = stream.Stream;
 pub const StreamState = stream.StreamState;
 pub const StreamManager = stream.StreamManager;
+pub const DataChannel = datachannel.DataChannel;
+pub const DataChannelState = datachannel.DataChannelState;
+pub const DataChannelProtocol = datachannel.DataChannelProtocol;
+pub const ChannelType = datachannel.ChannelType;
+pub const DcepOpen = datachannel.DcepOpen;
+pub const DcepAck = datachannel.DcepAck;
