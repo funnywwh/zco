@@ -157,6 +157,35 @@ pub fn build(b: *std.Build) void {
     });
     const run_ecdh_tests = b.addRunArtifact(ecdh_tests);
 
+    // SRTP 测试
+    const srtp_replay_tests = b.addTest(.{
+        .root_source_file = b.path("src/srtp/replay_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_srtp_replay_tests = b.addRunArtifact(srtp_replay_tests);
+
+    const srtp_crypto_tests = b.addTest(.{
+        .root_source_file = b.path("src/srtp/crypto_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_srtp_crypto_tests = b.addRunArtifact(srtp_crypto_tests);
+
+    const srtp_context_tests = b.addTest(.{
+        .root_source_file = b.path("src/srtp/context_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_srtp_context_tests = b.addRunArtifact(srtp_context_tests);
+
+    const srtp_transform_tests = b.addTest(.{
+        .root_source_file = b.path("src/srtp/transform_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_srtp_transform_tests = b.addRunArtifact(srtp_transform_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -171,4 +200,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_key_derivation_tests.step);
     test_step.dependOn(&run_handshake_tests.step);
     test_step.dependOn(&run_ecdh_tests.step);
+    test_step.dependOn(&run_srtp_replay_tests.step);
+    test_step.dependOn(&run_srtp_crypto_tests.step);
+    test_step.dependOn(&run_srtp_context_tests.step);
+    test_step.dependOn(&run_srtp_transform_tests.step);
 }

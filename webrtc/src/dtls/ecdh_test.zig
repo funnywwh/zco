@@ -57,7 +57,7 @@ test "ECDH PublicKey fromBytes and toBytes" {
     try testing.expect(public_bytes.len == 64);
 
     // 从字节恢复公钥
-    const restored_public = try Ecdh.PublicKey.fromBytes(allocator, public_bytes);
+    var restored_public = try Ecdh.PublicKey.fromBytes(allocator, public_bytes);
     defer restored_public.deinit(allocator);
 
     // 验证坐标相同
@@ -143,4 +143,3 @@ test "ECDH shared secret consistency" {
     // 验证共享密钥相同
     try testing.expect(std.mem.eql(u8, &shared1.secret, &shared2.secret));
 }
-
