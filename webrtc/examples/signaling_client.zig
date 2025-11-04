@@ -128,7 +128,8 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
 
     // 创建 offer
     const offer = try pc.createOffer(schedule.allocator);
-    defer offer.deinit();
+    // 注意：offer 会被 setLocalDescription 接管，不需要手动 deinit
+    // setLocalDescription 会负责释放旧的描述（如果有）
     const offer_sdp = try offer.generate();
 
     try pc.setLocalDescription(offer);
@@ -412,7 +413,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
 
                     // 创建 answer
                     const answer = try pc.createAnswer(schedule.allocator);
-                    defer answer.deinit();
+                    // 注意：answer 会被 setLocalDescription 接管，不需要手动 deinit
                     const answer_sdp = try answer.generate();
                     defer schedule.allocator.free(answer_sdp);
 
