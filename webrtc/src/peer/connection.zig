@@ -784,12 +784,15 @@ pub const PeerConnection = struct {
             if (is_client) {
                 // 客户端：发送 ClientHello
                 try self.sendClientHello(handshake);
+                std.log.info("PeerConnection: 已发送 DTLS ClientHello，启动客户端握手协程", .{});
 
-                // 注意：客户端握手流程需要：
+                // 启动协程处理客户端握手流程
                 // 1. 发送 ClientHello（已完成）
                 // 2. 接收 ServerHello、Certificate、ServerHelloDone
                 // 3. 发送 ClientKeyExchange、ChangeCipherSpec、Finished
-                // 实际应该在异步环境中处理这些步骤
+                _ = self.schedule.go(handleClientHandshake, .{self}) catch |err| {
+                    std.log.warn("Failed to start client handshake coroutine: {}", .{err});
+                };
             } else {
                 // 服务器：处理服务器端握手流程
                 // 设置证书（从 PeerConnection 的证书中获取）
@@ -808,17 +811,14 @@ pub const PeerConnection = struct {
                         if (self.dtls_record) |record| {
                             if (agent.udp) |udp| {
                                 record.setUdp(udp);
-                                // 处理服务器端握手流程（接收 ClientHello 并发送 ServerHello 等）
-                                try handshake.processServerHandshake(remote_address);
-
-                                // 完成服务器端握手（接收 ClientKeyExchange、ChangeCipherSpec、Finished 并发送响应）
-                                // 注意：这是阻塞操作，实际应该在协程中处理
-                                handshake.completeServerHandshake(remote_address) catch |err| {
-                                    std.log.warn("Failed to complete server handshake: {}", .{err});
-                                    // 继续执行，不中断流程
+                                std.log.info("PeerConnection: 启动服务器端握手协程", .{});
+                                
+                                // 启动协程处理服务器端握手流程
+                                // 1. 接收 ClientHello 并发送 ServerHello、Certificate、ServerHelloDone
+                                // 2. 接收 ClientKeyExchange、ChangeCipherSpec、Finished 并发送响应
+                                _ = self.schedule.go(handleServerHandshake, .{ self, remote_address }) catch |err| {
+                                    std.log.warn("Failed to start server handshake coroutine: {}", .{err});
                                 };
-
-                                std.log.info("DTLS server handshake completed", .{});
                             } else {
                                 return error.NoUdpSocket;
                             }
@@ -1044,6 +1044,159 @@ pub const PeerConnection = struct {
         } else {
             return error.NoIceAgent;
         }
+    }
+
+    /// 处理客户端 DTLS 握手（协程函数）
+    fn handleClientHandshake(self: *Self) !void {
+        const current_co = try self.schedule.getCurrentCo();
+        const handshake = self.dtls_handshake orelse return error.NoDtlsHandshake;
+        const record = self.dtls_record orelse return error.NoDtlsRecord;
+        
+        // 获取远程地址
+        const agent = self.ice_agent orelse return error.NoIceAgent;
+        const pair = agent.getSelectedPair() orelse return error.NoSelectedPair;
+        const remote_address = pair.remote.address;
+        
+        std.log.info("PeerConnection.handleClientHandshake: 开始处理客户端握手", .{});
+        
+        // 步骤 1: 接收 ServerHello
+        std.log.info("PeerConnection.handleClientHandshake: 等待接收 ServerHello...", .{});
+        const max_wait: u64 = 10 * std.time.ns_per_s; // 最多等待 10 秒
+        const check_interval: u64 = 100 * std.time.ns_per_ms; // 每 100ms 检查一次
+        var waited: u64 = 0;
+        var server_hello_received = false;
+        
+        while (waited < max_wait and !server_hello_received) {
+            // 尝试接收握手消息
+            var buffer: [2048]u8 = undefined;
+            const result = record.recv(&buffer) catch |err| {
+                // 如果没有数据，等待一段时间后重试
+                // 注意：UDP recvFrom 可能不会立即返回，需要等待
+                std.log.debug("PeerConnection.handleClientHandshake: 接收失败或暂无数据: {}", .{err});
+                try current_co.Sleep(check_interval);
+                waited += check_interval;
+                continue;
+            };
+            
+            // 检查是否是握手消息
+            if (result.content_type == .handshake) {
+                if (result.data.len < 12) {
+                    std.log.warn("PeerConnection.handleClientHandshake: 握手消息太短", .{});
+                    continue;
+                }
+                
+                // 解析握手消息头
+                const HandshakeHeader = dtls.handshake.Handshake.HandshakeHeader;
+                const handshake_header = HandshakeHeader.parse(result.data) catch |err| {
+                    std.log.warn("PeerConnection.handleClientHandshake: 解析握手消息头失败: {}", .{err});
+                    continue;
+                };
+                
+                std.log.info("PeerConnection.handleClientHandshake: 收到握手消息类型: {}", .{handshake_header.msg_type});
+                
+                // 处理不同类型的握手消息
+                switch (handshake_header.msg_type) {
+                    .server_hello => {
+                        std.log.info("PeerConnection.handleClientHandshake: 收到 ServerHello", .{});
+                        try handshake.recvServerHello();
+                        server_hello_received = true;
+                    },
+                    .certificate => {
+                        std.log.info("PeerConnection.handleClientHandshake: 收到 Certificate", .{});
+                        // TODO: 处理 Certificate 消息
+                    },
+                    .server_hello_done => {
+                        std.log.info("PeerConnection.handleClientHandshake: 收到 ServerHelloDone", .{});
+                        // 如果已收到 ServerHello，可以继续后续步骤
+                        if (handshake.state == .server_hello_received) {
+                            try handshake.processClientHandshakeAfterServerHello();
+                            // 发送 ClientKeyExchange、ChangeCipherSpec、Finished
+                            try handshake.completeClientHandshake(remote_address);
+                            std.log.info("PeerConnection.handleClientHandshake: 客户端握手完成", .{});
+                            // 检查握手状态并派生 SRTP 密钥
+                            self.checkDtlsHandshakeState();
+                            return;
+                        }
+                    },
+                    else => {
+                        std.log.debug("PeerConnection.handleClientHandshake: 忽略握手消息类型: {}", .{handshake_header.msg_type});
+                    },
+                }
+            }
+        }
+        
+        if (!server_hello_received) {
+            std.log.warn("PeerConnection.handleClientHandshake: 等待 ServerHello 超时", .{});
+        }
+    }
+    
+    /// 处理服务器端 DTLS 握手（协程函数）
+    fn handleServerHandshake(self: *Self, remote_address: std.net.Address) !void {
+        const current_co = try self.schedule.getCurrentCo();
+        const handshake = self.dtls_handshake orelse return error.NoDtlsHandshake;
+        const record = self.dtls_record orelse return error.NoDtlsRecord;
+        
+        std.log.info("PeerConnection.handleServerHandshake: 开始处理服务器端握手", .{});
+        
+        // 步骤 1: 接收 ClientHello 并发送 ServerHello、Certificate、ServerHelloDone
+        try handshake.processServerHandshake(remote_address);
+        std.log.info("PeerConnection.handleServerHandshake: 已发送 ServerHello、Certificate、ServerHelloDone", .{});
+        
+        // 步骤 2: 接收 ClientKeyExchange、ChangeCipherSpec、Finished 并发送响应
+        const max_wait: u64 = 10 * std.time.ns_per_s;
+        const check_interval: u64 = 100 * std.time.ns_per_ms;
+        var waited: u64 = 0;
+        var handshake_complete = false;
+        
+        while (waited < max_wait and !handshake_complete) {
+            var buffer: [2048]u8 = undefined;
+            const result = record.recv(&buffer) catch |err| {
+                // 如果没有数据，等待一段时间后重试
+                std.log.debug("PeerConnection.handleServerHandshake: 接收失败或暂无数据: {}", .{err});
+                try current_co.Sleep(check_interval);
+                waited += check_interval;
+                continue;
+            };
+            
+            // 检查消息类型
+            if (result.content_type == .handshake or result.content_type == .change_cipher_spec) {
+                if (result.data.len < 12 and result.content_type == .handshake) {
+                    continue;
+                }
+                
+                if (result.content_type == .handshake) {
+                    const HandshakeHeader = dtls.handshake.Handshake.HandshakeHeader;
+                    const handshake_header = HandshakeHeader.parse(result.data) catch continue;
+                    std.log.info("PeerConnection.handleServerHandshake: 收到握手消息类型: {}", .{handshake_header.msg_type});
+                    
+                    switch (handshake_header.msg_type) {
+                        .client_key_exchange => {
+                            std.log.info("PeerConnection.handleServerHandshake: 收到 ClientKeyExchange", .{});
+                            try handshake.recvClientKeyExchange();
+                        },
+                        .finished => {
+                            std.log.info("PeerConnection.handleServerHandshake: 收到 Finished", .{});
+                            try handshake.recvFinished();
+                            handshake_complete = true;
+                        },
+                        else => {},
+                    }
+                } else if (result.content_type == .change_cipher_spec) {
+                    std.log.info("PeerConnection.handleServerHandshake: 收到 ChangeCipherSpec", .{});
+                }
+            }
+        }
+        
+        // 完成服务器端握手
+        if (handshake.state != .handshake_complete) {
+            handshake.completeServerHandshake(remote_address) catch |err| {
+                std.log.warn("PeerConnection.handleServerHandshake: 完成握手失败: {}", .{err});
+            };
+        }
+        
+        std.log.info("PeerConnection.handleServerHandshake: 服务器端握手完成", .{});
+        // 检查握手状态并派生 SRTP 密钥
+        self.checkDtlsHandshakeState();
     }
 
     /// 监控 ICE 连接状态（协程函数）

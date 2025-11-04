@@ -290,7 +290,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     const channel = try pc.createDataChannel("test-channel", null);
     defer channel.deinit();
     std.log.info("[Alice] 已创建数据通道", .{});
-    
+
     // 设置数据通道事件
     channel.setOnOpen(struct {
         fn callback(ch: *DataChannel) void {
