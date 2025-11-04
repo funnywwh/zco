@@ -87,7 +87,7 @@ pub const Candidate = struct {
         var fmt_buf = std.io.fixedBufferStream(&addr_buf);
         try self.address.format("", .{}, fmt_buf.writer());
         var formatted = fmt_buf.getWritten();
-        
+
         // 提取 IP 地址部分（去除端口）
         var addr_str: []const u8 = undefined;
         if (formatted[0] == '[') {
@@ -141,7 +141,7 @@ pub const Candidate = struct {
             var rel_fmt_buf = std.io.fixedBufferStream(&ip_str_buf);
             try rel_addr.format("", .{}, rel_fmt_buf.writer());
             var rel_formatted = rel_fmt_buf.getWritten();
-            
+
             // 提取 IP 地址部分（去除端口）
             var ip_str: []const u8 = undefined;
             if (rel_formatted[0] == '[') {
@@ -175,7 +175,7 @@ pub const Candidate = struct {
                     ip_str = rel_formatted;
                 }
             }
-            
+
             try writer.print(" raddr {s} rport {}", .{ ip_str, self.related_port orelse 0 });
         }
 

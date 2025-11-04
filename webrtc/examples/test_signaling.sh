@@ -61,13 +61,13 @@ echo ""
 echo "[2/4] 启动 Alice 客户端..."
 zig build run-client -- alice test-room > "$LOG_DIR/alice.log" 2>&1 &
 ALICE_PID=$!
-sleep 2
+sleep 3
 
 # 启动 Bob
 echo "[3/4] 启动 Bob 客户端..."
 zig build run-client -- bob test-room > "$LOG_DIR/bob.log" 2>&1 &
 BOB_PID=$!
-sleep 2
+sleep 3
 
 echo "✅ 客户端已启动"
 echo ""
