@@ -387,7 +387,25 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     const tcp = try nets.Tcp.init(schedule);
     defer tcp.deinit();
 
-    try tcp.connect(server_addr);
+    // 尝试连接，如果失败则等待后重试
+    const max_retries = 5;
+    var retry_count: u32 = 0;
+    while (retry_count < max_retries) {
+        tcp.connect(server_addr) catch |err| {
+            if (err == error.ConnectionRefused) {
+                retry_count += 1;
+                if (retry_count < max_retries) {
+                    std.log.info("[Bob] 连接被拒绝，等待后重试 ({}/{})...", .{ retry_count, max_retries });
+                    const current_co_bob = try schedule.getCurrentCo();
+                    try current_co_bob.Sleep(500 * std.time.ns_per_ms);
+                    continue;
+                }
+            }
+            std.log.err("[Bob] 连接到信令服务器失败: {}", .{err});
+            return err;
+        };
+        break;
+    }
     defer tcp.close();
 
     // 创建 WebSocket 连接
