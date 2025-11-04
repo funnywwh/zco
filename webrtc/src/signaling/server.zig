@@ -18,11 +18,16 @@ pub const SignalingServer = struct {
     const Room = struct {
         users: std.StringHashMap(*Client),
         allocator: std.mem.Allocator,
+        // 保存最后一个 offer 和 answer，用于新用户加入时转发
+        last_offer: ?[]const u8 = null,
+        last_answer: ?[]const u8 = null,
 
         pub fn init(allocator: std.mem.Allocator) Room {
             return .{
                 .users = std.StringHashMap(*Client).init(allocator),
                 .allocator = allocator,
+                .last_offer = null,
+                .last_answer = null,
             };
         }
 
@@ -34,6 +39,13 @@ pub const SignalingServer = struct {
                 self.allocator.destroy(entry.value_ptr.*);
             }
             self.users.deinit();
+            // 释放保存的消息
+            if (self.last_offer) |offer| {
+                self.allocator.free(offer);
+            }
+            if (self.last_answer) |answer| {
+                self.allocator.free(answer);
+            }
         }
 
         pub fn broadcast(self: *Room, sender_id: []const u8, msg: []const u8) !void {
