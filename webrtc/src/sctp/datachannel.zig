@@ -114,6 +114,8 @@ pub const DcepOpen = struct {
     pub const Error = error{
         InvalidDcepMessage,
         OutOfMemory,
+        ChannelNotOpen,
+        NotImplemented,
     };
 };
 
@@ -288,6 +290,8 @@ pub const DataChannel = struct {
     pub const Error = error{
         InvalidDcepMessage,
         OutOfMemory,
+        ChannelNotOpen,
+        NotImplemented,
     };
 };
 
