@@ -91,7 +91,7 @@ pub const Vp8Codec = struct {
 
     /// 获取编解码器信息
     fn getInfoImpl(context: *anyopaque) codec.Codec.CodecInfo {
-        const self: *Self = @ptrCast(@alignCast(context));
+        _ = context; // 占位符实现不需要使用 context
         return codec.Codec.CodecInfo{
             .name = "vp8",
             .mime_type = "video/vp8",
