@@ -211,9 +211,9 @@ pub const Record = struct {
 
     /// 清理资源
     pub fn deinit(self: *Self) void {
-        if (self.udp) |udp| {
-            udp.deinit();
-        }
+        // 注意：UDP 由外部管理（在 signaling_client 中创建），这里只清理引用
+        // 实际的清理应该由创建者负责
+        self.udp = null;
         self.allocator.destroy(self);
     }
 
