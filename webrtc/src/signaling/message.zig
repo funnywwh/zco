@@ -29,15 +29,14 @@ pub const MessageType = enum {
     }
 
     pub fn jsonParse(
-        allocator: std.mem.Allocator,
+        _: std.mem.Allocator,
         source: anytype,
-        options: json.ParseOptions,
+        _: json.ParseOptions,
     ) !MessageType {
         // 从 TokenStream 读取字符串 token
         const token = try source.next();
         const str_slice = switch (token) {
             .string => |s| s.slice,
-            .string_escaped => |s| s.slice,
             else => return error.InvalidEnumTag,
         };
         
