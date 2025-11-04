@@ -58,6 +58,16 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     const config = Configuration{};
     const pc = try PeerConnection.init(schedule.allocator, schedule, config);
     defer pc.deinit();
+    
+    // 跟踪创建的 UDP socket，以便在函数结束时清理
+    var created_udp: ?*nets.Udp = null;
+    defer if (created_udp) |udp| {
+        // 清理 UDP socket（在 pc.deinit 之前）
+        if (udp.xobj) |_| {
+            udp.close();
+        }
+        schedule.allocator.destroy(udp);
+    };
 
     // 连接到信令服务器
     const server_addr = try std.net.Address.parseIp4("127.0.0.1", 8080);
@@ -96,9 +106,11 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 设置 ICE Agent 的 UDP Socket
     if (pc.ice_agent) |agent| {
         if (agent.udp == null) {
-            agent.udp = try nets.Udp.init(schedule);
+            const udp = try nets.Udp.init(schedule);
+            created_udp = udp; // 跟踪创建的 UDP
+            agent.udp = udp;
             const bind_addr = try std.net.Address.parseIp4("127.0.0.1", 0);
-            try agent.udp.?.bind(bind_addr);
+            try udp.bind(bind_addr);
         }
         try agent.gatherHostCandidates();
         std.log.info("[Alice] 已收集 Host Candidates", .{});
@@ -288,6 +300,16 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     const config = Configuration{};
     const pc = try PeerConnection.init(schedule.allocator, schedule, config);
     defer pc.deinit();
+    
+    // 跟踪创建的 UDP socket，以便在函数结束时清理
+    var created_udp: ?*nets.Udp = null;
+    defer if (created_udp) |udp| {
+        // 清理 UDP socket（在 pc.deinit 之前）
+        if (udp.xobj) |_| {
+            udp.close();
+        }
+        schedule.allocator.destroy(udp);
+    };
 
     // 连接到信令服务器
     const server_addr = try std.net.Address.parseIp4("127.0.0.1", 8080);
@@ -325,9 +347,11 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 设置 ICE Agent 的 UDP Socket
     if (pc.ice_agent) |agent| {
         if (agent.udp == null) {
-            agent.udp = try nets.Udp.init(schedule);
+            const udp = try nets.Udp.init(schedule);
+            created_udp = udp; // 跟踪创建的 UDP
+            agent.udp = udp;
             const bind_addr = try std.net.Address.parseIp4("127.0.0.1", 0);
-            try agent.udp.?.bind(bind_addr);
+            try udp.bind(bind_addr);
         }
         try agent.gatherHostCandidates();
         std.log.info("[Bob] 已收集 Host Candidates", .{});
