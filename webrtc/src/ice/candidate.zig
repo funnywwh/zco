@@ -83,55 +83,42 @@ pub const Candidate = struct {
         };
 
         // 格式化地址字符串（只获取 IP 部分，不包括端口）
-        var addr_str: []const u8 = undefined;
         var addr_buf: [64]u8 = undefined;
+        var fmt_buf = std.io.fixedBufferStream(&addr_buf);
+        try self.address.format("", .{}, fmt_buf.writer());
+        var formatted = fmt_buf.getWritten();
         
-        // 直接从 address 结构体中提取 IP 地址，避免 format() 包含端口
-        if (self.address.any.family == std.posix.AF.INET) {
-            // IPv4 地址：直接格式化 IP 地址字节
-            const ip4 = self.address.in;
-            const addr_bytes = std.mem.asBytes(&ip4.addr);
-            addr_str = try std.fmt.bufPrint(&addr_buf, "{}.{}.{}.{}", .{
-                addr_bytes[0],
-                addr_bytes[1],
-                addr_bytes[2],
-                addr_bytes[3],
-            });
+        // 提取 IP 地址部分（去除端口）
+        var addr_str: []const u8 = undefined;
+        if (formatted[0] == '[') {
+            // IPv6 格式：[address]:port
+            if (std.mem.indexOfScalar(u8, formatted, ']')) |bracket_pos| {
+                addr_str = formatted[1..bracket_pos];
+            } else {
+                addr_str = formatted;
+            }
         } else {
-            // IPv6 或其他：使用 format 但需要处理可能的端口
-            var fmt_buf = std.io.fixedBufferStream(&addr_buf);
-            try self.address.format("", .{}, fmt_buf.writer());
-            var formatted = fmt_buf.getWritten();
-            
-            // 处理可能的端口格式
-            if (formatted[0] == '[') {
-                // 格式：[address]:port
-                if (std.mem.indexOfScalar(u8, formatted, ']')) |bracket_pos| {
-                    addr_str = formatted[1..bracket_pos];
+            // IPv4 格式：address:port 或 IPv6 格式：address:port
+            if (std.mem.lastIndexOfScalar(u8, formatted, ':')) |colon_pos| {
+                const before_colon = formatted[0..colon_pos];
+                // 检查是否是 IPv6 地址的一部分（包含多个冒号）
+                var is_ipv6 = false;
+                for (before_colon) |c| {
+                    if (c == ':') {
+                        is_ipv6 = true;
+                        break;
+                    }
+                }
+                // 如果只有一个冒号且在最后，是端口，提取 IP 部分
+                if (!is_ipv6) {
+                    addr_str = before_colon;
                 } else {
+                    // IPv6 地址本身包含冒号，保持原样
                     addr_str = formatted;
                 }
             } else {
-                // 格式：address:port 或 address
-                if (std.mem.lastIndexOfScalar(u8, formatted, ':')) |colon_pos| {
-                    // 检查是否是 IPv6 地址的一部分
-                    const before_colon = formatted[0..colon_pos];
-                    var is_ipv6 = false;
-                    for (before_colon) |c| {
-                        if (c == ':') {
-                            is_ipv6 = true;
-                            break;
-                        }
-                    }
-                    // 如果只有一个冒号且在最后，可能是端口，提取 IP 部分
-                    if (!is_ipv6) {
-                        addr_str = before_colon;
-                    } else {
-                        addr_str = formatted;
-                    }
-                } else {
-                    addr_str = formatted;
-                }
+                // 没有端口
+                addr_str = formatted;
             }
         }
 
