@@ -280,6 +280,17 @@ pub fn build(b: *std.Build) void {
     });
     const run_codec_tests = b.addRunArtifact(codec_tests);
 
+    // PeerConnection DataChannel 测试
+    const datachannel_tests = b.addTest(.{
+        .root_source_file = b.path("src/peer/connection_datachannel_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    datachannel_tests.root_module.addImport("zco", zco);
+    datachannel_tests.root_module.addImport("nets", nets);
+    datachannel_tests.root_module.addImport("websocket", websocket);
+    const run_datachannel_tests = b.addRunArtifact(datachannel_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -309,4 +320,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_sender_tests.step);
     test_step.dependOn(&run_receiver_tests.step);
     test_step.dependOn(&run_codec_tests.step);
+    test_step.dependOn(&run_datachannel_tests.step);
 }

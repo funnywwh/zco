@@ -1336,5 +1336,6 @@ pub const PeerConnection = struct {
         SrtpNotInitialized,
         NoSsrcManager,
         SenderNotFound,
+        NoSctpAssociation,
     };
 };
