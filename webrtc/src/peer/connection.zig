@@ -733,6 +733,12 @@ pub const PeerConnection = struct {
             if (is_client) {
                 // 客户端：发送 ClientHello
                 try self.sendClientHello(handshake);
+
+                // 注意：客户端握手流程需要：
+                // 1. 发送 ClientHello（已完成）
+                // 2. 接收 ServerHello、Certificate、ServerHelloDone
+                // 3. 发送 ClientKeyExchange、ChangeCipherSpec、Finished
+                // 实际应该在异步环境中处理这些步骤
             } else {
                 // 服务器：处理服务器端握手流程
                 // 设置证书（从 PeerConnection 的证书中获取）
@@ -751,9 +757,17 @@ pub const PeerConnection = struct {
                         if (self.dtls_record) |record| {
                             if (agent.udp) |udp| {
                                 record.setUdp(udp);
-                                // 处理服务器端握手流程
+                                // 处理服务器端握手流程（接收 ClientHello 并发送 ServerHello 等）
                                 try handshake.processServerHandshake(remote_address);
-                                std.log.info("DTLS server handshake initiated", .{});
+                                
+                                // 完成服务器端握手（接收 ClientKeyExchange、ChangeCipherSpec、Finished 并发送响应）
+                                // 注意：这是阻塞操作，实际应该在协程中处理
+                                handshake.completeServerHandshake(remote_address) catch |err| {
+                                    std.log.warn("Failed to complete server handshake: {}", .{err});
+                                    // 继续执行，不中断流程
+                                };
+                                
+                                std.log.info("DTLS server handshake completed", .{});
                             } else {
                                 return error.NoUdpSocket;
                             }

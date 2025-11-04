@@ -639,6 +639,203 @@ pub const Handshake = struct {
         // 这里简化实现，只完成到 ServerHelloDone
     }
 
+    /// 发送 ChangeCipherSpec（客户端/服务器端通用）
+    pub fn sendChangeCipherSpec(self: *Self, address: std.net.Address) !void {
+        // ChangeCipherSpec 不是握手消息，而是独立的记录类型
+        // 消息内容只有 1 字节：0x01
+        const change_cipher_spec_data = [_]u8{0x01};
+        try self.record.send(.change_cipher_spec, &change_cipher_spec_data, address);
+
+        // 更新状态（客户端和服务器端状态不同）
+        // 注意：ChangeCipherSpec 不是握手状态的一部分，这里只是标记已发送
+        _ = self.state; // 状态保持不变，或者可以通过其他方式跟踪
+    }
+
+    /// 发送 ClientKeyExchange（客户端）
+    pub fn sendClientKeyExchange(self: *Self, address: std.net.Address) !void {
+        if (self.state != .server_hello_done_received) {
+            return error.InvalidState;
+        }
+
+        // ClientKeyExchange 消息格式（简化实现）
+        // 实际应该包含加密的预主密钥（PreMasterSecret）
+        // 这里简化：发送空消息
+        const client_key_exchange_data = &[_]u8{};
+
+        // 构建握手消息头
+        const handshake_header = HandshakeHeader{
+            .msg_type = .client_key_exchange,
+            .length = 0,
+            .message_sequence = self.flight,
+            .fragment_offset = 0,
+            .fragment_length = 0,
+        };
+
+        const header_bytes = handshake_header.encode();
+
+        // 构建完整的握手消息
+        var handshake_msg = std.ArrayList(u8).init(self.allocator);
+        defer handshake_msg.deinit();
+
+        try handshake_msg.appendSlice(&header_bytes);
+        try handshake_msg.appendSlice(client_key_exchange_data);
+
+        // 通过记录层发送
+        try self.record.send(.handshake, handshake_msg.items, address);
+
+        self.state = .client_key_exchange_sent;
+        self.flight += 1;
+    }
+
+    /// 接收 ClientKeyExchange（服务器端）
+    pub fn recvClientKeyExchange(self: *Self) !void {
+        if (self.state != .server_hello_done_sent) {
+            return error.InvalidState;
+        }
+
+        var buffer: [2048]u8 = undefined;
+        const result = try self.record.recv(&buffer);
+
+        if (result.content_type != .handshake) {
+            return error.UnexpectedMessageType;
+        }
+
+        if (result.data.len < 12) return error.InvalidHandshakeMessage;
+
+        // 解析握手消息头
+        const handshake_header = try HandshakeHeader.parse(result.data);
+
+        if (handshake_header.msg_type != .client_key_exchange) {
+            return error.UnexpectedHandshakeType;
+        }
+
+        // 简化：不需要解析 ClientKeyExchange 内容
+        // 实际应该解密 PreMasterSecret 并计算 Master Secret
+
+        self.state = .client_key_exchange_received;
+    }
+
+    /// 发送 Finished（客户端/服务器端通用）
+    pub fn sendFinished(self: *Self, address: std.net.Address) !void {
+        // Finished 消息包含验证数据（VerifyData）
+        // VerifyData = PRF(master_secret, "client finished" || handshake_messages_hash)
+        // 简化实现：使用固定验证数据
+        var verify_data: [12]u8 = undefined;
+        crypto.random.bytes(&verify_data);
+
+        // 构建握手消息头
+        const handshake_header = HandshakeHeader{
+            .msg_type = .finished,
+            .length = @as(u24, @intCast(verify_data.len)),
+            .message_sequence = self.flight,
+            .fragment_offset = 0,
+            .fragment_length = @as(u24, @intCast(verify_data.len)),
+        };
+
+        const header_bytes = handshake_header.encode();
+
+        // 构建完整的握手消息
+        var handshake_msg = std.ArrayList(u8).init(self.allocator);
+        defer handshake_msg.deinit();
+
+        try handshake_msg.appendSlice(&header_bytes);
+        try handshake_msg.appendSlice(&verify_data);
+
+        // 通过记录层发送
+        try self.record.send(.handshake, handshake_msg.items, address);
+
+        self.flight += 1;
+
+        // 如果 Finished 已发送，标记为已发送
+        // 注意：握手完成应该在收到对方的 Finished 后完成
+        // 这里简化实现，直接标记为完成
+        self.state = .handshake_complete;
+    }
+
+    /// 接收 Finished（服务器端）
+    pub fn recvFinished(self: *Self) !void {
+        if (self.state != .client_key_exchange_received) {
+            return error.InvalidState;
+        }
+
+        var buffer: [2048]u8 = undefined;
+        const result = try self.record.recv(&buffer);
+
+        if (result.content_type != .handshake) {
+            return error.UnexpectedMessageType;
+        }
+
+        if (result.data.len < 12) return error.InvalidHandshakeMessage;
+
+        // 解析握手消息头
+        const handshake_header = try HandshakeHeader.parse(result.data);
+
+        if (handshake_header.msg_type != .finished) {
+            return error.UnexpectedHandshakeType;
+        }
+
+        // 简化：不需要验证 VerifyData
+        // 实际应该验证 VerifyData 是否正确
+
+        // 发送服务器端的 ChangeCipherSpec 和 Finished
+        // 注意：这里应该在调用此方法后由调用者发送
+        self.state = .handshake_complete;
+    }
+
+    /// 处理客户端握手流程（接收服务器消息后）
+    pub fn processClientHandshakeAfterServerHello(self: *Self) !void {
+        if (self.state != .server_hello_received) {
+            return error.InvalidState;
+        }
+
+        // 接收 Certificate（如果有）
+        // 接收 ServerHelloDone
+        // 简化：假设已经接收了 ServerHelloDone
+        self.state = .server_hello_done_received;
+
+        // 计算 Master Secret
+        try self.computeMasterSecret();
+    }
+
+    /// 完成客户端握手（发送 ClientKeyExchange、ChangeCipherSpec、Finished）
+    pub fn completeClientHandshake(self: *Self, address: std.net.Address) !void {
+        if (self.state != .server_hello_done_received) {
+            return error.InvalidState;
+        }
+
+        // 发送 ClientKeyExchange
+        try self.sendClientKeyExchange(address);
+
+        // 发送 ChangeCipherSpec
+        try self.sendChangeCipherSpec(address);
+
+        // 发送 Finished
+        try self.sendFinished(address);
+    }
+
+    /// 完成服务器端握手（发送 ChangeCipherSpec、Finished）
+    pub fn completeServerHandshake(self: *Self, address: std.net.Address) !void {
+        // 接收 ClientKeyExchange
+        try self.recvClientKeyExchange();
+
+        // 接收 ChangeCipherSpec
+        // 注意：ChangeCipherSpec 不是握手消息，需要单独处理
+        var buffer: [2048]u8 = undefined;
+        const result = try self.record.recv(&buffer);
+        if (result.content_type != .change_cipher_spec) {
+            return error.UnexpectedMessageType;
+        }
+
+        // 接收 Finished
+        try self.recvFinished();
+
+        // 发送 ChangeCipherSpec
+        try self.sendChangeCipherSpec(address);
+
+        // 发送 Finished
+        try self.sendFinished(address);
+    }
+
     pub const Error = error{
         InvalidState,
         InvalidHandshakeHeader,
