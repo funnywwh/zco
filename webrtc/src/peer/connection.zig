@@ -607,6 +607,7 @@ pub const PeerConnection = struct {
     pub fn setLocalDescription(self: *Self, description: *SessionDescription) !void {
         if (self.local_description) |desc| {
             desc.deinit();
+            self.allocator.destroy(desc);
         }
 
         self.local_description = description;
