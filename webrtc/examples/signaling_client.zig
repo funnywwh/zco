@@ -489,12 +489,23 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
             .offer => {
                 if (msg.sdp) |sdp| {
                     std.log.info("[Bob] 收到 offer，开始处理... (SDP 长度: {} 字节)", .{sdp.len});
-                    const remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
+                    const remote_sdp = webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp) catch |err| {
+                        std.log.err("[Bob] 解析 SDP 失败: {}", .{err});
+                        continue;
+                    };
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
-                    const remote_sdp_ptr = try schedule.allocator.create(webrtc.signaling.sdp.Sdp);
+                    const remote_sdp_ptr = schedule.allocator.create(webrtc.signaling.sdp.Sdp) catch |err| {
+                        std.log.err("[Bob] 分配 SDP 内存失败: {}", .{err});
+                        remote_sdp.deinit();
+                        continue;
+                    };
                     remote_sdp_ptr.* = remote_sdp;
-                    try pc.setRemoteDescription(remote_sdp_ptr);
+                    pc.setRemoteDescription(remote_sdp_ptr) catch |err| {
+                        std.log.err("[Bob] 设置远程 offer 失败: {}", .{err});
+                        schedule.allocator.destroy(remote_sdp_ptr);
+                        continue;
+                    };
                     std.log.info("[Bob] 已设置远程 offer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
 
                     // 创建 answer
