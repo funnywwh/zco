@@ -31,12 +31,17 @@ pub const Handshake = struct {
     /// DTLS 握手状态
     pub const HandshakeState = enum {
         initial, // 初始状态
-        client_hello_sent, // ClientHello 已发送
-        server_hello_received, // ServerHello 已接收
-        server_certificate_received, // Certificate 已接收
-        server_key_exchange_received, // ServerKeyExchange 已接收
-        server_hello_done_received, // ServerHelloDone 已接收
-        client_key_exchange_sent, // ClientKeyExchange 已发送
+        client_hello_sent, // ClientHello 已发送（客户端）
+        client_hello_received, // ClientHello 已接收（服务器）
+        server_hello_sent, // ServerHello 已发送（服务器）
+        server_hello_received, // ServerHello 已接收（客户端）
+        server_certificate_received, // Certificate 已接收（客户端）
+        server_certificate_sent, // Certificate 已发送（服务器）
+        server_key_exchange_received, // ServerKeyExchange 已接收（客户端）
+        server_hello_done_received, // ServerHelloDone 已接收（客户端）
+        server_hello_done_sent, // ServerHelloDone 已发送（服务器）
+        client_key_exchange_sent, // ClientKeyExchange 已发送（客户端）
+        client_key_exchange_received, // ClientKeyExchange 已接收（服务器）
         change_cipher_spec_sent, // ChangeCipherSpec 已发送
         finished_sent, // Finished 已发送
         handshake_complete, // 握手完成
@@ -320,6 +325,14 @@ pub const Handshake = struct {
         return self;
     }
 
+    /// 设置证书（用于服务器端）
+    pub fn setCertificate(self: *Self, cert: []const u8) !void {
+        if (self.certificate) |old_cert| {
+            self.allocator.free(old_cert);
+        }
+        self.certificate = try self.allocator.dupe(u8, cert);
+    }
+
     /// 清理资源
     pub fn deinit(self: *Self) void {
         self.allocator.free(self.session_id);
@@ -430,6 +443,202 @@ pub const Handshake = struct {
         @memcpy(self.master_secret[32..48], hash[0..16]);
     }
 
+    /// 接收 ClientHello（服务器端）
+    pub fn recvClientHello(self: *Self) !void {
+        if (self.state != .initial and self.state != .client_hello_received) {
+            return error.InvalidState;
+        }
+
+        // 注意：recv 是阻塞的，在服务器端应该使用异步方式
+        // 简化实现：使用同步接收（实际应该使用协程）
+        var buffer: [2048]u8 = undefined;
+        const result = try self.record.recv(&buffer);
+
+        if (result.content_type != .handshake) {
+            return error.UnexpectedMessageType;
+        }
+
+        if (result.data.len < 12) return error.InvalidHandshakeMessage;
+
+        // 解析握手消息头
+        const handshake_header = try HandshakeHeader.parse(result.data);
+
+        if (handshake_header.msg_type != .client_hello) {
+            return error.UnexpectedHandshakeType;
+        }
+
+        // 解析 ClientHello
+        const client_hello_data = result.data[12..];
+        var client_hello = try ClientHello.parse(client_hello_data, self.allocator);
+        defer client_hello.deinit(self.allocator);
+
+        // 保存客户端随机数
+        @memcpy(&self.client_random, &client_hello.random);
+
+        self.state = .client_hello_received;
+    }
+
+    /// 发送 ServerHello（服务器端）
+    pub fn sendServerHello(self: *Self, address: std.net.Address) !void {
+        if (self.state != .client_hello_received) {
+            return error.InvalidState;
+        }
+
+        // 生成服务器随机数
+        crypto.random.bytes(&self.server_random);
+
+        // 生成会话 ID（简化：使用空会话 ID）
+        self.allocator.free(self.session_id);
+        self.session_id = try self.allocator.dupe(u8, &[_]u8{});
+
+        // 构建 ServerHello
+        const server_hello = ServerHello{
+            .server_version = .dtls_1_2,
+            .random = self.server_random,
+            .session_id = self.session_id,
+            .cipher_suite = 0xc02b, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+            .compression_method = 0, // NULL compression
+        };
+
+        const server_hello_data = try server_hello.encode(self.allocator);
+        defer self.allocator.free(server_hello_data);
+
+        // 构建握手消息头
+        const handshake_header = HandshakeHeader{
+            .msg_type = .server_hello,
+            .length = @as(u24, @intCast(server_hello_data.len)),
+            .message_sequence = self.flight,
+            .fragment_offset = 0,
+            .fragment_length = @as(u24, @intCast(server_hello_data.len)),
+        };
+
+        const header_bytes = handshake_header.encode();
+
+        // 构建完整的握手消息
+        var handshake_msg = std.ArrayList(u8).init(self.allocator);
+        defer handshake_msg.deinit();
+
+        try handshake_msg.appendSlice(&header_bytes);
+        try handshake_msg.appendSlice(server_hello_data);
+
+        // 通过记录层发送
+        try self.record.send(.handshake, handshake_msg.items, address);
+
+        self.state = .server_hello_sent;
+        self.flight += 1;
+    }
+
+    /// 发送 Certificate（服务器端）
+    pub fn sendCertificate(self: *Self, address: std.net.Address) !void {
+        if (self.state != .server_hello_sent) {
+            return error.InvalidState;
+        }
+
+        if (self.certificate == null) {
+            return error.NoCertificate;
+        }
+
+        // 构建 Certificate 消息
+        // Certificate 格式：3字节证书列表长度 + 每个证书（3字节长度 + DER数据）
+        const cert_data = self.certificate.?;
+        var cert_msg = std.ArrayList(u8).init(self.allocator);
+        defer cert_msg.deinit();
+
+        // 证书列表长度（3字节）
+        const cert_list_len = @as(u24, @intCast(3 + cert_data.len)); // 3字节证书长度 + 证书数据
+        var len_bytes: [3]u8 = undefined;
+        len_bytes[0] = @as(u8, @truncate(cert_list_len >> 16));
+        len_bytes[1] = @as(u8, @truncate(cert_list_len >> 8));
+        len_bytes[2] = @as(u8, @truncate(cert_list_len));
+        try cert_msg.appendSlice(&len_bytes);
+
+        // 单个证书长度（3字节）
+        var cert_len_bytes: [3]u8 = undefined;
+        cert_len_bytes[0] = @as(u8, @truncate(cert_data.len >> 16));
+        cert_len_bytes[1] = @as(u8, @truncate(cert_data.len >> 8));
+        cert_len_bytes[2] = @as(u8, @truncate(cert_data.len));
+        try cert_msg.appendSlice(&cert_len_bytes);
+
+        // 证书数据
+        try cert_msg.appendSlice(cert_data);
+
+        // 构建握手消息头
+        const handshake_header = HandshakeHeader{
+            .msg_type = .certificate,
+            .length = @as(u24, @intCast(cert_msg.items.len)),
+            .message_sequence = self.flight,
+            .fragment_offset = 0,
+            .fragment_length = @as(u24, @intCast(cert_msg.items.len)),
+        };
+
+        const header_bytes = handshake_header.encode();
+
+        // 构建完整的握手消息
+        var handshake_msg = std.ArrayList(u8).init(self.allocator);
+        defer handshake_msg.deinit();
+
+        try handshake_msg.appendSlice(&header_bytes);
+        try handshake_msg.appendSlice(cert_msg.items);
+
+        // 通过记录层发送
+        try self.record.send(.handshake, handshake_msg.items, address);
+
+        self.state = .server_certificate_sent;
+        self.flight += 1;
+    }
+
+    /// 发送 ServerHelloDone（服务器端）
+    pub fn sendServerHelloDone(self: *Self, address: std.net.Address) !void {
+        if (self.state != .server_certificate_sent) {
+            return error.InvalidState;
+        }
+
+        // ServerHelloDone 消息为空（只有握手头）
+        const handshake_header = HandshakeHeader{
+            .msg_type = .server_hello_done,
+            .length = 0,
+            .message_sequence = self.flight,
+            .fragment_offset = 0,
+            .fragment_length = 0,
+        };
+
+        const header_bytes = handshake_header.encode();
+
+        // 通过记录层发送
+        try self.record.send(.handshake, &header_bytes, address);
+
+        self.state = .server_hello_done_sent;
+        self.flight += 1;
+    }
+
+    /// 处理服务器端握手流程（简化：一次性发送所有服务器消息）
+    pub fn processServerHandshake(self: *Self, address: std.net.Address) !void {
+        // 接收 ClientHello
+        try self.recvClientHello();
+
+        // 发送 ServerHello
+        try self.sendServerHello(address);
+
+        // 发送 Certificate（如果有）
+        if (self.certificate != null) {
+            try self.sendCertificate(address);
+        }
+
+        // 发送 ServerHelloDone
+        try self.sendServerHelloDone(address);
+
+        // 计算 Master Secret（简化实现）
+        try self.computeMasterSecret();
+
+        // 注意：实际流程中还需要：
+        // 1. 接收 ClientKeyExchange
+        // 2. 接收 ChangeCipherSpec
+        // 3. 接收 Finished
+        // 4. 发送 ChangeCipherSpec
+        // 5. 发送 Finished
+        // 这里简化实现，只完成到 ServerHelloDone
+    }
+
     pub const Error = error{
         InvalidState,
         InvalidHandshakeHeader,
@@ -439,5 +648,6 @@ pub const Handshake = struct {
         InvalidClientHello,
         InvalidServerHello,
         OutOfMemory,
+        NoCertificate,
     };
 };

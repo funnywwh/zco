@@ -136,6 +136,14 @@ pub const Certificate = struct {
         return try buffer.toOwnedSlice();
     }
 
+    /// 获取证书的 DER 数据
+    pub fn getDerData(self: Self, allocator: std.mem.Allocator) ![]u8 {
+        // 注意：当前实现中，der_data 实际上是 PEM 格式
+        // 简化实现：直接返回原始数据（实际应该转换为 DER）
+        // TODO: 实现 PEM 到 DER 的转换
+        return try allocator.dupe(u8, self.der_data);
+    }
+
     /// 验证证书有效性（简化实现）
     pub fn verify(self: Self) bool {
         // TODO: 完整的证书验证

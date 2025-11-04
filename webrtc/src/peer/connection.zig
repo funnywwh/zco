@@ -734,9 +734,38 @@ pub const PeerConnection = struct {
                 // 客户端：发送 ClientHello
                 try self.sendClientHello(handshake);
             } else {
-                // 服务器：等待 ClientHello
-                // TODO: 实现服务器端握手流程
-                std.log.info("DTLS server mode: waiting for ClientHello", .{});
+                // 服务器：处理服务器端握手流程
+                // 设置证书（从 PeerConnection 的证书中获取）
+                if (self.dtls_certificate) |cert| {
+                    // 获取证书的 DER 数据
+                    const cert_der = try cert.getDerData(self.allocator);
+                    defer self.allocator.free(cert_der);
+                    try handshake.setCertificate(cert_der);
+                }
+
+                // 获取远程地址（从 ICE Agent 的 selected pair）
+                if (self.ice_agent) |agent| {
+                    if (agent.getSelectedPair()) |pair| {
+                        const remote_address = std.net.Address.initIp(pair.remote.address, pair.remote.port);
+                        // 设置 DTLS Record 的 UDP socket
+                        if (self.dtls_record) |record| {
+                            if (agent.udp) |udp| {
+                                record.setUdp(udp);
+                                // 处理服务器端握手流程
+                                try handshake.processServerHandshake(remote_address);
+                                std.log.info("DTLS server handshake initiated", .{});
+                            } else {
+                                return error.NoUdpSocket;
+                            }
+                        } else {
+                            return error.NoDtlsRecord;
+                        }
+                    } else {
+                        return error.NoSelectedPair;
+                    }
+                } else {
+                    return error.NoIceAgent;
+                }
             }
         }
     }
@@ -770,7 +799,7 @@ pub const PeerConnection = struct {
             // 根据角色选择使用哪个密钥
             const sender_key = if (is_client) srtp_keys.client_master_key else srtp_keys.server_master_key;
             const sender_salt = if (is_client) srtp_keys.client_master_salt else srtp_keys.server_master_salt;
-            
+
             const sender_ctx = try srtp.Context.init(
                 self.allocator,
                 sender_key,
@@ -782,7 +811,7 @@ pub const PeerConnection = struct {
             // 创建 SRTP Context（接收方）
             const receiver_key = if (is_client) srtp_keys.server_master_key else srtp_keys.client_master_key;
             const receiver_salt = if (is_client) srtp_keys.server_master_salt else srtp_keys.client_master_salt;
-            
+
             const receiver_ctx = try srtp.Context.init(
                 self.allocator,
                 receiver_key,
