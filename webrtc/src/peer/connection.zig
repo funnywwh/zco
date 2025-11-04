@@ -166,7 +166,7 @@ pub const PeerConnection = struct {
         };
 
         // 初始化 ICE Agent
-        self.ice_agent = try ice.agent.IceAgent.init(allocator, schedule);
+        self.ice_agent = try ice.agent.IceAgent.init(allocator, schedule, config.ice_transport_policy);
         errdefer if (self.ice_agent) |agent| agent.deinit();
 
         // 初始化组件 ID（RTP 为 1）
