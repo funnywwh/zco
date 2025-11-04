@@ -393,13 +393,17 @@ pub const DataChannel = struct {
         // 触发状态变化事件
         switch (new_state) {
             .open => {
-                if (old_state != .open and self.onopen) |callback| {
-                    callback(self);
+                if (old_state != .open) {
+                    if (self.onopen) |callback| {
+                        callback(self);
+                    }
                 }
             },
             .closed => {
-                if (old_state != .closed and self.onclose) |callback| {
-                    callback(self);
+                if (old_state != .closed) {
+                    if (self.onclose) |callback| {
+                        callback(self);
+                    }
                 }
             },
             else => {},

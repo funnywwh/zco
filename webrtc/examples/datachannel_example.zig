@@ -34,11 +34,24 @@ pub fn main() !void {
         std.log.info("DTLS 握手状态已设置为完成（模拟）", .{});
     }
 
-    // 创建数据通道
+    // 创建数据通道（createDataChannel 会自动创建 SCTP Association，但需要 DTLS 握手完成）
     const channel = try pc.createDataChannel("test-channel", null);
     defer channel.deinit();
 
-    std.log.info("数据通道 'test-channel' 已创建 (Stream ID: {})", .{channel.stream_id});
+    std.log.info("数据通道 'test-channel' 已创建 (Stream ID: {}, 状态: {})", .{ channel.stream_id, channel.getState() });
+
+    // 确保数据通道关联了 SCTP Association
+    if (pc.sctp_association) |assoc| {
+        channel.setAssociation(assoc);
+        std.log.info("数据通道已关联 SCTP Association", .{});
+    } else {
+        std.log.warn("警告：SCTP Association 未创建", .{});
+    }
+
+    // 模拟数据通道打开（在实际应用中，这应该通过接收 DCEP ACK 完成）
+    // 在真实场景中，当接收到对方的 DCEP ACK 时，状态会自动变为 open
+    channel.setState(.open);
+    std.log.info("数据通道状态已设置为 open（模拟）", .{});
 
     // 设置数据通道事件回调
     setupDataChannelEvents(channel);
