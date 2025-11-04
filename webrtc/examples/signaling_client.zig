@@ -489,7 +489,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
             .offer => {
                 if (msg.sdp) |sdp| {
                     std.log.info("[Bob] 收到 offer，开始处理... (SDP 长度: {} 字节)", .{sdp.len});
-                    const remote_sdp = webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp) catch |err| {
+                    var remote_sdp = webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp) catch |err| {
                         std.log.err("[Bob] 解析 SDP 失败: {}", .{err});
                         continue;
                     };
