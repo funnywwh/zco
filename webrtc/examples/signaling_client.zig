@@ -139,7 +139,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     while (waited < max_wait_time and !bob_joined) {
         // 尝试读取消息
         const frame = ws.readMessage(buffer[0..]) catch |err| {
-            if (err == websocket.WebSocketError.ConnectionClosed) {
+            if (err == websocket.WebSocketError.ConnectionClosed or err == error.EOF) {
                 std.log.info("[Alice] WebSocket 连接已关闭（EOF）", .{});
                 break;
             } else {
@@ -240,7 +240,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     while (message_count < 10) {
         const frame = ws.readMessage(buffer[0..]) catch |err| {
             // 区分连接关闭和真正的错误
-            if (err == websocket.WebSocketError.ConnectionClosed) {
+            if (err == websocket.WebSocketError.ConnectionClosed or err == error.EOF) {
                 std.log.info("[Alice] WebSocket 连接已关闭（EOF）", .{});
             } else {
                 std.log.err("[Alice] 读取消息失败: {}", .{err});
@@ -547,7 +547,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     while (message_count < 20) { // 增加最大消息数
         const frame = ws.readMessage(buffer[0..]) catch |err| {
             // 区分连接关闭和真正的错误
-            if (err == websocket.WebSocketError.ConnectionClosed) {
+            if (err == websocket.WebSocketError.ConnectionClosed or err == error.EOF) {
                 std.log.info("[Bob] WebSocket 连接已关闭（EOF）", .{});
             } else {
                 std.log.err("[Bob] 读取消息失败: {}", .{err});
