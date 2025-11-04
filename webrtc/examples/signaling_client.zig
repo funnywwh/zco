@@ -163,7 +163,12 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     std.log.info("[Alice] 开始等待 answer 和 ICE candidates...", .{});
     while (message_count < 10) {
         const frame = ws.readMessage(buffer[0..]) catch |err| {
-            std.log.err("[Alice] 读取消息失败: {}", .{err});
+            // 区分连接关闭和真正的错误
+            if (err == websocket.WebSocketError.ConnectionClosed) {
+                std.log.info("[Alice] WebSocket 连接已关闭（EOF）", .{});
+            } else {
+                std.log.err("[Alice] 读取消息失败: {}", .{err});
+            }
             break;
         };
         defer if (frame.payload.len > buffer.len) ws.allocator.free(frame.payload);
@@ -436,7 +441,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
 
     while (message_count < 10) {
         const frame = ws.readMessage(buffer[0..]) catch |err| {
-            std.log.err("[Bob] 读取消息失败: {}", .{err});
+            // 区分连接关闭和真正的错误
+            if (err == websocket.WebSocketError.ConnectionClosed) {
+                std.log.info("[Bob] WebSocket 连接已关闭（EOF）", .{});
+            } else {
+                std.log.err("[Bob] 读取消息失败: {}", .{err});
+            }
             break;
         };
         defer if (frame.payload.len > buffer.len) ws.allocator.free(frame.payload);

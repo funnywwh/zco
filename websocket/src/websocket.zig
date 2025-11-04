@@ -31,6 +31,7 @@ pub const WebSocketError = error{
     BufferTooSmall,
     InvalidOpcode,
     InvalidMask,
+    ConnectionClosed, // 连接已关闭（EOF）
 };
 
 /// WebSocket服务器实现
@@ -245,8 +246,14 @@ pub const WebSocket = struct {
     fn readBytes(self: *Self, buffer: []u8, count: usize) !usize {
         var total_read: usize = 0;
         while (total_read < count) {
-            const n = try self.tcp.read(buffer[total_read..count]);
-            if (n == 0) return error.ProtocolError;
+            const n = self.tcp.read(buffer[total_read..count]) catch |err| {
+                // 如果读取失败，可能是连接关闭
+                return err;
+            };
+            if (n == 0) {
+                // EOF：连接已关闭
+                return error.ConnectionClosed;
+            }
             total_read += n;
         }
         return total_read;
