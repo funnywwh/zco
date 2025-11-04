@@ -129,10 +129,12 @@ pub const PeerConnection = struct {
     local_description: ?*SessionDescription = null,
     remote_description: ?*SessionDescription = null,
 
-    // 事件回调（TODO: 实现事件系统）
-    // onicecandidate: ?*const fn (*Self, *ice.Candidate) void = null,
-    // onconnectionstatechange: ?*const fn (*Self) void = null,
-    // onsignalingstatechange: ?*const fn (*Self) void = null,
+    // 事件回调
+    onicecandidate: ?*const fn (*Self, *ice.Candidate) void = null,
+    onconnectionstatechange: ?*const fn (*Self) void = null,
+    onsignalingstatechange: ?*const fn (*Self) void = null,
+    oniceconnectionstatechange: ?*const fn (*Self) void = null,
+    onicegatheringstatechange: ?*const fn (*Self) void = null,
 
     /// 初始化 RTCPeerConnection
     pub fn init(
@@ -561,6 +563,7 @@ pub const PeerConnection = struct {
         self.local_description = description;
 
         // 更新信令状态
+        const old_signaling_state = self.signaling_state;
         switch (self.signaling_state) {
             .stable => {
                 // TODO: 检查 description.type（需要添加 type 字段到 SessionDescription）
@@ -573,8 +576,23 @@ pub const PeerConnection = struct {
             else => {},
         }
 
+        // 触发信令状态变化事件
+        if (old_signaling_state != self.signaling_state) {
+            if (self.onsignalingstatechange) |callback| {
+                callback(self);
+            }
+        }
+
         // 更新 ICE 收集状态
+        const old_gathering_state = self.ice_gathering_state;
         self.ice_gathering_state = .gathering;
+
+        // 触发 ICE 收集状态变化事件
+        if (old_gathering_state != self.ice_gathering_state) {
+            if (self.onicegatheringstatechange) |callback| {
+                callback(self);
+            }
+        }
 
         // 触发 ICE candidate 收集
         if (self.ice_agent) |agent| {
@@ -609,6 +627,7 @@ pub const PeerConnection = struct {
         self.remote_description = description;
 
         // 更新信令状态
+        const old_signaling_state = self.signaling_state;
         switch (self.signaling_state) {
             .stable => {
                 // TODO: 检查 description.type
@@ -619,6 +638,13 @@ pub const PeerConnection = struct {
                 self.signaling_state = .stable;
             },
             else => {},
+        }
+
+        // 触发信令状态变化事件
+        if (old_signaling_state != self.signaling_state) {
+            if (self.onsignalingstatechange) |callback| {
+                callback(self);
+            }
         }
 
         // 解析远程 ICE candidates
@@ -665,7 +691,15 @@ pub const PeerConnection = struct {
             // 如果已有本地描述，可以开始连接检查
             if (self.local_description != null) {
                 // 更新 ICE 连接状态
+                const old_ice_state = self.ice_connection_state;
                 self.ice_connection_state = .checking;
+
+                // 触发 ICE 连接状态变化事件
+                if (old_ice_state != self.ice_connection_state) {
+                    if (self.oniceconnectionstatechange) |callback| {
+                        callback(self);
+                    }
+                }
 
                 // 注意：generateCandidatePairs 会在 addRemoteCandidate 时自动调用
                 // 所以如果所有远程 candidates 都已添加，pairs 应该已经生成
@@ -673,12 +707,13 @@ pub const PeerConnection = struct {
                 // 开始连接检查
                 agent.startConnectivityChecks() catch |err| {
                     std.log.warn("Failed to start connectivity checks: {}", .{err});
-                    self.ice_connection_state = .failed;
+                    self.updateIceConnectionState(.failed);
                 };
 
-                // TODO: 监听 ICE 连接状态变化，在连接成功时启动 DTLS 握手
-                // 当 ICE 连接状态变为 .connected 或 .completed 时，调用 startDtlsHandshake()
-                // 简化：在当前检查成功后假设连接建立（实际应通过回调或事件机制）
+                // 注意：ICE 连接状态变化是异步的
+                // 实际应用中应该通过轮询或回调机制监听 ICE Agent 状态变化
+                // 然后调用 updateIceConnectionState() 更新状态并触发事件
+                // 当前实现中，状态变化需要手动调用 updateIceConnectionState()
             }
         }
     }
@@ -878,8 +913,109 @@ pub const PeerConnection = struct {
     pub fn addIceCandidate(self: *Self, candidate: *ice.Candidate) !void {
         if (self.ice_agent) |agent| {
             try agent.addRemoteCandidate(candidate);
+
+            // 触发 onicecandidate 事件
+            if (self.onicecandidate) |callback| {
+                callback(self, candidate);
+            }
+
+            // 检查是否可以开始连接检查
+            if (self.local_description != null) {
+                // 检查 ICE 连接状态，如果还是 .new，更新为 .checking
+                if (self.ice_connection_state == .new) {
+                    const old_ice_state = self.ice_connection_state;
+                    self.ice_connection_state = .checking;
+
+                    // 触发 ICE 连接状态变化事件
+                    if (old_ice_state != self.ice_connection_state) {
+                        if (self.oniceconnectionstatechange) |callback| {
+                            callback(self);
+                        }
+                    }
+
+                    // 开始连接检查
+                    agent.startConnectivityChecks() catch |err| {
+                        std.log.warn("Failed to start connectivity checks: {}", .{err});
+                        self.updateIceConnectionState(.failed);
+                    };
+                }
+            }
         } else {
             return error.NoIceAgent;
+        }
+    }
+
+    /// 更新 ICE 连接状态（内部方法，由事件回调调用）
+    /// 当 ICE Agent 状态变化时调用此方法
+    pub fn updateIceConnectionState(self: *Self, new_state: IceConnectionState) void {
+        const old_state = self.ice_connection_state;
+        if (old_state != new_state) {
+            self.ice_connection_state = new_state;
+
+            // 触发 ICE 连接状态变化事件
+            if (self.oniceconnectionstatechange) |callback| {
+                callback(self);
+            }
+
+            // 如果连接成功，自动启动 DTLS 握手
+            if (new_state == .connected or new_state == .completed) {
+                self.startDtlsHandshake() catch |err| {
+                    std.log.warn("Failed to start DTLS handshake: {}", .{err});
+                };
+            }
+
+            // 更新连接状态
+            self.updateConnectionState();
+        }
+    }
+
+    /// 更新连接状态（基于 ICE 连接状态）
+    fn updateConnectionState(self: *Self) void {
+        const old_state = self.connection_state;
+        var new_state = self.connection_state;
+
+        switch (self.ice_connection_state) {
+            .new => new_state = .new,
+            .checking => new_state = .connecting,
+            .connected, .completed => new_state = .connected,
+            .failed => new_state = .failed,
+            .disconnected => new_state = .disconnected,
+            .closed => new_state = .closed,
+        }
+
+        if (old_state != new_state) {
+            self.connection_state = new_state;
+
+            // 触发连接状态变化事件
+            if (self.onconnectionstatechange) |callback| {
+                callback(self);
+            }
+
+            // 如果连接成功且 DTLS 握手已完成，派生 SRTP 密钥
+            if (new_state == .connected) {
+                if (self.dtls_handshake) |handshake| {
+                    if (handshake.state == .handshake_complete) {
+                        self.setupSrtp() catch |err| {
+                            std.log.warn("Failed to setup SRTP: {}", .{err});
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    /// 检查并更新 DTLS 握手状态
+    /// 应该在 DTLS 握手消息处理后被调用
+    pub fn checkDtlsHandshakeState(self: *Self) void {
+        if (self.dtls_handshake) |handshake| {
+            // 如果握手完成且连接已建立，派生 SRTP 密钥
+            if (handshake.state == .handshake_complete) {
+                if (self.connection_state == .connected) {
+                    self.setupSrtp() catch |err| {
+                        std.log.warn("Failed to setup SRTP: {}", .{err});
+                    };
+                }
+            }
         }
     }
 
