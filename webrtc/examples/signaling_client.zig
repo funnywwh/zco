@@ -71,15 +71,21 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     var ws = try websocket.WebSocket.fromTcp(tcp);
     defer ws.deinit();
 
-    try ws.handshake();
+    // 执行客户端握手
+    try ws.clientHandshake("/", "127.0.0.1:8080");
     std.log.info("[Alice] 已连接到信令服务器", .{});
 
     // 加入房间
     const user_id = "alice";
+    const room_id_dup = try schedule.allocator.dupe(u8, room_id);
+    defer schedule.allocator.free(room_id_dup);
+    const user_id_dup = try schedule.allocator.dupe(u8, user_id);
+    defer schedule.allocator.free(user_id_dup);
+    
     var join_msg = SignalingMessage{
         .type = .join,
-        .room_id = room_id,
-        .user_id = user_id,
+        .room_id = room_id_dup,
+        .user_id = user_id_dup,
     };
     defer join_msg.deinit(schedule.allocator);
 
@@ -113,19 +119,24 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     const offer = try pc.createOffer(schedule.allocator);
     defer offer.deinit();
     const offer_sdp = try offer.generate();
-    defer schedule.allocator.free(offer_sdp);
 
     try pc.setLocalDescription(offer);
     std.log.info("[Alice] 已创建并设置本地 offer", .{});
 
     // 发送 offer
+    // 注意：这些内存会被 offer_msg.deinit 释放，不需要手动释放
+    const offer_room_id_dup = try schedule.allocator.dupe(u8, room_id);
+    const offer_user_id_dup = try schedule.allocator.dupe(u8, user_id);
+    const offer_sdp_dup = try schedule.allocator.dupe(u8, offer_sdp);
+    
     var offer_msg = SignalingMessage{
         .type = .offer,
-        .room_id = room_id,
-        .user_id = user_id,
-        .sdp = offer_sdp,
+        .room_id = offer_room_id_dup,
+        .user_id = offer_user_id_dup,
+        .sdp = offer_sdp_dup,
     };
     defer offer_msg.deinit(schedule.allocator);
+    defer schedule.allocator.free(offer_sdp); // 释放原始 offer_sdp（由 generate() 返回）
 
     const offer_json = try offer_msg.toJson(schedule.allocator);
     defer schedule.allocator.free(offer_json);
@@ -286,7 +297,8 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     var ws = try websocket.WebSocket.fromTcp(tcp);
     defer ws.deinit();
 
-    try ws.handshake();
+    // 执行客户端握手
+    try ws.clientHandshake("/", "127.0.0.1:8080");
     std.log.info("[Bob] 已连接到信令服务器", .{});
 
     // 加入房间

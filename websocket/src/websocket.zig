@@ -165,6 +165,82 @@ pub const WebSocket = struct {
         self.upgraded = true;
     }
 
+    /// 执行WebSocket客户端握手（发送HTTP升级请求并读取响应）
+    pub fn clientHandshake(self: *Self, path: []const u8, host: []const u8) !void {
+        // 生成随机的Sec-WebSocket-Key
+        var random_bytes: [16]u8 = undefined;
+        var prng = std.Random.DefaultPrng.init(@bitCast(std.time.milliTimestamp()));
+        prng.random().bytes(&random_bytes);
+        
+        // Base64编码
+        const encoder = base64.standard.Encoder;
+        var key_buf: [32]u8 = undefined;
+        const key_str = encoder.encode(key_buf[0..], &random_bytes);
+
+        // 构建HTTP升级请求
+        const request = std.fmt.allocPrint(
+            self.allocator,
+            "GET {s} HTTP/1.1\r\n" ++
+                "Host: {s}\r\n" ++
+                "Upgrade: websocket\r\n" ++
+                "Connection: Upgrade\r\n" ++
+                "Sec-WebSocket-Key: {s}\r\n" ++
+                "Sec-WebSocket-Version: 13\r\n\r\n",
+            .{ path, host, key_str },
+        ) catch return error.HandshakeFailed;
+        defer self.allocator.free(request);
+
+        // 发送请求
+        _ = try self.tcp.write(request);
+
+        // 读取响应
+        var buffer: [4096]u8 = undefined;
+        const n = try self.tcp.read(buffer[0..]);
+        const response = buffer[0..n];
+
+        // 验证响应
+        // 应该以 "HTTP/1.1 101 Switching Protocols" 开头
+        if (!std.mem.startsWith(u8, response, "HTTP/1.1 101")) {
+            return error.HandshakeFailed;
+        }
+
+        // 检查是否包含 "Upgrade: websocket"
+        if (std.mem.indexOf(u8, response, "Upgrade: websocket") == null) {
+            return error.HandshakeFailed;
+        }
+
+        // 检查是否包含 "Connection: Upgrade"
+        if (std.mem.indexOf(u8, response, "Connection: Upgrade") == null and
+            std.mem.indexOf(u8, response, "Connection: upgrade") == null)
+        {
+            return error.HandshakeFailed;
+        }
+
+        // 验证Sec-WebSocket-Accept（可选，但推荐）
+        // 计算期望的Accept值
+        const magic_string = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        var key_string_buf: [1024]u8 = undefined;
+        const key_string = std.fmt.bufPrint(key_string_buf[0..], "{s}{s}", .{ key_str, magic_string }) catch return error.HandshakeFailed;
+
+        var hash: [crypto.hash.Sha1.digest_length]u8 = undefined;
+        crypto.hash.Sha1.hash(key_string, &hash, .{});
+
+        var accept_buf: [32]u8 = undefined;
+        const expected_accept = encoder.encode(accept_buf[0..], &hash);
+
+        // 检查响应中的Sec-WebSocket-Accept
+        const accept_line_start = std.mem.indexOf(u8, response, "Sec-WebSocket-Accept:") orelse return error.HandshakeFailed;
+        const accept_line_end = std.mem.indexOf(u8, response[accept_line_start..], "\r\n") orelse return error.HandshakeFailed;
+        const accept_line = response[accept_line_start + "Sec-WebSocket-Accept:".len .. accept_line_start + accept_line_end];
+        const received_accept = std.mem.trim(u8, accept_line, " \r\n");
+
+        if (!std.mem.eql(u8, received_accept, expected_accept)) {
+            return error.HandshakeFailed;
+        }
+
+        self.upgraded = true;
+    }
+
     /// 读取指定数量的字节（处理部分读取）
     fn readBytes(self: *Self, buffer: []u8, count: usize) !usize {
         var total_read: usize = 0;
