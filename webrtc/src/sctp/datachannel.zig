@@ -266,7 +266,7 @@ pub const DataChannel = struct {
     /// 将数据通过 SCTP Association 发送
     /// 如果 DataChannel 已关联 Association，可以省略 association 参数
     pub fn send(self: *Self, data: []const u8, association_opt: ?*Association) !void {
-        const association = association_opt orelse self.association orelse return Error.NoAssociation;
+        const assoc = association_opt orelse self.association orelse return Error.NoAssociation;
         // 检查状态
         if (self.state != .open) {
             return Error.ChannelNotOpen;
@@ -274,14 +274,14 @@ pub const DataChannel = struct {
 
         // 通过 SCTP Association 发送数据
         // 1. 找到对应的 Stream（通过 stream_id）
-        if (association.stream_manager.findStream(self.stream_id)) |stream| {
+        if (assoc.stream_manager.findStream(self.stream_id)) |sctp_stream| {
             // 2. 创建 Data Chunk
             // 使用 sendData 方法创建数据块
             // 获取当前 TSN（简化实现：使用递增的 TSN）
-            const current_tsn = association.next_tsn;
-            association.next_tsn +%= 1;
+            const current_tsn = assoc.next_tsn;
+            assoc.next_tsn +%= 1;
             const data_chunk = try self.sendData(
-                stream,
+                sctp_stream,
                 self.allocator,
                 current_tsn,
                 data,
@@ -294,24 +294,24 @@ pub const DataChannel = struct {
             // - 将 Data Chunk 编码为 SCTP 包
             // - 通过 DTLS 发送（在 WebRTC 中）
             // - 处理确认和重传
-            _ = data_chunk;
+            // 注意：data_chunk 已通过 defer 释放，这里不需要使用
         } else {
             // Stream 不存在，需要创建
             // 创建 Stream（有序传输）
-            const stream = try association.stream_manager.createStream(self.stream_id, self.ordered);
-            errdefer association.stream_manager.removeStream(self.stream_id);
+            const sctp_stream = try assoc.stream_manager.createStream(self.stream_id, self.ordered);
+            errdefer assoc.stream_manager.removeStream(self.stream_id);
 
             // 创建并发送数据块
-            const current_tsn = association.next_tsn;
-            association.next_tsn +%= 1;
+            const current_tsn = assoc.next_tsn;
+            assoc.next_tsn +%= 1;
             const data_chunk = try self.sendData(
-                stream,
+                sctp_stream,
                 self.allocator,
                 current_tsn,
                 data,
             );
             defer data_chunk.deinit(self.allocator);
-            _ = data_chunk;
+            // 注意：data_chunk 已通过 defer 释放，这里不需要使用
         }
     }
 
@@ -319,7 +319,7 @@ pub const DataChannel = struct {
     /// 从 SCTP Association 接收数据
     /// 如果 DataChannel 已关联 Association，可以省略 association 参数
     pub fn recv(self: *Self, association_opt: ?*Association, allocator: std.mem.Allocator) ![]u8 {
-        const association = association_opt orelse self.association orelse return Error.NoAssociation;
+        const assoc = association_opt orelse self.association orelse return Error.NoAssociation;
         // 检查状态
         if (self.state != .open) {
             return Error.ChannelNotOpen;
@@ -327,14 +327,14 @@ pub const DataChannel = struct {
 
         // 从 SCTP Association 接收数据
         // 1. 找到对应的 Stream
-        if (association.stream_manager.findStream(self.stream_id)) |stream| {
+        if (assoc.stream_manager.findStream(self.stream_id)) |sctp_stream| {
             // 2. 从 Stream 接收缓冲区读取数据
-            if (stream.receive_buffer.items.len > 0) {
+            if (sctp_stream.receive_buffer.items.len > 0) {
                 // 复制数据并返回
-                const data = try allocator.dupe(u8, stream.receive_buffer.items);
+                const data = try allocator.dupe(u8, sctp_stream.receive_buffer.items);
                 
                 // 清空接收缓冲区（简化实现）
-                stream.receive_buffer.clearRetainingCapacity();
+                sctp_stream.receive_buffer.clearRetainingCapacity();
                 
                 return data;
             } else {
@@ -357,9 +357,14 @@ pub const DataChannel = struct {
         return self.state;
     }
 
+    /// 检查通道是否打开
+    pub fn isOpen(self: *const Self) bool {
+        return self.state == .open;
+    }
+
     /// 设置关联的 SCTP Association
-    pub fn setAssociation(self: *Self, association: *Association) void {
-        self.association = association;
+    pub fn setAssociation(self: *Self, assoc: *Association) void {
+        self.association = assoc;
     }
 
     /// 获取关联的 SCTP Association
@@ -384,16 +389,6 @@ pub const DataChannel = struct {
             true, // beginning
             true, // ending
         );
-    }
-
-    /// 获取通道状态
-    pub fn getState(self: *const Self) DataChannelState {
-        return self.state;
-    }
-
-    /// 检查通道是否打开
-    pub fn isOpen(self: *const Self) bool {
-        return self.state == .open;
     }
 
     pub const Error = error{

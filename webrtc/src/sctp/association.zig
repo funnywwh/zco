@@ -1,5 +1,6 @@
 const std = @import("std");
 const chunk = @import("./chunk.zig");
+const stream = @import("./stream.zig");
 
 /// SCTP 关联状态
 pub const AssociationState = enum {
@@ -48,6 +49,9 @@ pub const Association = struct {
     // 待确认的 TSN
     expected_tsn: u32,
 
+    // 流管理器
+    stream_manager: stream.StreamManager,
+
     /// 初始化 SCTP 关联
     pub fn init(
         allocator: std.mem.Allocator,
@@ -82,6 +86,7 @@ pub const Association = struct {
             .receive_buffer = std.ArrayList(u8).init(allocator),
             .next_tsn = initial_tsn,
             .expected_tsn = 0,
+            .stream_manager = try stream.StreamManager.init(allocator),
         };
     }
 
@@ -91,6 +96,7 @@ pub const Association = struct {
             self.allocator.free(cookie);
         }
         self.receive_buffer.deinit();
+        self.stream_manager.deinit();
     }
 
     /// 创建并发送 INIT 块

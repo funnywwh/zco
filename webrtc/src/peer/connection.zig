@@ -1371,7 +1371,7 @@ pub const PeerConnection = struct {
 
         // 创建数据通道
         // DataChannel.init 需要 Association、Stream ID、label、protocol、channel_type、priority、reliability_parameter、ordered
-        if (self.sctp_association) |_| {
+        if (self.sctp_association) |assoc| {
             // 简化实现：使用固定的 Stream ID（0）
             // TODO: 实现 Stream ID 管理，从 Association 获取可用的 Stream ID
             const stream_id: u16 = 0;

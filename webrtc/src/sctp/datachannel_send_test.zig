@@ -30,7 +30,7 @@ test "DataChannel send requires open state" {
     defer channel.deinit();
 
     // 创建关联（用于测试）
-    const assoc = try Association.init(allocator, &schedule);
+    const assoc = try Association.init(allocator, 5000);
     defer assoc.deinit();
 
     // 尝试发送数据（状态不是 open）
@@ -60,7 +60,7 @@ test "DataChannel send with associated association" {
     defer channel.deinit();
 
     // 创建关联
-    const assoc = try Association.init(allocator, &schedule);
+    const assoc = try Association.init(allocator, 5000);
     defer assoc.deinit();
 
     // 设置关联
@@ -128,7 +128,7 @@ test "DataChannel setAssociation and getAssociation" {
     try testing.expect(channel.getAssociation() == null);
 
     // 创建关联
-    const assoc = try Association.init(allocator, &schedule);
+    const assoc = try Association.init(allocator, 5000);
     defer assoc.deinit();
 
     // 设置关联
@@ -158,7 +158,7 @@ test "DataChannel recv from stream" {
     defer channel.deinit();
 
     // 创建关联
-    const assoc = try Association.init(allocator, &schedule);
+    const assoc = try Association.init(allocator, 5000);
     defer assoc.deinit();
 
     // 设置关联
