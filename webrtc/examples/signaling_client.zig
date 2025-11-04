@@ -58,7 +58,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     const config = Configuration{};
     const pc = try PeerConnection.init(schedule.allocator, schedule, config);
     defer pc.deinit();
-    
+
     // 跟踪创建的 UDP socket，以便在函数结束时清理
     var created_udp: ?*nets.Udp = null;
     defer if (created_udp) |udp| {
@@ -304,7 +304,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     const config = Configuration{};
     const pc = try PeerConnection.init(schedule.allocator, schedule, config);
     defer pc.deinit();
-    
+
     // 跟踪创建的 UDP socket，以便在函数结束时清理
     var created_udp: ?*nets.Udp = null;
     defer if (created_udp) |udp| {
