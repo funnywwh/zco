@@ -323,8 +323,8 @@ pub const PeerConnection = struct {
             .username = try allocator.dupe(u8, "zco"),
             .session_id = @as(u64, @intCast(std.time.milliTimestamp())),
             .session_version = 1,
-            .nettype = "IN",
-            .addrtype = "IP4",
+            .nettype = try allocator.dupe(u8, "IN"),
+            .addrtype = try allocator.dupe(u8, "IP4"),
             .address = try allocator.dupe(u8, "127.0.0.1"),
         };
         offer.origin = origin;
@@ -333,8 +333,8 @@ pub const PeerConnection = struct {
 
         // 2. 添加连接信息
         const connection = SessionDescription.Connection{
-            .nettype = "IN",
-            .addrtype = "IP4",
+            .nettype = try allocator.dupe(u8, "IN"),
+            .addrtype = try allocator.dupe(u8, "IP4"),
             .address = try allocator.dupe(u8, "0.0.0.0"), // 使用 0.0.0.0 表示将在 ICE 候选中使用
         };
         offer.connection = connection;
@@ -456,8 +456,8 @@ pub const PeerConnection = struct {
             .username = try allocator.dupe(u8, "zco"),
             .session_id = @as(u64, @intCast(std.time.milliTimestamp())),
             .session_version = 1,
-            .nettype = "IN",
-            .addrtype = "IP4",
+            .nettype = try allocator.dupe(u8, "IN"),
+            .addrtype = try allocator.dupe(u8, "IP4"),
             .address = try allocator.dupe(u8, "127.0.0.1"),
         };
         answer.origin = origin;
@@ -466,8 +466,8 @@ pub const PeerConnection = struct {
 
         // 2. 添加连接信息（基于 remote offer 或使用默认值）
         const connection = SessionDescription.Connection{
-            .nettype = "IN",
-            .addrtype = "IP4",
+            .nettype = try allocator.dupe(u8, "IN"),
+            .addrtype = try allocator.dupe(u8, "IP4"),
             .address = try allocator.dupe(u8, "0.0.0.0"),
         };
         answer.connection = connection;
