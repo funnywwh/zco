@@ -33,22 +33,28 @@ pub const MessageType = enum {
         source: anytype,
         options: json.ParseOptions,
     ) !MessageType {
-        const str = try json.parse(json.String, allocator, source, options);
-        defer allocator.free(str);
+        // 从 TokenStream 读取字符串 token
+        const token = try source.next();
+        const str_slice = switch (token) {
+            .string => |s| s.slice,
+            .string_escaped => |s| s.slice,
+            else => return error.InvalidEnumTag,
+        };
         
-        if (std.mem.eql(u8, str, "offer")) {
+        // 匹配 JSON 字符串格式（注意：JSON 中的枚举值格式）
+        if (std.mem.eql(u8, str_slice, "offer")) {
             return .offer;
-        } else if (std.mem.eql(u8, str, "answer")) {
+        } else if (std.mem.eql(u8, str_slice, "answer")) {
             return .answer;
-        } else if (std.mem.eql(u8, str, "ice-candidate")) {
+        } else if (std.mem.eql(u8, str_slice, "ice-candidate")) {
             return .ice_candidate;
-        } else if (std.mem.eql(u8, str, "error")) {
+        } else if (std.mem.eql(u8, str_slice, "error")) {
             return .@"error";
-        } else if (std.mem.eql(u8, str, "join")) {
+        } else if (std.mem.eql(u8, str_slice, "join")) {
             return .join;
-        } else if (std.mem.eql(u8, str, "leave")) {
+        } else if (std.mem.eql(u8, str_slice, "leave")) {
             return .leave;
-        } else if (std.mem.eql(u8, str, "user-joined")) {
+        } else if (std.mem.eql(u8, str_slice, "user-joined")) {
             return .user_joined;
         } else {
             return error.InvalidEnumTag;
