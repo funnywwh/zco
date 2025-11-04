@@ -63,7 +63,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     const server_addr = try std.net.Address.parseIp4("127.0.0.1", 8080);
     const tcp = try nets.Tcp.init(schedule);
     defer tcp.deinit();
-    
+
     try tcp.connect(server_addr);
     defer tcp.close();
 
@@ -80,7 +80,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 注意：这些内存会被 join_msg.deinit 释放
     const room_id_dup = try schedule.allocator.dupe(u8, room_id);
     const user_id_dup = try schedule.allocator.dupe(u8, user_id);
-    
+
     var join_msg = SignalingMessage{
         .type = .join,
         .room_id = room_id_dup,
@@ -127,7 +127,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     const offer_room_id_dup = try schedule.allocator.dupe(u8, room_id);
     const offer_user_id_dup = try schedule.allocator.dupe(u8, user_id);
     const offer_sdp_dup = try schedule.allocator.dupe(u8, offer_sdp);
-    
+
     var offer_msg = SignalingMessage{
         .type = .offer,
         .room_id = offer_room_id_dup,
@@ -219,7 +219,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                         candidate.candidate,
                     );
                     defer ice_candidate.deinit();
-                    
+
                     // 创建堆分配的 candidate
                     const candidate_ptr = try schedule.allocator.create(webrtc.ice.candidate.Candidate);
                     candidate_ptr.* = ice_candidate;
@@ -239,7 +239,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         for (agent.local_candidates.items) |candidate| {
             const candidate_str = try candidate.toSdpCandidate(schedule.allocator);
             defer schedule.allocator.free(candidate_str);
-            
+
             // 注意：这些内存会被 ice_msg.deinit 释放
             const ice_room_id_dup = try schedule.allocator.dupe(u8, room_id);
             const ice_user_id_dup = try schedule.allocator.dupe(u8, user_id);
@@ -293,7 +293,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     const server_addr = try std.net.Address.parseIp4("127.0.0.1", 8080);
     const tcp = try nets.Tcp.init(schedule);
     defer tcp.deinit();
-    
+
     try tcp.connect(server_addr);
     defer tcp.close();
 
@@ -309,7 +309,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     const user_id = "bob";
     const bob_room_id_dup = try schedule.allocator.dupe(u8, room_id);
     const bob_user_id_dup = try schedule.allocator.dupe(u8, user_id);
-    
+
     var join_msg = SignalingMessage{
         .type = .join,
         .room_id = bob_room_id_dup,
@@ -400,7 +400,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                     const answer_room_id_dup = try schedule.allocator.dupe(u8, room_id);
                     const answer_user_id_dup = try schedule.allocator.dupe(u8, user_id);
                     const answer_sdp_dup = try schedule.allocator.dupe(u8, answer_sdp);
-                    
+
                     var answer_msg = SignalingMessage{
                         .type = .answer,
                         .room_id = answer_room_id_dup,
@@ -425,7 +425,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                         candidate.candidate,
                     );
                     defer ice_candidate.deinit();
-                    
+
                     // 创建堆分配的 candidate
                     const candidate_ptr = try schedule.allocator.create(webrtc.ice.candidate.Candidate);
                     candidate_ptr.* = ice_candidate;
@@ -445,7 +445,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
         for (agent.local_candidates.items) |candidate| {
             const candidate_str = try candidate.toSdpCandidate(schedule.allocator);
             defer schedule.allocator.free(candidate_str);
-            
+
             // 注意：这些内存会被 ice_msg.deinit 释放
             const bob_ice_room_id_dup = try schedule.allocator.dupe(u8, room_id);
             const bob_ice_user_id_dup = try schedule.allocator.dupe(u8, user_id);
