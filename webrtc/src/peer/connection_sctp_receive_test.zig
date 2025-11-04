@@ -22,7 +22,7 @@ test "PeerConnection recvSctpData - 接收并解析 SCTP 数据包" {
     // 注意：这个测试需要完整的 DTLS 和 SCTP 设置
     // 简化测试：只验证方法存在且可以调用
     // 实际测试需要设置完整的连接状态
-    
+
     // 测试：在没有 DTLS 的情况下调用 recvSctpData 应该返回错误
     const result = pc.recvSctpData();
     try testing.expectError(error.NoDtlsRecord, result);
@@ -64,7 +64,7 @@ test "PeerConnection handleSctpPacket - 解析 SCTP 包并路由到 DataChannel"
     // CommonHeader: 12 字节
     // Data Chunk: 至少 16 字节（chunk header + data）
     var packet: [128]u8 = undefined;
-    
+
     // 编码 CommonHeader
     const common_header = sctp.chunk.CommonHeader{
         .source_port = 5000,
@@ -121,7 +121,7 @@ test "PeerConnection handleDataChunk - 解析 Data Chunk 并触发事件" {
         true,
     );
     defer channel.deinit();
-    
+
     try pc.data_channels.append(channel);
 
     // 构建 Data Chunk 数据
@@ -139,8 +139,7 @@ test "PeerConnection handleDataChunk - 解析 Data Chunk 并触发事件" {
     // 测试：解析 Data Chunk（验证 Data Chunk 可以正确解析）
     const data_chunk = try sctp.chunk.DataChunk.parse(allocator, &chunk_data);
     defer data_chunk.deinit(allocator);
-    
+
     try testing.expectEqual(@as(u16, 0), data_chunk.stream_id);
     try testing.expectEqualSlices(u8, "test", data_chunk.user_data);
 }
-

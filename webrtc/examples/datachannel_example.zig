@@ -1,0 +1,142 @@
+const std = @import("std");
+const zco = @import("zco");
+const webrtc = @import("webrtc");
+
+const PeerConnection = webrtc.peer.PeerConnection;
+const DataChannel = webrtc.sctp.DataChannel;
+
+/// 数据通道示例应用
+/// 演示如何使用 WebRTC 数据通道进行双向消息传输
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    std.log.info("=== WebRTC 数据通道示例 ===", .{});
+
+    // 创建调度器
+    var schedule = try zco.Schedule.init(allocator);
+    defer schedule.deinit();
+
+    // 创建 PeerConnection
+    const config = PeerConnection.Configuration{};
+    var pc = try PeerConnection.init(allocator, &schedule, config);
+    defer pc.deinit();
+
+    std.log.info("PeerConnection 已创建", .{});
+
+    // 模拟 DTLS 握手完成（在实际应用中，这应该通过真实的 DTLS 握手完成）
+    if (pc.dtls_handshake) |handshake| {
+        handshake.state = .handshake_complete;
+        std.log.info("DTLS 握手状态已设置为完成（模拟）", .{});
+    }
+
+    // 创建数据通道
+    const channel = try pc.createDataChannel("test-channel", null);
+    defer channel.deinit();
+
+    std.log.info("数据通道 'test-channel' 已创建 (Stream ID: {})", .{channel.stream_id});
+
+    // 设置数据通道事件回调
+    setupDataChannelEvents(channel);
+
+    // 在协程中发送消息
+    _ = try schedule.go(sendMessages, .{channel});
+
+    // 在协程中接收消息（模拟接收流程）
+    _ = try schedule.go(receiveMessages, .{&pc});
+
+    std.log.info("开始发送和接收消息...", .{});
+    std.log.info("（注意：这是一个演示，实际需要完整的连接建立）", .{});
+
+    // 运行调度器
+    try schedule.loop();
+}
+
+/// 设置数据通道事件回调
+fn setupDataChannelEvents(channel: *DataChannel) void {
+    // onopen 回调
+    const OnOpenContext = struct {
+        fn callback(ch: *DataChannel) void {
+            _ = ch;
+            std.log.info("[DataChannel] 通道已打开", .{});
+        }
+    };
+    channel.setOnOpen(OnOpenContext.callback);
+
+    // onclose 回调
+    const OnCloseContext = struct {
+        fn callback(ch: *DataChannel) void {
+            _ = ch;
+            std.log.info("[DataChannel] 通道已关闭", .{});
+        }
+    };
+    channel.setOnClose(OnCloseContext.callback);
+
+    // onmessage 回调
+    const OnMessageContext = struct {
+        fn callback(ch: *DataChannel, data: []const u8) void {
+            _ = ch;
+            std.log.info("[DataChannel] 收到消息 ({} 字节): {s}", .{ data.len, data });
+        }
+    };
+    channel.setOnMessage(OnMessageContext.callback);
+
+    // onerror 回调
+    const OnErrorContext = struct {
+        fn callback(ch: *DataChannel, err: anyerror) void {
+            _ = ch;
+            std.log.err("[DataChannel] 错误: {}", .{err});
+        }
+    };
+    channel.setOnError(OnErrorContext.callback);
+}
+
+/// 发送消息协程
+fn sendMessages(channel: *DataChannel) !void {
+    const messages = [_][]const u8{
+        "Hello, WebRTC!",
+        "这是第一条消息",
+        "数据通道双向通信测试",
+        "消息 4: 测试消息传输",
+    };
+
+    for (messages, 0..) |msg, i| {
+        try zco.Sleep(1000); // 等待 1 秒
+
+        std.log.info("[发送] 消息 {}: {s}", .{ i + 1, msg });
+
+        // 发送消息
+        channel.send(msg) catch |err| {
+            std.log.warn("[发送] 失败: {} (这可能是正常的，因为缺少完整的连接)", .{err});
+            continue;
+        };
+    }
+
+    std.log.info("[发送] 所有消息已发送", .{});
+}
+
+/// 接收消息协程（模拟）
+fn receiveMessages(pc: *PeerConnection) !void {
+    // 在实际应用中，这里应该持续监听 DTLS 接收
+    // 并调用 pc.recvSctpData() 来处理接收到的数据
+
+    std.log.info("[接收] 开始监听消息...", .{});
+
+    var count: u32 = 0;
+    while (count < 10) {
+        try zco.Sleep(500); // 每 500ms 检查一次
+
+        // 尝试接收数据（在实际应用中，这应该在 DTLS 握手完成后调用）
+        pc.recvSctpData() catch |err| {
+            // 如果没有数据可接收，这是正常的
+            if (err != error.NoDtlsRecord) {
+                std.log.warn("[接收] 错误: {}", .{err});
+            }
+        };
+
+        count += 1;
+    }
+
+    std.log.info("[接收] 接收监听已停止", .{});
+}

@@ -53,6 +53,28 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the webrtc example");
     run_step.dependOn(&run_cmd.step);
 
+    // 数据通道示例应用
+    const datachannel_example = b.addExecutable(.{
+        .name = "datachannel_example",
+        .root_source_file = b.path("examples/datachannel_example.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    datachannel_example.root_module.addImport("zco", zco);
+    datachannel_example.root_module.addImport("nets", nets);
+    datachannel_example.root_module.addImport("websocket", websocket);
+    datachannel_example.root_module.addImport("webrtc", webrtc);
+    b.installArtifact(datachannel_example);
+
+    const run_datachannel_example_cmd = b.addRunArtifact(datachannel_example);
+    run_datachannel_example_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_datachannel_example_cmd.addArgs(args);
+    }
+
+    const run_datachannel_example_step = b.step("run-datachannel", "Run the datachannel example");
+    run_datachannel_example_step.dependOn(&run_datachannel_example_cmd.step);
+
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
