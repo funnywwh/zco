@@ -231,6 +231,22 @@ pub const SignalingServer = struct {
                 client.user_id = user_id_dup;
                 
                 std.log.info("[服务器] 房间 {s} 当前有 {} 个用户", .{ room_id, room_entry.value_ptr.*.users.count() });
+
+                // 广播 user_joined 通知给房间中的其他用户（不包括刚加入的用户）
+                if (room_entry.value_ptr.*.users.count() > 1) {
+                    const room_id_dup = try self.allocator.dupe(u8, room_id);
+                    const user_id_for_notify = try self.allocator.dupe(u8, user_id);
+                    var user_joined_msg = message.SignalingMessage{
+                        .type = .user_joined,
+                        .room_id = room_id_dup,
+                        .user_id = user_id_for_notify,
+                    };
+                    defer user_joined_msg.deinit(self.allocator);
+                    const notify_json = try (@as(*const message.SignalingMessage, &user_joined_msg)).toJson(self.allocator);
+                    defer self.allocator.free(notify_json);
+                    std.log.info("[服务器] 广播 user_joined 通知: {s} 加入房间 {s}", .{ user_id, room_id });
+                    try room_entry.value_ptr.*.broadcast(user_id, notify_json);
+                }
             },
             .offer, .answer, .ice_candidate => {
                 // 转发消息到房间中的其他用户
@@ -268,6 +284,10 @@ pub const SignalingServer = struct {
                 const msg_json = try msg.toJson(self.allocator);
                 defer self.allocator.free(msg_json);
                 try client.send(msg_json);
+            },
+            .user_joined => {
+                // user_joined 是服务器发送的通知，客户端不应该发送此类消息
+                std.log.warn("[服务器] 客户端发送了 user_joined 消息，这是不允许的", .{});
             },
         }
     }

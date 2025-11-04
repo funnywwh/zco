@@ -9,6 +9,7 @@ pub const MessageType = enum {
     @"error",
     join,
     leave,
+    user_joined, // 用户加入房间通知（服务器广播）
 
     pub fn jsonStringify(
         self: MessageType,
@@ -22,6 +23,7 @@ pub const MessageType = enum {
             .@"error" => "error",
             .join => "join",
             .leave => "leave",
+            .user_joined => "user-joined",
         };
         try json.encodeJsonString(str, .{}, out_stream);
     }
@@ -85,6 +87,7 @@ pub const SignalingMessage = struct {
             .@"error" => "error",
             .join => "join",
             .leave => "leave",
+            .user_joined => "user-joined",
         };
         try writer.print("\"type\":\"{s}\"", .{type_str});
 

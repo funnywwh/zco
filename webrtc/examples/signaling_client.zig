@@ -126,12 +126,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         }
     }
 
-    // 等待一段时间，确保 Bob 有足够时间加入房间
-    const current_co_alice = try schedule.getCurrentCo();
-    std.log.info("[Alice] 等待 Bob 加入房间...", .{});
-    try current_co_alice.Sleep(2 * std.time.ns_per_s);
-
-    // 创建 offer
+    // 创建 offer（不需要等待，Bob 会收到 user_joined 通知后开始等待 offer）
     const offer = try pc.createOffer(schedule.allocator);
     // 注意：offer 会被 setLocalDescription 接管，不需要手动 deinit
     // setLocalDescription 会负责释放旧的描述（如果有）
@@ -247,7 +242,8 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         return;
     }
 
-    // 使用之前获取的 current_co_alice
+    // 获取当前协程用于等待
+    const current_co_alice = try schedule.getCurrentCo();
 
     // 等待一段时间让 ICE candidates 交换完成
     std.log.info("[Alice] 等待 ICE candidates 交换完成...", .{});
@@ -456,15 +452,11 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
         }
     }
 
-    // 等待接收 offer
-    // 先等待一小段时间，确保加入房间的请求已处理
-    // 使用之前在连接重试中获取的 current_co_bob（如果已获取）或重新获取
-    const current_co_bob = try schedule.getCurrentCo();
-    try current_co_bob.Sleep(500 * std.time.ns_per_ms);
-
-    std.log.info("[Bob] 开始等待接收 offer...", .{});
+    // 等待接收 user_joined 通知（Alice 上线）或 offer
+    std.log.info("[Bob] 开始等待 user_joined 通知或 offer...", .{});
     var buffer: [8192]u8 = undefined;
     var offer_received = false;
+    var alice_joined = false;
     var message_count: u32 = 0;
 
     while (message_count < 20) { // 增加最大消息数
@@ -505,6 +497,19 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
 
         // 处理消息
         switch (msg.type) {
+            .user_joined => {
+                // 收到 user_joined 通知，说明 Alice 已经上线
+                if (msg.user_id) |joined_user_id| {
+                    std.log.info("[Bob] 收到 user_joined 通知: {s} 已加入房间", .{joined_user_id});
+                    if (std.mem.eql(u8, joined_user_id, "alice")) {
+                        alice_joined = true;
+                        std.log.info("[Bob] Alice 已上线，准备接收 offer", .{});
+                    }
+                }
+                msg.deinit(schedule.allocator);
+                message_count += 1;
+                continue;
+            },
             .offer => {
                 if (msg.sdp) |sdp| {
                     std.log.info("[Bob] 收到 offer，开始处理... (SDP 长度: {} 字节)", .{sdp.len});
@@ -619,14 +624,17 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 注意：在实际应用中，verification tags 应该从 SCTP 握手过程中获取
     // 这里暂时跳过，等待后续完善
 
+    // 获取当前协程用于等待
+    const current_co_bob_final = try schedule.getCurrentCo();
+
     // 等待连接建立
-    try current_co_bob.Sleep(3 * std.time.ns_per_s);
+    try current_co_bob_final.Sleep(3 * std.time.ns_per_s);
 
     // 接收数据通道消息
     _ = try schedule.go(receiveDataChannelMessages, .{pc});
 
     // 等待接收消息
-    try current_co_bob.Sleep(5 * std.time.ns_per_s);
+    try current_co_bob_final.Sleep(5 * std.time.ns_per_s);
 }
 
 /// 接收数据通道消息
