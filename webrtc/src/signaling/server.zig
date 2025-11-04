@@ -104,11 +104,11 @@ pub const SignalingServer = struct {
         self.rooms.deinit();
         
         // 清理 TCP socket
+        // 注意：tcp.deinit() 会调用 allocator.destroy(self.tcp)，所以不需要再次 destroy
         if (self.tcp.xobj) |_| {
             self.tcp.close();
         }
         self.tcp.deinit();
-        self.allocator.destroy(self.tcp);
         
         // 最后销毁服务器对象
         self.allocator.destroy(self);
