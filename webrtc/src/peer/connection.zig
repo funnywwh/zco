@@ -1354,19 +1354,19 @@ pub const PeerConnection = struct {
         const opts = options orelse DataChannelOptions{};
 
         // 确定通道类型
-        const channel_type: sctp.datachannel.ChannelType = if (opts.max_retransmits) |_| 
-            .partial_reliable_rexmit 
-        else if (opts.max_packet_life_time) |_| 
-            .partial_reliable_timed 
-        else 
+        const channel_type: sctp.datachannel.ChannelType = if (opts.max_retransmits) |_|
+            .partial_reliable_rexmit
+        else if (opts.max_packet_life_time) |_|
+            .partial_reliable_timed
+        else
             .reliable;
 
         // 确定可靠性参数
-        const reliability_param: u32 = if (opts.max_retransmits) |max_retrans| 
-            @as(u32, max_retrans) 
-        else if (opts.max_packet_life_time) |max_life| 
-            @as(u32, max_life) 
-        else 
+        const reliability_param: u32 = if (opts.max_retransmits) |max_retrans|
+            @as(u32, max_retrans)
+        else if (opts.max_packet_life_time) |max_life|
+            @as(u32, max_life)
+        else
             0;
 
         // 创建数据通道
@@ -1376,10 +1376,10 @@ pub const PeerConnection = struct {
             // TODO: 实现 Stream ID 管理，从 Association 获取可用的 Stream ID
             const stream_id: u16 = 0;
             const priority: u16 = 0; // 默认优先级
-            
+
             const channel = try self.allocator.create(sctp.DataChannel);
             errdefer self.allocator.destroy(channel);
-            
+
             channel.* = try sctp.DataChannel.init(
                 self.allocator,
                 stream_id,
