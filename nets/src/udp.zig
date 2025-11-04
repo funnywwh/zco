@@ -29,19 +29,30 @@ pub const Udp = struct {
 
     /// 绑定地址到 UDP socket
     pub fn bind(self: *Self, address: std.net.Address) !void {
+        // 如果已经绑定，不允许重新绑定
+        if (self.xobj != null) {
+            std.log.warn("UDP.bind: Socket 已经绑定 (fd: {})，跳过重新绑定到 {}", .{ self.xobj.?.fd, address });
+            return;
+        }
         const xobj = try zco.xev.UDP.init(address);
         try xobj.bind(address);
         self.xobj = xobj;
+        std.log.debug("UDP.bind: Socket 已绑定到 {} (fd: {})", .{ address, xobj.fd });
     }
 
     /// 异步读取 UDP 数据（带地址信息）
     pub fn recvFrom(self: *Self, buffer: []u8) !struct { data: []u8, addr: std.net.Address } {
-        const xobj = self.xobj orelse return error.NotInit;
+        const xobj = self.xobj orelse {
+            std.log.err("UDP.recvFrom: xobj 为 null (socket 未初始化)", .{});
+            return error.NotInit;
+        };
         
-        std.log.debug("UDP.recvFrom: 开始接收，检查协程环境...", .{});
+        std.log.debug("UDP.recvFrom: 开始接收，检查协程环境... (socket fd: {})", .{xobj.fd});
         
         // UDP State 需要初始化 op 字段，这里初始化为 recv 操作
+        // 注意：必须先设置 op = .{ .recv = undefined }，然后再设置完整结构
         var state: zco.xev.UDP.State = undefined;
+        state.op = .{ .recv = undefined };
         state.userdata = null;
         state.op = .{
             .recv = .{
@@ -95,10 +106,20 @@ pub const Udp = struct {
                     _: zco.xev.ReadBuffer,
                     r: zco.xev.ReadError!usize,
                 ) zco.xev.CallbackAction {
-                    const _r = ud orelse unreachable;
+                    std.log.info("UDP.recvFrom callback: 回调被触发！地址: {}, 结果: {!}", .{ addr, r });
+                    const _r = ud orelse {
+                        std.log.err("UDP.recvFrom callback: userdata 为 null", .{});
+                        return .disarm;
+                    };
                     _r.addr = addr;
                     _r.size = r;
-                    std.log.debug("UDP.recvFrom callback: 收到数据，恢复协程", .{});
+                    
+                    if (r) |size| {
+                        std.log.info("UDP.recvFrom callback: 收到 {} 字节数据，恢复协程", .{size});
+                    } else |err| {
+                        std.log.err("UDP.recvFrom callback: 接收错误: {}", .{err});
+                    }
+                    
                     _r.co.Resume() catch |e| {
                         std.log.err("nets udp recvFrom ResumeCo error:{s}", .{@errorName(e)});
                     };

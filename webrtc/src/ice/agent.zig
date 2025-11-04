@@ -283,22 +283,32 @@ pub const IceAgent = struct {
         }
 
         // 收集本地地址
-        // 简化实现：使用 Agent 的 UDP socket 绑定到 0.0.0.0，获取可用端口
-        // 确保 UDP 已初始化
-        if (self.udp == null) {
+        // 简化实现：如果 UDP socket 已经绑定，使用已绑定的地址
+        // 否则绑定到 0.0.0.0（让系统分配端口）
+        const candidate_addr = if (self.udp) |udp| blk: {
+            // 检查 UDP socket 是否已经绑定
+            if (udp.xobj == null) {
+                // 还没有绑定，绑定到 0.0.0.0（让系统分配端口）
+                const bind_addr = try std.net.Address.parseIp4("0.0.0.0", 0);
+                udp.bind(bind_addr) catch |err| {
+                    // 如果绑定失败，返回错误
+                    return err;
+                };
+                break :blk bind_addr;
+            } else {
+                // 已经绑定，使用已绑定的地址（不重新绑定）
+                // 简化：使用 127.0.0.1 作为默认地址（实际应该通过 getsockname 获取）
+                break :blk try std.net.Address.parseIp4("127.0.0.1", 0);
+            }
+        } else blk: {
+            // 创建并绑定 UDP socket
             self.udp = try nets.Udp.init(self.schedule);
-        }
-
-        // 尝试绑定到 0.0.0.0（让系统分配端口）
-        const bind_addr = try std.net.Address.parseIp4("0.0.0.0", 0);
-        self.udp.?.bind(bind_addr) catch |err| {
-            // 如果绑定失败，返回错误
-            return err;
+            const bind_addr = try std.net.Address.parseIp4("0.0.0.0", 0);
+            self.udp.?.bind(bind_addr) catch |err| {
+                return err;
+            };
+            break :blk bind_addr;
         };
-
-        // 创建 Host Candidate（使用绑定的地址）
-        // 注意：这里简化处理，实际应该获取绑定的实际地址和端口
-        const candidate_addr = bind_addr;
 
         // 创建 Host Candidate
         const foundation = try std.fmt.allocPrint(self.allocator, "host-{}-0", .{self.component_id});

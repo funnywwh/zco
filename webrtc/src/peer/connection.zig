@@ -1577,24 +1577,36 @@ pub const PeerConnection = struct {
         const common_header = try sctp.chunk.CommonHeader.parse(packet_data);
 
         // 验证 Verification Tag（简化：只检查是否匹配）
+        std.log.debug("PeerConnection.handleSctpPacket: Verification Tag = {}, local = {}, remote = {}", .{
+            common_header.verification_tag,
+            assoc.local_verification_tag,
+            assoc.remote_verification_tag,
+        });
         if (common_header.verification_tag != assoc.local_verification_tag and
             common_header.verification_tag != assoc.remote_verification_tag)
         {
             // 可能是新的关联，暂时忽略
+            std.log.warn("PeerConnection.handleSctpPacket: Verification Tag 不匹配，忽略数据包", .{});
             return;
         }
 
         // 解析 Chunk（从第 12 字节开始）
         if (packet_data.len < 16) {
+            std.log.warn("PeerConnection.handleSctpPacket: 数据包太短 ({} 字节)", .{packet_data.len});
             return error.InvalidSctpPacket;
         }
 
         const chunk_data = packet_data[12..];
         const chunk_type = chunk_data[0];
 
+        std.log.debug("PeerConnection.handleSctpPacket: 解析 Chunk (类型: {}, 数据长度: {})", .{ chunk_type, chunk_data.len });
+
         // 只处理 DATA Chunk（类型 0）
         if (chunk_type == 0) {
+            std.log.debug("PeerConnection.handleSctpPacket: 处理 DATA Chunk", .{});
             try self.handleDataChunk(assoc, chunk_data);
+        } else {
+            std.log.debug("PeerConnection.handleSctpPacket: 忽略非 DATA Chunk (类型: {})", .{chunk_type});
         }
         // TODO: 处理其他 Chunk 类型（SACK, HEARTBEAT 等）
     }

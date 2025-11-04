@@ -124,6 +124,7 @@ fn setupBob(pc: *PeerConnection, schedule: *zco.Schedule) !void {
         }
 
         // 收集 Host Candidate
+        // 注意：gatherHostCandidates 会检查 UDP socket 是否已绑定，如果已绑定则不会重新绑定
         try agent.gatherHostCandidates();
         std.log.info("[Bob] Host Candidates 已收集", .{});
     }
@@ -252,6 +253,7 @@ fn startDataChannelCommunication(alice: *PeerConnection, bob: *PeerConnection, s
     std.log.info("开始数据通道通信...", .{});
 
     // Alice 创建数据通道（发送方）
+    // 注意：createDataChannel 会自动创建 SCTP Association（如果还没有）
     const alice_channel = try alice.createDataChannel("echo-channel", null);
     defer alice_channel.deinit();
 
@@ -262,6 +264,23 @@ fn startDataChannelCommunication(alice: *PeerConnection, bob: *PeerConnection, s
     // 这里简化实现，确保使用相同的 Stream ID
     const bob_channel = try bob.createDataChannel("echo-channel", null);
     defer bob_channel.deinit();
+
+    // 在创建 DataChannel 之后，需要设置双方的 remote_verification_tag
+    // 这样双方才能正确验证接收到的 SCTP 数据包
+    if (alice.sctp_association) |alice_assoc| {
+        if (bob.sctp_association) |bob_assoc| {
+            // Alice 的 remote_verification_tag = Bob 的 local_verification_tag
+            alice_assoc.remote_verification_tag = bob_assoc.local_verification_tag;
+            // Bob 的 remote_verification_tag = Alice 的 local_verification_tag
+            bob_assoc.remote_verification_tag = alice_assoc.local_verification_tag;
+            std.log.debug("设置 SCTP Verification Tags: Alice local={}, remote={}, Bob local={}, remote={}", .{
+                alice_assoc.local_verification_tag,
+                alice_assoc.remote_verification_tag,
+                bob_assoc.local_verification_tag,
+                bob_assoc.remote_verification_tag,
+            });
+        }
+    }
 
     // 确保 Bob 的 DataChannel 使用与 Alice 相同的 Stream ID
     // 注意：在实际应用中，Bob 应该从接收到的 DCEP Open 消息中获取 Stream ID
@@ -299,7 +318,11 @@ fn startDataChannelCommunication(alice: *PeerConnection, bob: *PeerConnection, s
     std.log.info("启动 Bob 接收协程...", .{});
     _ = try schedule.go(echoMessages, .{ bob, bob_channel, schedule });
 
-    // 等待一小段时间，确保 Bob 的接收协程已启动并开始监听
+    // 启动 Alice 的接收协程（用于接收 Bob 的回显消息）
+    std.log.info("启动 Alice 接收协程...", .{});
+    _ = try schedule.go(receiveMessages, .{ alice, alice_channel, schedule });
+
+    // 等待一小段时间，确保接收协程已启动并开始监听
     try current_co.Sleep(200 * std.time.ns_per_ms);
 
     // 然后启动 Alice 的发送协程
@@ -396,6 +419,38 @@ fn sendMessages(channel: *DataChannel, schedule: *zco.Schedule) !void {
     std.log.info("[Alice] 所有消息已发送", .{});
 }
 
+/// Alice 的接收消息协程（用于接收 Bob 的回显消息）
+fn receiveMessages(pc: *PeerConnection, _: *DataChannel, _: *zco.Schedule) !void {
+    std.log.info("[Alice] 开始监听回显消息...", .{});
+
+    // 持续监听，直到收到足够的数据或超时
+    var count: u32 = 0;
+    var received_messages: u32 = 0;
+    const max_count = 500; // 增加循环次数，确保能接收到所有消息
+    const max_received = 10; // 最多接收 10 条消息（包括回显）
+
+    while (count < max_count and received_messages < max_received) {
+        // 接收 SCTP 数据（这个方法会阻塞等待数据）
+        // recvSctpData 会调用 DTLS Record.recv()，它会阻塞等待 UDP 数据
+        // 当收到数据时，会解析 SCTP 包并触发 DataChannel 的 onmessage 事件
+        // 注意：这是一个阻塞调用，会一直等待直到有数据到达
+        pc.recvSctpData() catch |err| {
+            // DTLS Record.recv() 会阻塞等待数据
+            // 如果没有数据，可能会返回错误（取决于实现）
+            // 这里简化处理，忽略所有错误继续等待
+            _ = err catch {};
+            continue;
+        };
+
+        // 如果 onmessage 被触发，received_messages 会在回调中增加
+        // 这里简化：每接收一次就增加计数（假设每次 recvSctpData 成功对应一条消息）
+        received_messages += 1;
+        count += 1;
+    }
+
+    std.log.info("[Alice] 接收监听已停止 (循环 {} 次，收到 {} 条消息)", .{ count, received_messages });
+}
+
 /// Echo 消息协程（Bob）
 fn echoMessages(pc: *PeerConnection, _: *DataChannel, _: *zco.Schedule) !void {
     std.log.info("[Bob] 开始监听消息...", .{});
@@ -416,6 +471,7 @@ fn echoMessages(pc: *PeerConnection, _: *DataChannel, _: *zco.Schedule) !void {
             // 如果没有数据，可能会返回错误（取决于实现）
             // 这里简化处理，忽略所有错误继续等待
             _ = err catch {};
+            continue;
         };
 
         // 如果 onmessage 被触发，received_messages 会在回调中增加
