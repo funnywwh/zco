@@ -1032,10 +1032,47 @@ pub const PeerConnection = struct {
                         std.log.warn("Failed to start connectivity checks: {}", .{err});
                         self.updateIceConnectionState(.failed);
                     };
+                    
+                    // 启动协程定期检查 ICE 状态（直到连接建立）
+                    if (self.ice_connection_state != .connected and self.ice_connection_state != .completed) {
+                        _ = try self.schedule.go(monitorIceConnection, .{self});
+                    }
                 }
             }
         } else {
             return error.NoIceAgent;
+        }
+    }
+
+    /// 监控 ICE 连接状态（协程函数）
+    fn monitorIceConnection(self: *Self) !void {
+        const current_co = try self.schedule.getCurrentCo();
+        const check_interval: u64 = 500 * std.time.ns_per_ms; // 每 500ms 检查一次
+        
+        while (self.ice_connection_state != .connected and 
+               self.ice_connection_state != .completed and
+               self.ice_connection_state != .failed and
+               self.ice_connection_state != .closed) {
+            try current_co.Sleep(check_interval);
+            
+            // 检查 ICE Agent 状态
+            if (self.ice_agent) |agent| {
+                const agent_state = agent.state;
+                var new_state: IceConnectionState = switch (agent_state) {
+                    .new => .new,
+                    .gathering => .new,
+                    .checking => .checking,
+                    .connected => .connected,
+                    .completed => .completed,
+                    .failed => .failed,
+                    .closed => .closed,
+                };
+                
+                if (self.ice_connection_state != new_state) {
+                    std.log.debug("PeerConnection.monitorIceConnection: ICE 状态变化 {} -> {}", .{ self.ice_connection_state, new_state });
+                    self.updateIceConnectionState(new_state);
+                }
+            }
         }
     }
 
