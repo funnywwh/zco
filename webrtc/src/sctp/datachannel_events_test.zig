@@ -215,4 +215,3 @@ test "DataChannel event callbacks can be cleared" {
     channel.setOnError(null);
     try testing.expect(channel.onerror == null);
 }
-

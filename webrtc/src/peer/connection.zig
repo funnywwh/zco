@@ -129,6 +129,7 @@ pub const PeerConnection = struct {
     srtp_receiver: ?*srtp.Transform = null,
     sctp_association: ?*sctp.Association = null,
     data_channels: std.ArrayList(*sctp.DataChannel), // 数据通道列表
+    next_stream_id: u16 = 0, // 下一个可用的 Stream ID
     ssrc_manager: ?*rtp.SsrcManager = null, // SSRC 管理器
 
     // 媒体轨道
@@ -1381,9 +1382,24 @@ pub const PeerConnection = struct {
         // 创建数据通道
         // DataChannel.init 需要 Association、Stream ID、label、protocol、channel_type、priority、reliability_parameter、ordered
         if (self.sctp_association) |assoc| {
-            // 简化实现：使用固定的 Stream ID（0）
-            // TODO: 实现 Stream ID 管理，从 Association 获取可用的 Stream ID
-            const stream_id: u16 = 0;
+            // 分配 Stream ID（自动递增）
+            const stream_id = self.next_stream_id;
+            self.next_stream_id +%= 1;
+
+            // 检查 Stream ID 是否已存在（避免冲突）
+            if (assoc.stream_manager.findStream(stream_id)) |_| {
+                // Stream 已存在，查找下一个可用的 ID
+                var next_id = stream_id;
+                while (assoc.stream_manager.findStream(next_id) != null) {
+                    next_id +%= 1;
+                    if (next_id == stream_id) {
+                        // 已遍历所有可能的 ID，返回错误
+                        return error.OutOfStreamIds;
+                    }
+                }
+                self.next_stream_id = next_id +% 1;
+            }
+
             const priority: u16 = 0; // 默认优先级
 
             const channel = try self.allocator.create(sctp.DataChannel);
@@ -1427,6 +1443,29 @@ pub const PeerConnection = struct {
         return null;
     }
 
+    /// 根据 stream_id 查找数据通道
+    pub fn findDataChannelByStreamId(self: *const Self, stream_id: u16) ?*sctp.DataChannel {
+        for (self.data_channels.items) |channel| {
+            if (channel.stream_id == stream_id) {
+                return channel;
+            }
+        }
+        return null;
+    }
+
+    /// 移除数据通道
+    pub fn removeDataChannel(self: *Self, channel: *sctp.DataChannel) !void {
+        for (self.data_channels.items, 0..) |ch, i| {
+            if (ch == channel) {
+                _ = self.data_channels.swapRemove(i);
+                channel.deinit();
+                self.allocator.destroy(channel);
+                return;
+            }
+        }
+        return error.ChannelNotFound;
+    }
+
     /// 数据通道选项
     pub const DataChannelOptions = struct {
         ordered: bool = true, // 是否有序传输
@@ -1449,5 +1488,7 @@ pub const PeerConnection = struct {
         NoSsrcManager,
         SenderNotFound,
         NoSctpAssociation,
+        OutOfStreamIds,
+        ChannelNotFound,
     };
 };

@@ -339,15 +339,15 @@ pub const DataChannel = struct {
             if (sctp_stream.receive_buffer.items.len > 0) {
                 // 复制数据并返回
                 const data = try allocator.dupe(u8, sctp_stream.receive_buffer.items);
-                
+
                 // 清空接收缓冲区（简化实现）
                 sctp_stream.receive_buffer.clearRetainingCapacity();
-                
+
                 // 触发 onmessage 事件
                 if (self.onmessage) |callback| {
                     callback(self, data);
                 }
-                
+
                 return data;
             } else {
                 // 没有数据可接收
