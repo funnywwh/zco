@@ -160,8 +160,8 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
             schedule.allocator,
             frame.payload,
             .{},
-        ) catch {
-            std.log.err("[Alice] 解析消息失败（等待 Bob 加入）", .{});
+        ) catch |err| {
+            std.log.err("[Alice] 解析消息失败（等待 Bob 加入）: {}，消息内容: {s}", .{ err, frame.payload });
             continue;
         };
         defer parsed.deinit();
@@ -224,8 +224,8 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                 schedule.allocator,
                 frame.payload,
                 .{},
-            ) catch {
-                std.log.err("[Alice] 解析消息失败（等待 Bob 加入）", .{});
+            ) catch |err| {
+                std.log.err("[Alice] 解析消息失败（等待 Bob 加入）: {}，消息内容: {s}", .{ err, frame.payload });
                 continue;
             };
             defer parsed.deinit();
@@ -629,8 +629,8 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
             schedule.allocator,
             frame.payload,
             .{},
-        ) catch {
-            std.log.err("[Bob] 解析消息失败", .{});
+        ) catch |err| {
+            std.log.err("[Bob] 解析消息失败: {}，消息内容: {s}", .{ err, frame.payload });
             continue;
         };
         defer parsed.deinit();
