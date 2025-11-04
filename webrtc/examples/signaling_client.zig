@@ -268,6 +268,15 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
 
         // 处理消息
         switch (msg.type) {
+            .user_joined => {
+                // 如果收到 user_joined（在等待 answer 期间），记录日志
+                if (msg.user_id) |joined_user_id| {
+                    std.log.info("[Alice] 收到 user_joined 通知: {s} 已加入房间（等待 answer 期间）", .{joined_user_id});
+                }
+                msg.deinit(schedule.allocator);
+                message_count += 1;
+                continue;
+            },
             .answer => {
                 if (msg.sdp) |sdp| {
                     std.log.info("[Alice] 收到 answer，开始解析...", .{});
