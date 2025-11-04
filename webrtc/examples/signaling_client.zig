@@ -493,11 +493,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                         std.log.err("[Bob] 解析 SDP 失败: {}", .{err});
                         continue;
                     };
+                    errdefer remote_sdp.deinit();
+                    
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
                     const remote_sdp_ptr = schedule.allocator.create(webrtc.signaling.sdp.Sdp) catch |err| {
                         std.log.err("[Bob] 分配 SDP 内存失败: {}", .{err});
-                        remote_sdp.deinit();
                         continue;
                     };
                     remote_sdp_ptr.* = remote_sdp;
