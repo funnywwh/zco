@@ -134,6 +134,9 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     const current_co = try schedule.getCurrentCo();
     std.log.info("[Alice] 等待 Bob 加入房间（1 秒）...", .{});
     try current_co.Sleep(1 * std.time.ns_per_s);
+    
+    // 声明 buffer，用于后续读取消息
+    var buffer: [8192]u8 = undefined;
 
     // 创建 offer
     const offer = try pc.createOffer(schedule.allocator);
