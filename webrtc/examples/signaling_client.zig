@@ -221,7 +221,11 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                 if (msg.sdp) |sdp| {
                     var remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
                     defer remote_sdp.deinit();
-                    try pc.setRemoteDescription(&remote_sdp);
+                    // 注意：remote_sdp 是值类型，需要转换为堆分配
+                    // setRemoteDescription 会负责释放旧的描述和新的描述
+                    const remote_sdp_ptr = try schedule.allocator.create(webrtc.signaling.sdp.Sdp);
+                    remote_sdp_ptr.* = remote_sdp;
+                    try pc.setRemoteDescription(remote_sdp_ptr);
                     std.log.info("[Alice] 已设置远程 answer", .{});
                 }
             },
