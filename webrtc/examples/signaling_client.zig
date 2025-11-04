@@ -585,7 +585,6 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 这里暂时跳过，等待后续完善
 
     // 等待连接建立
-    const current_co = try schedule.getCurrentCo();
     try current_co.Sleep(3 * std.time.ns_per_s);
 
     // 接收数据通道消息
