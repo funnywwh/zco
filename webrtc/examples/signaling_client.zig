@@ -131,8 +131,6 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     std.log.info("[Alice] 等待 Bob 加入房间的通知...", .{});
     var buffer: [8192]u8 = undefined;
     var bob_joined = false;
-    const current_co = try schedule.getCurrentCo();
-    const max_wait_time: u64 = 10 * std.time.ns_per_s; // 最多等待 10 秒
     
     // 直接读取消息，readMessage 会阻塞等待数据（在协程中）
     while (!bob_joined) {
