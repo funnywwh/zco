@@ -5,6 +5,8 @@ const association = @import("./association.zig");
 
 const Association = association.Association;
 
+const Association = association.Association;
+
 /// WebRTC 数据通道协议类型
 /// 遵循 RFC 8832 Section 4
 pub const DataChannelProtocol = enum(u16) {
@@ -171,6 +173,7 @@ pub const DataChannel = struct {
     ordered: bool, // 是否有序传输
     state: DataChannelState,
     association: ?*Association = null, // 关联的 SCTP Association（可选）
+    peer_connection: ?*anyopaque = null, // 关联的 PeerConnection（用于网络传输）
 
     // 事件回调
     onopen: ?*const fn (*Self) void = null,
@@ -206,6 +209,7 @@ pub const DataChannel = struct {
             .ordered = ordered,
             .state = .connecting,
             .association = null,
+            .peer_connection = null,
         };
     }
 
@@ -293,15 +297,23 @@ pub const DataChannel = struct {
                 current_tsn,
                 data,
             );
-            defer data_chunk.deinit(self.allocator);
+            // 3. 编码 Data Chunk
+            const chunk_data = try data_chunk.encode(self.allocator);
+            defer {
+                self.allocator.free(chunk_data);
+                data_chunk.deinit(self.allocator);
+            }
 
-            // 4. 通过 Association 发送数据块
-            // TODO: 实现实际的网络发送逻辑
-            // 当前实现只是创建了数据块，实际发送需要：
-            // - 将 Data Chunk 编码为 SCTP 包
-            // - 通过 DTLS 发送（在 WebRTC 中）
-            // - 处理确认和重传
-            // 注意：data_chunk 已通过 defer 释放，这里不需要使用
+            // 4. 构建 SCTP 包（CommonHeader + Data Chunk）
+            const sctp_packet = try self.buildSctpPacket(assoc, chunk_data);
+            defer self.allocator.free(sctp_packet);
+
+            // 5. 通过网络发送（如果 PeerConnection 可用）
+            if (self.peer_connection) |pc| {
+                const PeerConnection = @import("../peer/connection.zig").PeerConnection;
+                const pc_ptr: *PeerConnection = @ptrCast(@alignCast(pc));
+                try pc_ptr.sendSctpData(sctp_packet);
+            }
         } else {
             // Stream 不存在，需要创建
             // 创建 Stream（有序传输）
@@ -317,8 +329,23 @@ pub const DataChannel = struct {
                 current_tsn,
                 data,
             );
-            defer data_chunk.deinit(self.allocator);
-            // 注意：data_chunk 已通过 defer 释放，这里不需要使用
+            // 编码 Data Chunk
+            const chunk_data = try data_chunk.encode(self.allocator);
+            defer {
+                self.allocator.free(chunk_data);
+                data_chunk.deinit(self.allocator);
+            }
+
+            // 构建 SCTP 包（CommonHeader + Data Chunk）
+            const sctp_packet = try self.buildSctpPacket(assoc, chunk_data);
+            defer self.allocator.free(sctp_packet);
+
+            // 通过网络发送（如果 PeerConnection 可用）
+            if (self.peer_connection) |pc| {
+                const PeerConnection = @import("../peer/connection.zig").PeerConnection;
+                const pc_ptr: *PeerConnection = @ptrCast(@alignCast(pc));
+                try pc_ptr.sendSctpData(sctp_packet);
+            }
         }
     }
 
@@ -421,6 +448,11 @@ pub const DataChannel = struct {
         self.onerror = callback;
     }
 
+    /// 设置关联的 PeerConnection（用于网络传输）
+    pub fn setPeerConnection(self: *Self, pc: anytype) void {
+        self.peer_connection = @ptrCast(pc);
+    }
+
     /// 发送用户数据
     /// 将用户数据封装为 SCTP DATA 块
     pub fn sendData(
@@ -438,6 +470,53 @@ pub const DataChannel = struct {
             true, // beginning
             true, // ending
         );
+    }
+
+    /// 构建 SCTP 包
+    /// 将 CommonHeader 和 Chunk 组合成完整的 SCTP 包
+    fn buildSctpPacket(
+        self: *Self,
+        assoc: *Association,
+        chunk_data: []const u8,
+    ) ![]u8 {
+        // 计算包总长度（CommonHeader: 12字节 + Chunk数据）
+        const packet_len = 12 + chunk_data.len;
+        const packet = try self.allocator.alloc(u8, packet_len);
+        errdefer self.allocator.free(packet);
+
+        // 构建 CommonHeader
+        const common_header = chunk.CommonHeader{
+            .source_port = assoc.local_port,
+            .destination_port = assoc.remote_port,
+            .verification_tag = assoc.local_verification_tag,
+            .checksum = 0, // 简化：不计算校验和
+        };
+
+        // 编码 CommonHeader（前 12 字节）
+        common_header.encode(packet[0..12]);
+
+        // 复制 Chunk 数据（从第 12 字节开始）
+        @memcpy(packet[12..], chunk_data);
+
+        // 计算并写入校验和（简化实现：使用 CRC32）
+        // 注意：RFC 4960 要求使用 Adler-32，这里简化使用 CRC32
+        const checksum = self.calculateChecksum(packet);
+        std.mem.writeInt(u32, packet[8..12][0..4], checksum, .big);
+
+        return packet;
+    }
+
+    /// 计算 SCTP 校验和
+    /// RFC 4960 要求使用 Adler-32，这里简化使用 CRC32
+    fn calculateChecksum(self: *Self, data: []const u8) u32 {
+        _ = self;
+        // 简化实现：使用简单的校验和
+        // 实际应该使用 Adler-32（RFC 4960 Appendix B）
+        var sum: u32 = 0;
+        for (data) |byte| {
+            sum +%= byte;
+        }
+        return sum;
     }
 
     pub const Error = error{

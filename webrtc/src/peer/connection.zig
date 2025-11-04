@@ -1419,6 +1419,9 @@ pub const PeerConnection = struct {
             // 设置关联的 SCTP Association
             channel.setAssociation(assoc);
 
+            // 设置关联的 PeerConnection（用于网络传输）
+            channel.setPeerConnection(self);
+
             // 添加到数据通道列表
             try self.data_channels.append(channel);
 
@@ -1464,6 +1467,40 @@ pub const PeerConnection = struct {
             }
         }
         return error.ChannelNotFound;
+    }
+
+    /// 发送 SCTP 数据
+    /// 将 SCTP 数据包通过 DTLS 发送
+    /// 注意：需要在 DTLS 握手完成后才能发送
+    pub fn sendSctpData(self: *Self, sctp_packet: []const u8) !void {
+        if (self.dtls_record == null) {
+            return error.NoDtlsRecord;
+        }
+
+        // 检查 DTLS 握手是否完成
+        if (self.dtls_handshake) |handshake| {
+            if (handshake.state != .handshake_complete) {
+                return error.DtlsHandshakeNotComplete;
+            }
+        } else {
+            return error.NoDtlsHandshake;
+        }
+
+        // 获取远程地址（从 ICE Agent）
+        if (self.ice_agent) |agent| {
+            if (agent.selected_pair) |pair| {
+                const address = std.net.Address.initIp4(pair.remote_address, pair.remote_port);
+
+                // 通过 DTLS Record 发送 SCTP 数据（使用 application_data 类型）
+                if (self.dtls_record) |record| {
+                    try record.send(.application_data, sctp_packet, address);
+                }
+            } else {
+                return error.NoSelectedPair;
+            }
+        } else {
+            return error.NoIceAgent;
+        }
     }
 
     /// 数据通道选项

@@ -216,7 +216,7 @@ test "PeerConnection multiple channels with different stream IDs" {
 
     // 检查是否有重复的 Stream ID
     for (stream_ids, 0..) |id1, i| {
-        for (stream_ids[i + 1..], 0..) |id2, j| {
+        for (stream_ids[i + 1 ..], 0..) |id2, j| {
             try testing.expect(id1 != id2);
             _ = j;
         }
