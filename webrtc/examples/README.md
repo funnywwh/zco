@@ -129,6 +129,26 @@ zig build run-udp-test
 
 4. **房间管理**：信令服务器支持多房间，每个房间可以有多个用户。
 
+## 自动化测试
+
+### 使用测试脚本
+
+运行完整的端到端测试（包括信令服务器和两个客户端）：
+
+```bash
+cd webrtc/examples
+./test_signaling.sh
+```
+
+测试脚本会：
+1. 启动信令服务器
+2. 启动 Alice 和 Bob 客户端
+3. 等待连接建立和数据通道通信
+4. 分析日志并显示关键步骤检查结果
+5. 自动清理所有进程
+
+测试日志保存在 `/tmp/webrtc_test_*/` 目录中。
+
 ## 故障排除
 
 ### 连接被拒绝
@@ -139,9 +159,31 @@ zig build run-udp-test
 
 如果端口 8080 被占用，可以修改 `signaling_server.zig` 中的端口号。
 
+### ICE 连接未建立
+
+检查：
+1. 是否收到了远程 ICE candidates
+2. ICE Agent 状态是否变为 `checking` 或 `connected`
+3. 查看日志中的 ICE 连接状态变化
+
+### DTLS 握手未完成
+
+检查：
+1. ICE 连接是否已建立（DTLS 握手需要先建立 ICE 连接）
+2. 查看日志中的 DTLS 握手状态
+3. 检查是否有 DTLS 握手相关的错误
+
 ### 数据通道未建立
 
 检查：
 1. ICE 连接是否成功建立
-2. DTLS 握手是否完成
-3. SCTP Verification Tags 是否正确设置（当前示例中已简化）
+2. DTLS 握手是否完成（数据通道需要 DTLS 握手完成）
+3. 是否在 DTLS 握手完成后才创建数据通道
+4. SCTP Verification Tags 是否正确设置（当前示例中已简化）
+
+### WebSocket 连接关闭（EOF）
+
+如果看到 "ConnectionClosed" 或 "EOF" 错误：
+- 这通常是正常的连接关闭，不是错误
+- 如果发生在连接建立之前，可能是服务器或客户端提前退出
+- 检查日志中的其他错误信息
