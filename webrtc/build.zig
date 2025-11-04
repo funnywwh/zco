@@ -301,6 +301,16 @@ pub fn build(b: *std.Build) void {
     datachannel_send_tests.root_module.addImport("nets", nets);
     const run_datachannel_send_tests = b.addRunArtifact(datachannel_send_tests);
 
+    // SCTP DataChannel 事件测试
+    const datachannel_events_tests = b.addTest(.{
+        .root_source_file = b.path("src/sctp/datachannel_events_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    datachannel_events_tests.root_module.addImport("zco", zco);
+    datachannel_events_tests.root_module.addImport("nets", nets);
+    const run_datachannel_events_tests = b.addRunArtifact(datachannel_events_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -332,4 +342,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_codec_tests.step);
     test_step.dependOn(&run_datachannel_tests.step);
     test_step.dependOn(&run_datachannel_send_tests.step);
+    test_step.dependOn(&run_datachannel_events_tests.step);
 }

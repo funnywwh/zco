@@ -170,6 +170,13 @@ pub const DataChannel = struct {
     reliability_parameter: u32,
     ordered: bool, // 是否有序传输
     state: DataChannelState,
+    association: ?*Association = null, // 关联的 SCTP Association（可选）
+
+    // 事件回调
+    onopen: ?*const fn (*Self) void = null,
+    onclose: ?*const fn (*Self) void = null,
+    onmessage: ?*const fn (*Self, []const u8) void = null,
+    onerror: ?*const fn (*Self, anyerror) void = null,
 
     /// 初始化数据通道
     pub fn init(
@@ -336,6 +343,11 @@ pub const DataChannel = struct {
                 // 清空接收缓冲区（简化实现）
                 sctp_stream.receive_buffer.clearRetainingCapacity();
                 
+                // 触发 onmessage 事件
+                if (self.onmessage) |callback| {
+                    callback(self, data);
+                }
+                
                 return data;
             } else {
                 // 没有数据可接收
@@ -348,8 +360,25 @@ pub const DataChannel = struct {
     }
 
     /// 设置状态
+    /// 状态变化时会触发相应的事件回调
     pub fn setState(self: *Self, new_state: DataChannelState) void {
+        const old_state = self.state;
         self.state = new_state;
+
+        // 触发状态变化事件
+        switch (new_state) {
+            .open => {
+                if (old_state != .open and self.onopen) |callback| {
+                    callback(self);
+                }
+            },
+            .closed => {
+                if (old_state != .closed and self.onclose) |callback| {
+                    callback(self);
+                }
+            },
+            else => {},
+        }
     }
 
     /// 获取状态
@@ -370,6 +399,26 @@ pub const DataChannel = struct {
     /// 获取关联的 SCTP Association
     pub fn getAssociation(self: *const Self) ?*Association {
         return self.association;
+    }
+
+    /// 设置 onopen 回调
+    pub fn setOnOpen(self: *Self, callback: ?*const fn (*Self) void) void {
+        self.onopen = callback;
+    }
+
+    /// 设置 onclose 回调
+    pub fn setOnClose(self: *Self, callback: ?*const fn (*Self) void) void {
+        self.onclose = callback;
+    }
+
+    /// 设置 onmessage 回调
+    pub fn setOnMessage(self: *Self, callback: ?*const fn (*Self, []const u8) void) void {
+        self.onmessage = callback;
+    }
+
+    /// 设置 onerror 回调
+    pub fn setOnError(self: *Self, callback: ?*const fn (*Self, anyerror) void) void {
+        self.onerror = callback;
     }
 
     /// 发送用户数据

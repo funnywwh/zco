@@ -128,6 +128,7 @@ pub const PeerConnection = struct {
     srtp_sender: ?*srtp.Transform = null,
     srtp_receiver: ?*srtp.Transform = null,
     sctp_association: ?*sctp.Association = null,
+    data_channels: std.ArrayList(*sctp.DataChannel), // 数据通道列表
     ssrc_manager: ?*rtp.SsrcManager = null, // SSRC 管理器
 
     // 媒体轨道
@@ -160,6 +161,7 @@ pub const PeerConnection = struct {
             .configuration = config,
             .senders = std.ArrayList(*Sender).init(allocator),
             .receivers = std.ArrayList(*Receiver).init(allocator),
+            .data_channels = std.ArrayList(*sctp.DataChannel).init(allocator),
         };
 
         // 初始化 ICE Agent
@@ -217,6 +219,13 @@ pub const PeerConnection = struct {
             receiver.deinit();
         }
         self.receivers.deinit();
+
+        // 释放所有数据通道
+        for (self.data_channels.items) |channel| {
+            channel.deinit();
+            self.allocator.destroy(channel);
+        }
+        self.data_channels.deinit();
 
         if (self.srtp_receiver) |transform_ptr| {
             transform_ptr.ctx.deinit();
@@ -1394,13 +1403,28 @@ pub const PeerConnection = struct {
             // 设置关联的 SCTP Association
             channel.setAssociation(assoc);
 
-            // 添加到数据通道列表（如果存在）
-            // TODO: 实现数据通道列表管理
+            // 添加到数据通道列表
+            try self.data_channels.append(channel);
 
             return channel;
         } else {
             return error.NoSctpAssociation;
         }
+    }
+
+    /// 获取所有数据通道
+    pub fn getDataChannels(self: *const Self) []*sctp.DataChannel {
+        return self.data_channels.items;
+    }
+
+    /// 根据 label 查找数据通道
+    pub fn findDataChannel(self: *const Self, label: []const u8) ?*sctp.DataChannel {
+        for (self.data_channels.items) |channel| {
+            if (std.mem.eql(u8, channel.label, label)) {
+                return channel;
+            }
+        }
+        return null;
     }
 
     /// 数据通道选项
