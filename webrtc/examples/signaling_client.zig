@@ -126,17 +126,81 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         }
     }
 
-    // 等待一小段时间，让 Bob 有时间加入房间
-    // 注意：如果 Bob 已经加入，服务器会发送 user_joined 通知，但我们不在这里等待
-    // 因为 readMessage 是阻塞的，会导致程序卡住
-    // 我们直接等待一小段时间，然后发送 offer
-    // 如果 Bob 还没加入，他会在加入后收到 offer
-    const current_co = try schedule.getCurrentCo();
-    std.log.info("[Alice] 等待 Bob 加入房间（1 秒）...", .{});
-    try current_co.Sleep(1 * std.time.ns_per_s);
-
-    // 声明 buffer，用于后续读取消息
+    // 等待 Bob 的 user_joined 通知，然后发送 offer
+    // 服务器会在 Bob 加入时发送 user_joined 通知给 Alice
+    std.log.info("[Alice] 等待 Bob 加入房间的通知...", .{});
     var buffer: [8192]u8 = undefined;
+    var bob_joined = false;
+    const current_co = try schedule.getCurrentCo();
+    const max_wait_time: u64 = 10 * std.time.ns_per_s; // 最多等待 10 秒
+    const check_interval: u64 = 100 * std.time.ns_per_ms; // 每 100ms 检查一次
+    var waited: u64 = 0;
+    
+    while (waited < max_wait_time and !bob_joined) {
+        // 尝试读取消息
+        const frame = ws.readMessage(buffer[0..]) catch |err| {
+            if (err == websocket.WebSocketError.ConnectionClosed) {
+                std.log.info("[Alice] WebSocket 连接已关闭（EOF）", .{});
+                break;
+            } else {
+                std.log.err("[Alice] 读取消息失败: {}", .{err});
+                // 等待一段时间后重试
+                try current_co.Sleep(check_interval);
+                waited += check_interval;
+                continue;
+            }
+        };
+        defer if (frame.payload.len > buffer.len) ws.allocator.free(frame.payload);
+
+        if (frame.opcode == .CLOSE) {
+            std.log.info("[Alice] WebSocket 连接已关闭", .{});
+            break;
+        }
+
+        if (frame.opcode != .TEXT) {
+            continue;
+        }
+
+        // 解析信令消息
+        var parsed = std.json.parseFromSlice(
+            SignalingMessage,
+            schedule.allocator,
+            frame.payload,
+            .{},
+        ) catch |err| {
+            std.log.err("[Alice] 解析消息失败（等待 Bob 加入）: {}，消息内容: {s}", .{ err, frame.payload });
+            continue;
+        };
+        defer parsed.deinit();
+        var msg = parsed.value;
+
+        std.log.info("[Alice] 收到消息类型: {}", .{msg.type});
+
+        // 处理 user_joined 通知
+        if (msg.type == .user_joined) {
+            if (msg.user_id) |joined_user_id| {
+                std.log.info("[Alice] 收到 user_joined 通知: {s} 已加入房间", .{joined_user_id});
+                if (std.mem.eql(u8, joined_user_id, "bob")) {
+                    bob_joined = true;
+                    std.log.info("[Alice] Bob 已上线，准备发送 offer", .{});
+                }
+            }
+            msg.deinit(schedule.allocator);
+            if (bob_joined) break;
+            continue;
+        } else {
+            // 其他消息类型，先保存起来，稍后处理
+            std.log.info("[Alice] 收到其他类型消息: {}（等待 Bob 加入后处理）", .{msg.type});
+            msg.deinit(schedule.allocator);
+            continue;
+        }
+    }
+
+    if (!bob_joined) {
+        std.log.warn("[Alice] 等待超时，未收到 Bob 的 user_joined 通知，继续发送 offer（Bob 可能稍后加入）", .{});
+    } else {
+        std.log.info("[Alice] Bob 已上线，准备发送 offer", .{});
+    }
 
     // 创建 offer
     const offer = try pc.createOffer(schedule.allocator);
