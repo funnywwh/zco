@@ -25,16 +25,14 @@ pub const OpusCodec = struct {
             .bitrate = bitrate,
         };
 
-        const vtable = struct {
-            pub const vtbl: codec.Codec.Encoder.VTable = .{
-                .encode = encodeImpl,
-                .deinit = deinitEncoderImpl,
-                .getInfo = getInfoImpl,
-            };
+        const vtbl: codec.Codec.Encoder.VTable = .{
+            .encode = encodeImpl,
+            .deinit = deinitEncoderImpl,
+            .getInfo = getInfoImpl,
         };
 
         return codec.Codec.Encoder{
-            .vtable = &vtbl.vtbl,
+            .vtable = &vtbl,
             .context = self,
         };
     }
@@ -51,16 +49,14 @@ pub const OpusCodec = struct {
             .bitrate = 0, // 解码器不需要 bitrate
         };
 
-        const vtable = struct {
-            pub const vtbl: codec.Codec.Decoder.VTable = .{
-                .decode = decodeImpl,
-                .deinit = deinitDecoderImpl,
-                .getInfo = getInfoImpl,
-            };
+        const vtbl: codec.Codec.Decoder.VTable = .{
+            .decode = decodeImpl,
+            .deinit = deinitDecoderImpl,
+            .getInfo = getInfoImpl,
         };
 
         return codec.Codec.Decoder{
-            .vtable = &vtbl.vtbl,
+            .vtable = &vtbl,
             .context = self,
         };
     }
@@ -68,7 +64,6 @@ pub const OpusCodec = struct {
     /// 编码实现（占位符）
     fn encodeImpl(context: *anyopaque, input: []const u8, allocator: std.mem.Allocator) ![]u8 {
         _ = context;
-        _ = allocator;
         // TODO: 实现实际的 Opus 编码
         // 当前返回输入数据的副本作为占位符
         return try allocator.dupe(u8, input);
@@ -77,7 +72,6 @@ pub const OpusCodec = struct {
     /// 解码实现（占位符）
     fn decodeImpl(context: *anyopaque, input: []const u8, allocator: std.mem.Allocator) ![]u8 {
         _ = context;
-        _ = allocator;
         // TODO: 实现实际的 Opus 解码
         // 当前返回输入数据的副本作为占位符
         return try allocator.dupe(u8, input);
