@@ -44,10 +44,10 @@ pub fn main() !void {
     setupDataChannelEvents(channel);
 
     // 在协程中发送消息
-    _ = try schedule.go(sendMessages, .{channel});
+    _ = try schedule.go(sendMessages, .{ channel, schedule });
 
     // 在协程中接收消息（模拟接收流程）
-    _ = try schedule.go(receiveMessages, .{pc});
+    _ = try schedule.go(receiveMessages, .{ pc, schedule });
 
     std.log.info("开始发送和接收消息...", .{});
     std.log.info("（注意：这是一个演示，实际需要完整的连接建立）", .{});
@@ -96,7 +96,7 @@ fn setupDataChannelEvents(channel: *DataChannel) void {
 }
 
 /// 发送消息协程
-fn sendMessages(channel: *DataChannel) !void {
+fn sendMessages(channel: *DataChannel, schedule: *zco.Schedule) !void {
     const messages = [_][]const u8{
         "Hello, WebRTC!",
         "这是第一条消息",
@@ -105,7 +105,9 @@ fn sendMessages(channel: *DataChannel) !void {
     };
 
     for (messages, 0..) |msg, i| {
-        try zco.sleep(1000); // 等待 1 秒
+        // 休眠 1 秒
+        const current_co = try schedule.getCurrentCo();
+        try current_co.Sleep(1000 * std.time.ns_per_ms);
 
         std.log.info("[发送] 消息 {}: {s}", .{ i + 1, msg });
 
@@ -120,7 +122,7 @@ fn sendMessages(channel: *DataChannel) !void {
 }
 
 /// 接收消息协程（模拟）
-fn receiveMessages(pc: *PeerConnection) !void {
+fn receiveMessages(pc: *PeerConnection, schedule: *zco.Schedule) !void {
     // 在实际应用中，这里应该持续监听 DTLS 接收
     // 并调用 pc.recvSctpData() 来处理接收到的数据
 
@@ -128,7 +130,9 @@ fn receiveMessages(pc: *PeerConnection) !void {
 
     var count: u32 = 0;
     while (count < 10) {
-        try zco.sleep(500); // 每 500ms 检查一次
+        // 休眠 500ms
+        const current_co = try schedule.getCurrentCo();
+        try current_co.Sleep(500 * std.time.ns_per_ms);
 
         // 尝试接收数据（在实际应用中，这应该在 DTLS 握手完成后调用）
         pc.recvSctpData() catch |err| {
