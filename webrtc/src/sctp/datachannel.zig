@@ -289,7 +289,7 @@ pub const DataChannel = struct {
             // 获取当前 TSN（简化实现：使用递增的 TSN）
             const current_tsn = assoc.next_tsn;
             assoc.next_tsn +%= 1;
-            const data_chunk = try self.sendData(
+            var data_chunk = try self.sendData(
                 sctp_stream,
                 self.allocator,
                 current_tsn,
@@ -321,7 +321,7 @@ pub const DataChannel = struct {
             // 创建并发送数据块
             const current_tsn = assoc.next_tsn;
             assoc.next_tsn +%= 1;
-            const data_chunk = try self.sendData(
+            var data_chunk = try self.sendData(
                 sctp_stream,
                 self.allocator,
                 current_tsn,
