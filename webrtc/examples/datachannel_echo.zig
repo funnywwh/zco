@@ -290,10 +290,10 @@ fn setupBobChannelEvents(channel: *DataChannel, _: *PeerConnection) void {
             // 回显消息（在协程中发送，避免阻塞）
             // 注意：这里简化实现，直接发送
             // 在实际应用中，应该在协程中发送
-            ch.send(data, null) catch |err| {
-                std.log.err("[Bob] 回显失败: {}", .{err});
-            } else {
+            if (ch.send(data, null)) |_| {
                 std.log.info("[Bob] 消息已回显: {s}", .{data});
+            } else |err| {
+                std.log.err("[Bob] 回显失败: {}", .{err});
             }
         }
     };
@@ -345,10 +345,9 @@ fn echoMessages(pc: *PeerConnection, _: *DataChannel, schedule: *zco.Schedule) !
 
     // 持续监听，直到收到足够的数据或超时
     var count: u32 = 0;
-    var message_count: u32 = 0;
-    const max_messages = 10; // 最多接收 10 条消息（包括回显）
+    const max_count = 100;
 
-    while (count < 100 and message_count < max_messages) {
+    while (count < max_count) {
         const current_co = try schedule.getCurrentCo();
         try current_co.Sleep(200 * std.time.ns_per_ms);
 
@@ -357,12 +356,12 @@ fn echoMessages(pc: *PeerConnection, _: *DataChannel, schedule: *zco.Schedule) !
             // 忽略预期的错误（没有数据可接收是正常的）
             // DTLS Record.recv() 会阻塞等待数据，如果没有数据会返回错误
             // 这里简化处理，忽略所有错误继续等待
-            _ = err;
+            _ = err catch {};
         };
 
         count += 1;
     }
 
-    std.log.info("[Bob] 接收监听已停止 (收到约 {} 条消息)", .{message_count});
+    std.log.info("[Bob] 接收监听已停止", .{});
 }
 
