@@ -126,6 +126,11 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         }
     }
 
+    // 等待一段时间，确保 Bob 有足够时间加入房间
+    const current_co_alice = try schedule.getCurrentCo();
+    std.log.info("[Alice] 等待 Bob 加入房间...", .{});
+    try current_co_alice.Sleep(2 * std.time.ns_per_s);
+
     // 创建 offer
     const offer = try pc.createOffer(schedule.allocator);
     // 注意：offer 会被 setLocalDescription 接管，不需要手动 deinit
@@ -343,7 +348,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     }
 
     // 等待一段时间，让连接建立
-    try current_co.Sleep(3 * std.time.ns_per_s);
+    try current_co_alice.Sleep(3 * std.time.ns_per_s);
 
     // 发送测试消息
     if (channel.getState() == .open) {
@@ -356,7 +361,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     }
 
     // 等待接收消息
-    try current_co.Sleep(2 * std.time.ns_per_s);
+    try current_co_alice.Sleep(2 * std.time.ns_per_s);
 }
 
 /// 运行 Bob（接收方）
