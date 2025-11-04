@@ -126,13 +126,15 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         }
     }
 
-    // 等待 Bob 的 user_joined 通知后再发送 offer
-    std.log.info("[Alice] 等待 Bob 加入房间...", .{});
+    // 检查 Bob 是否已在房间里
+    std.log.info("[Alice] 检查 Bob 是否已在房间里...", .{});
     var buffer: [8192]u8 = undefined;
     var bob_joined = false;
-    var wait_count: u32 = 0;
+    var check_count: u32 = 0;
+    const max_check_count: u32 = 5; // 最多检查 5 次（等待服务器通知）
 
-    while (wait_count < 20 and !bob_joined) {
+    // 先检查一次，看是否能立即收到 Bob 的 user_joined 通知
+    while (check_count < max_check_count and !bob_joined) {
         const frame = ws.readMessage(buffer[0..]) catch |err| {
             if (err == websocket.WebSocketError.ConnectionClosed) {
                 std.log.info("[Alice] WebSocket 连接已关闭（EOF）", .{});
@@ -178,21 +180,84 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                     }
                 }
                 msg.deinit(schedule.allocator);
-                wait_count += 1;
+                check_count += 1;
                 continue;
             },
             else => {
                 // 其他消息类型，先保存起来，稍后处理
-                std.log.info("[Alice] 收到其他类型消息: {}（等待 Bob 加入后处理）", .{msg.type});
+                std.log.info("[Alice] 收到其他类型消息: {}（检查 Bob 状态期间）", .{msg.type});
                 msg.deinit(schedule.allocator);
-                wait_count += 1;
+                check_count += 1;
                 continue;
             },
         }
     }
 
-    if (!bob_joined) {
-        std.log.warn("[Alice] 未收到 Bob 的 user_joined 通知，继续发送 offer", .{});
+    if (bob_joined) {
+        std.log.info("[Alice] Bob 已在房间里，可以直接发送 offer", .{});
+    } else {
+        std.log.info("[Alice] Bob 不在房间里，等待 Bob 加入...", .{});
+        // Bob 不在，继续等待 user_joined 通知
+        while (check_count < 20 and !bob_joined) {
+            const frame = ws.readMessage(buffer[0..]) catch |err| {
+                if (err == websocket.WebSocketError.ConnectionClosed) {
+                    std.log.info("[Alice] WebSocket 连接已关闭（EOF）", .{});
+                } else {
+                    std.log.err("[Alice] 读取消息失败: {}", .{err});
+                }
+                break;
+            };
+            defer if (frame.payload.len > buffer.len) ws.allocator.free(frame.payload);
+
+            if (frame.opcode == .CLOSE) {
+                std.log.info("[Alice] WebSocket 连接已关闭", .{});
+                break;
+            }
+
+            if (frame.opcode != .TEXT) {
+                continue;
+            }
+
+            // 解析信令消息
+            var parsed = std.json.parseFromSlice(
+                SignalingMessage,
+                schedule.allocator,
+                frame.payload,
+                .{},
+            ) catch {
+                std.log.err("[Alice] 解析消息失败（等待 Bob 加入）", .{});
+                continue;
+            };
+            defer parsed.deinit();
+            var msg = parsed.value;
+
+            std.log.info("[Alice] 收到消息类型: {}", .{msg.type});
+
+            // 只处理 user_joined 通知
+            if (msg.type == .user_joined) {
+                if (msg.user_id) |joined_user_id| {
+                    std.log.info("[Alice] 收到 user_joined 通知: {s} 已加入房间", .{joined_user_id});
+                    if (std.mem.eql(u8, joined_user_id, "bob")) {
+                        bob_joined = true;
+                        std.log.info("[Alice] Bob 已上线，准备发送 offer", .{});
+                    }
+                }
+                msg.deinit(schedule.allocator);
+                check_count += 1;
+                if (bob_joined) break;
+                continue;
+            } else {
+                // 其他消息类型，稍后处理
+                std.log.info("[Alice] 收到其他类型消息: {}（等待 Bob 加入后处理）", .{msg.type});
+                msg.deinit(schedule.allocator);
+                check_count += 1;
+                continue;
+            }
+        }
+
+        if (!bob_joined) {
+            std.log.warn("[Alice] 等待超时，未收到 Bob 的 user_joined 通知，继续发送 offer", .{});
+        }
     }
 
     // 创建 offer

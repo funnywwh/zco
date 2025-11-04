@@ -229,10 +229,31 @@ pub const SignalingServer = struct {
 
                 client.room_id = try self.allocator.dupe(u8, room_id);
                 client.user_id = user_id_dup;
-
+                
                 std.log.info("[服务器] 房间 {s} 当前有 {} 个用户", .{ room_id, room_entry.value_ptr.*.users.count() });
 
-                // 广播 user_joined 通知给房间中的其他用户（不包括刚加入的用户）
+                // 1. 通知新加入的用户：房间中已有的其他用户
+                var it = room_entry.value_ptr.*.users.iterator();
+                while (it.next()) |entry| {
+                    const existing_user_id = entry.key_ptr.*;
+                    // 不通知自己
+                    if (!std.mem.eql(u8, existing_user_id, user_id)) {
+                        const room_id_for_existing = try self.allocator.dupe(u8, room_id);
+                        const existing_user_id_dup = try self.allocator.dupe(u8, existing_user_id);
+                        var existing_user_msg = message.SignalingMessage{
+                            .type = .user_joined,
+                            .room_id = room_id_for_existing,
+                            .user_id = existing_user_id_dup,
+                        };
+                        defer existing_user_msg.deinit(self.allocator);
+                        const existing_user_json = try (@as(*const message.SignalingMessage, &existing_user_msg)).toJson(self.allocator);
+                        defer self.allocator.free(existing_user_json);
+                        std.log.info("[服务器] 通知新用户 {s}: 房间中已有用户 {s}", .{ user_id, existing_user_id });
+                        try client.send(existing_user_json);
+                    }
+                }
+
+                // 2. 广播新用户加入的通知给房间中的其他用户（不包括刚加入的用户）
                 if (room_entry.value_ptr.*.users.count() > 1) {
                     const room_id_dup = try self.allocator.dupe(u8, room_id);
                     const user_id_for_notify = try self.allocator.dupe(u8, user_id);
