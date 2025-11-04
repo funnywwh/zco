@@ -169,9 +169,11 @@ pub const SignalingServer = struct {
                     if (room.users.fetchRemove(user_id)) |entry| {
                         server.allocator.free(entry.key);
                         // 通知其他用户
+                        // 注意：user_id 是已经分配的内存，会被 leave_msg.deinit 释放
+                        const user_id_dup = try server.allocator.dupe(u8, user_id);
                         var leave_msg = message.SignalingMessage{
                             .type = .leave,
-                            .user_id = user_id,
+                            .user_id = user_id_dup,
                         };
                         defer leave_msg.deinit(server.allocator);
                         const leave_json = try (@as(*const message.SignalingMessage, &leave_msg)).toJson(server.allocator);
