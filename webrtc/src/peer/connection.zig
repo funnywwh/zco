@@ -168,7 +168,6 @@ pub const PeerConnection = struct {
         // 初始化 ICE Agent（组件 ID 1 表示 RTP）
         self.ice_agent = try ice.agent.IceAgent.init(allocator, schedule, 1);
         errdefer if (self.ice_agent) |agent| agent.deinit();
-        }
 
         // 初始化 DTLS 证书（生成自签名证书）
         self.dtls_certificate = try Self.initDtlsCertificate(allocator);
@@ -1351,7 +1350,7 @@ pub const PeerConnection = struct {
             // 创建 SCTP Association
             // 注意：需要从 DTLS 获取传输层信息
             // 简化实现：使用默认配置
-            const assoc = try sctp.Association.init(self.allocator, self.schedule);
+            const assoc = try sctp.Association.init(self.allocator, 5000);
             errdefer assoc.deinit();
             self.sctp_association = assoc;
         }
