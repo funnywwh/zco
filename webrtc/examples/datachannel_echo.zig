@@ -287,10 +287,14 @@ fn setupBobChannelEvents(channel: *DataChannel, _: *PeerConnection) void {
     const OnMessageContext = struct {
         fn callback(ch: *DataChannel, data: []const u8) void {
             std.log.info("[Bob] 收到消息: {s}，准备回显", .{data});
-            // 回显消息
+            // 回显消息（在协程中发送，避免阻塞）
+            // 注意：这里简化实现，直接发送
+            // 在实际应用中，应该在协程中发送
             ch.send(data, null) catch |err| {
                 std.log.err("[Bob] 回显失败: {}", .{err});
-            };
+            } else {
+                std.log.info("[Bob] 消息已回显: {s}", .{data});
+            }
         }
     };
     channel.setOnMessage(OnMessageContext.callback);
@@ -351,15 +355,12 @@ fn echoMessages(pc: *PeerConnection, _: *DataChannel, schedule: *zco.Schedule) !
         // 接收 SCTP 数据
         pc.recvSctpData() catch |err| {
             // 忽略预期的错误（没有数据可接收是正常的）
-            if (err == error.WouldBlock) {
-                // 这是正常的，继续等待
-            } else if (err != error.NoDtlsRecord and err != error.NoUdpSocket) {
-                std.log.warn("[Bob] 接收错误: {}", .{err});
-            }
+            // DTLS Record.recv() 会阻塞等待数据，如果没有数据会返回错误
+            // 这里简化处理，忽略所有错误继续等待
+            _ = err;
         };
 
         count += 1;
-        message_count += 1; // 简化：每次循环计数
     }
 
     std.log.info("[Bob] 接收监听已停止 (收到约 {} 条消息)", .{message_count});
