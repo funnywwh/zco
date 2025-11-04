@@ -207,11 +207,25 @@ pub fn main() !void {
 - **运行**: `cd benchmarks && ./quick_test.sh`
 - **说明**: 提供完整的性能测试和对比分析
 
-### 6. WebRTC 模块 (`webrtc/`) 🚧 (开发中)
+### 6. WebRTC 模块 (`webrtc/`) ✅ (核心功能已完成)
 - **功能**: 完整的 WebRTC 协议栈实现
-- **状态**: 阶段1已完成（UDP、SDP、信令服务器）
+- **状态**: 阶段 1-8 核心功能已完成，阶段 9 进行中
 - **运行**: `cd webrtc && zig build run`
-- **说明**: 支持音视频通话，从零实现所有协议
+- **说明**: 从零实现所有 WebRTC 协议，支持音视频通话和数据通道
+- **已完成**:
+  - ✅ UDP、SDP、信令消息
+  - ✅ STUN、ICE Agent、TURN
+  - ✅ DTLS（记录层、握手、证书、ECDHE）
+  - ✅ SRTP（加密/解密、AES-128-CTR、HMAC-SHA1）
+  - ✅ RTP/RTCP（包解析、SSRC 管理、统计信息）
+  - ✅ SCTP（关联、流、数据通道、网络传输）
+  - ✅ MediaStreamTrack、RTCRtpSender/Receiver
+  - ✅ RTCPeerConnection（状态机、事件系统、完整集成）
+  - ✅ 216/216 单元测试通过
+- **待完成**:
+  - 🔄 实际的 Opus/VP8 编解码器实现（当前为占位实现）
+  - 🔄 数据通道接收流程（从 DTLS 接收并解析 SCTP 包）
+  - 🔄 示例应用（音视频通话、数据通道）
 
 ## 性能测试
 
@@ -391,7 +405,7 @@ ZCO 正在实现完整的 WebRTC 协议栈，支持音视频通话功能。这�
 - [ ] WebSocket 信令服务器（进行中）
 - [ ] 房间管理和用户配对
 
-### 阶段 2: ICE 和 NAT 穿透 🔄 (进行中)
+### 阶段 2: ICE 和 NAT 穿透 ✅ (已完成)
 - [x] STUN 协议实现（RFC 5389）
   - STUN 消息头编码/解析
   - 支持 MAPPED-ADDRESS 和 XOR-MAPPED-ADDRESS 属性
@@ -405,51 +419,77 @@ ZCO 正在实现完整的 WebRTC 协议栈，支持音视频通话功能。这�
   - 优先级计算函数
   - 支持 IPv4 和 IPv6 地址
   - 完整单元测试（`webrtc/src/ice/candidate_test.zig`）
-- [ ] ICE Agent 实现
-  - [ ] Candidate 收集（Host/ServerReflexive/Relay）
-  - [ ] Connectivity Checks
-  - [ ] ICE 状态机（NEW/CHECKING/CONNECTED/FAILED）
-- [ ] TURN 协议实现（RFC 5766，可选）
+- [x] ICE Agent 实现
+  - [x] Candidate 收集（Host/ServerReflexive/Relay）
+  - [x] Connectivity Checks（STUN Binding Request/Response）
+  - [x] ICE 状态机（NEW/CHECKING/CONNECTED/FAILED/COMPLETED/CLOSED）
+  - 完整单元测试（`webrtc/src/ice/agent_test.zig`）
+- [x] TURN 协议实现（RFC 5766）
+  - TURN Allocation 请求/响应
+  - TURN Refresh 机制
+  - CreatePermission 请求
+  - Send Indication 和 Data Indication
+  - 完整单元测试（`webrtc/src/ice/turn_test.zig`）
 
-### 阶段 3: DTLS 握手和安全
-- [ ] DTLS 记录层实现（RFC 6347）
-- [ ] DTLS 握手协议
-- [ ] 证书处理（自签名证书生成/验证）
-- [ ] Cipher Suite 支持（AES-128-GCM）
-- [ ] DTLS-SRTP 密钥派生
+### 阶段 3: DTLS 握手和安全 ✅ (已完成)
+- [x] DTLS 记录层实现（RFC 6347）
+- [x] DTLS 握手协议（客户端/服务器端）
+- [x] 证书处理（自签名证书生成/验证）
+- [x] Cipher Suite 支持（AES-128-GCM）
+- [x] ECDHE 密钥交换（P-256 曲线）
+- [x] DTLS-SRTP 密钥派生（PRF-SHA256）
+- [x] Replay Protection（滑动窗口）
+- 完整单元测试（`webrtc/src/dtls/*_test.zig`）
 
-### 阶段 4: SRTP 媒体加密
-- [ ] SRTP 上下文初始化
-- [ ] Master Key 和 Salt 派生
-- [ ] SRTP/SRTCP 包加密/解密
-- [ ] Replay Protection
+### 阶段 4: SRTP 媒体加密 ✅ (已完成)
+- [x] SRTP 上下文初始化
+- [x] Master Key 和 Salt 派生
+- [x] SRTP/SRTCP 包加密/解密
+- [x] AES-128-CTR 加密/解密
+- [x] HMAC-SHA1 认证
+- [x] Replay Protection（64位滑动窗口）
+- 完整单元测试（`webrtc/src/srtp/*_test.zig`）
 
-### 阶段 5: RTP/RTCP 媒体传输
-- [ ] RTP 包解析和构建
-- [ ] SSRC 管理和序列号处理
-- [ ] RTCP 协议实现（SR/RR/SDES/BYE）
-- [ ] 带宽和统计信息收集
+### 阶段 5: RTP/RTCP 媒体传输 ✅ (已完成)
+- [x] RTP 包解析和构建
+- [x] SSRC 管理和序列号处理
+- [x] RTCP 协议实现（SR/RR/SDES/BYE）
+- [x] 带宽和统计信息收集
+- 完整单元测试（`webrtc/src/rtp/*_test.zig`）
 
-### 阶段 6: SCTP 数据通道
-- [ ] SCTP 关联建立
-- [ ] SCTP 块格式处理
-- [ ] 流控制和有序/无序传输
-- [ ] 数据通道封装（RFC 8832）
+### 阶段 6: SCTP 数据通道 ✅ (已完成)
+- [x] SCTP 关联建立（四路握手）
+- [x] SCTP 块格式处理（所有 Chunk 类型）
+- [x] 流控制和有序/无序传输
+- [x] SCTP Stream Manager 和 Stream 管理
+- [x] 数据通道封装（RFC 8832）
+- [x] 数据通道事件系统（onopen, onclose, onmessage, onerror）
+- [x] Stream ID 自动分配
+- [x] 网络传输（通过 DTLS 发送 SCTP 数据包）
+- 完整单元测试（`webrtc/src/sctp/*_test.zig`）
 
-### 阶段 7: 媒体处理
-- [ ] 音频编解码器接口
-- [ ] Opus 编码器/解码器（RFC 6716）
-- [ ] G.711 (PCMU/PCMA) 支持
-- [ ] 视频编解码器接口
-- [ ] VP8/VP9 基础解码器
-- [ ] MediaStreamTrack 抽象
+### 阶段 7: 媒体处理 🔄 (部分完成)
+- [x] 音频编解码器接口
+- [x] 视频编解码器接口
+- [x] MediaStreamTrack 抽象
+- [x] Opus 编解码器占位实现
+- [x] VP8 编解码器占位实现
+- [ ] 实际的 Opus 编码/解码实现
+- [ ] 实际的 VP8 编码/解码实现
+- 完整单元测试（`webrtc/src/media/*_test.zig`）
 
-### 阶段 8: PeerConnection 整合
-- [ ] RTCPeerConnection 实现
-- [ ] createOffer/createAnswer
-- [ ] setLocalDescription/setRemoteDescription
-- [ ] addTrack/removeTrack
-- [ ] RTCRtpTransceiver 实现
+### 阶段 8: PeerConnection 整合 ✅ (已完成)
+- [x] RTCPeerConnection 实现
+- [x] createOffer/createAnswer
+- [x] setLocalDescription/setRemoteDescription
+- [x] addTrack/removeTrack
+- [x] createDataChannel（数据通道创建和管理）
+- [x] RTCRtpSender 和 RTCRtpReceiver 实现
+- [x] 事件系统（状态变化回调）
+- [x] DTLS 握手自动触发
+- [x] SRTP 密钥自动派生和设置
+- [x] RTP/RTCP 集成（发送/接收、SRTP 加密/解密）
+- 完整单元测试和集成测试（`webrtc/src/peer/*_test.zig`）
 
 ### 阶段 9: 测试和示例 🔄 (进行中)
 - [x] 基础模块单元测试
@@ -458,10 +498,19 @@ ZCO 正在实现完整的 WebRTC 协议栈，支持音视频通话功能。这�
   - 信令消息测试（`webrtc/src/signaling/message_test.zig`）
   - STUN 模块测试（`webrtc/src/ice/stun_test.zig`）
   - ICE Candidate 测试（`webrtc/src/ice/candidate_test.zig`）
-  - **测试状态**: 50/50 测试通过 ✅
-- [ ] 集成测试（端到端）
+  - ICE Agent 测试（`webrtc/src/ice/agent_test.zig`）
+  - TURN 模块测试（`webrtc/src/ice/turn_test.zig`）
+  - DTLS 模块测试（`webrtc/src/dtls/*_test.zig`）
+  - SRTP 模块测试（`webrtc/src/srtp/*_test.zig`）
+  - RTP/RTCP 模块测试（`webrtc/src/rtp/*_test.zig`）
+  - SCTP 模块测试（`webrtc/src/sctp/*_test.zig`）
+  - Media 模块测试（`webrtc/src/media/*_test.zig`）
+  - PeerConnection 模块测试（`webrtc/src/peer/*_test.zig`）
+  - **测试状态**: 216/216 测试通过 ✅
+- [x] 集成测试（端到端连接建立）
 - [ ] 浏览器兼容性测试
 - [ ] 音视频通话示例应用
+- [ ] 数据通道示例应用
 
 ### 技术要点
 - **从零实现**: 所有协议均从零实现，不依赖外部库
