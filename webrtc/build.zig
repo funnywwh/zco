@@ -75,6 +75,28 @@ pub fn build(b: *std.Build) void {
     const run_datachannel_example_step = b.step("run-datachannel", "Run the datachannel example");
     run_datachannel_example_step.dependOn(&run_datachannel_example_cmd.step);
 
+    // 数据通道 Echo 示例应用（真正的网络通信）
+    const datachannel_echo = b.addExecutable(.{
+        .name = "datachannel_echo",
+        .root_source_file = b.path("examples/datachannel_echo.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    datachannel_echo.root_module.addImport("zco", zco);
+    datachannel_echo.root_module.addImport("nets", nets);
+    datachannel_echo.root_module.addImport("websocket", websocket);
+    datachannel_echo.root_module.addImport("webrtc", webrtc);
+    b.installArtifact(datachannel_echo);
+
+    const run_datachannel_echo_cmd = b.addRunArtifact(datachannel_echo);
+    run_datachannel_echo_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_datachannel_echo_cmd.addArgs(args);
+    }
+
+    const run_datachannel_echo_step = b.step("run-echo", "Run the datachannel echo example");
+    run_datachannel_echo_step.dependOn(&run_datachannel_echo_cmd.step);
+
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
