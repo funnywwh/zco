@@ -133,21 +133,17 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     var bob_joined = false;
     const current_co = try schedule.getCurrentCo();
     const max_wait_time: u64 = 10 * std.time.ns_per_s; // 最多等待 10 秒
-    const check_interval: u64 = 100 * std.time.ns_per_ms; // 每 100ms 检查一次
-    var waited: u64 = 0;
     
-    while (waited < max_wait_time and !bob_joined) {
-        // 尝试读取消息
+    // 直接读取消息，readMessage 会阻塞等待数据（在协程中）
+    while (!bob_joined) {
+        // 尝试读取消息（readMessage 会阻塞等待，直到有数据或连接关闭）
         const frame = ws.readMessage(buffer[0..]) catch |err| {
             if (err == websocket.WebSocketError.ConnectionClosed or err == error.EOF) {
-                std.log.info("[Alice] WebSocket 连接已关闭（EOF）", .{});
+                std.log.info("[Alice] WebSocket 连接已关闭（EOF），停止等待", .{});
                 break;
             } else {
                 std.log.err("[Alice] 读取消息失败: {}", .{err});
-                // 等待一段时间后重试
-                try current_co.Sleep(check_interval);
-                waited += check_interval;
-                continue;
+                break;
             }
         };
         defer if (frame.payload.len > buffer.len) ws.allocator.free(frame.payload);
