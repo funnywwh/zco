@@ -225,7 +225,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     std.log.info("[Alice] 已发送 offer", .{});
 
     // 等待接收 answer 和 ICE candidates
-    var buffer: [8192]u8 = undefined;
+    // 注意：buffer 已经在上面声明了，这里重新使用
     var message_count: u32 = 0;
     var received_answer = false;
 
