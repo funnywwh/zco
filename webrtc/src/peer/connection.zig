@@ -1035,7 +1035,9 @@ pub const PeerConnection = struct {
                     
                     // 启动协程定期检查 ICE 状态（直到连接建立）
                     if (self.ice_connection_state != .connected and self.ice_connection_state != .completed) {
-                        _ = try self.schedule.go(monitorIceConnection, .{self});
+                        _ = self.schedule.go(monitorIceConnection, .{self}) catch |err| {
+                            std.log.warn("Failed to start ICE monitor: {}", .{err});
+                        };
                     }
                 }
             }
@@ -1058,7 +1060,7 @@ pub const PeerConnection = struct {
             // 检查 ICE Agent 状态
             if (self.ice_agent) |agent| {
                 const agent_state = agent.state;
-                var new_state: IceConnectionState = switch (agent_state) {
+                const new_state: IceConnectionState = switch (agent_state) {
                     .new => .new,
                     .gathering => .new,
                     .checking => .checking,
