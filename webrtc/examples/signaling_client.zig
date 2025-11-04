@@ -339,14 +339,14 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     std.log.info("[Alice] 等待 ICE 连接建立和 DTLS 握手完成...", .{});
 
     // 轮询检查 ICE 连接和 DTLS 握手状态
-    const max_wait_time: u64 = 10 * std.time.ns_per_s; // 最多等待 10 秒
-    const check_interval: u64 = 500 * std.time.ns_per_ms; // 每 500ms 检查一次
+    const max_wait_time_ice: u64 = 10 * std.time.ns_per_s; // 最多等待 10 秒
+    const check_interval_ice: u64 = 500 * std.time.ns_per_ms; // 每 500ms 检查一次
     var waited_time: u64 = 0;
     var dtls_ready = false;
 
-    while (waited_time < max_wait_time and !dtls_ready) {
-        try current_co_alice.Sleep(check_interval);
-        waited_time += check_interval;
+    while (waited_time < max_wait_time_ice and !dtls_ready) {
+        try current_co_alice.Sleep(check_interval_ice);
+        waited_time += check_interval_ice;
 
         // 检查 ICE 连接状态
         const ice_state = pc.getIceConnectionState();
