@@ -110,9 +110,6 @@ test "PeerConnection handleDataChunk - 解析 Data Chunk 并触发事件" {
     pc.sctp_association = assoc;
 
     // 创建测试用的 DataChannel
-    var message_received = false;
-    var received_data: []u8 = undefined;
-    
     const channel = try sctp.DataChannel.init(
         allocator,
         0, // stream_id
@@ -124,25 +121,6 @@ test "PeerConnection handleDataChunk - 解析 Data Chunk 并触发事件" {
         true,
     );
     defer channel.deinit();
-    
-    // 设置 onmessage 回调
-    const TestContext = struct {
-        received: *bool,
-        data: *[]u8,
-        allocator: std.mem.Allocator,
-        fn callback(ch: *sctp.DataChannel, data: []const u8) void {
-            _ = ch;
-            received.* = true;
-            data.* = allocator.dupe(u8, data) catch return;
-        }
-    };
-    
-    const test_ctx = TestContext{
-        .received = &message_received,
-        .data = &received_data,
-        .allocator = allocator,
-    };
-    channel.setOnMessage(test_ctx.callback);
     
     try pc.data_channels.append(channel);
 
@@ -158,8 +136,7 @@ test "PeerConnection handleDataChunk - 解析 Data Chunk 并触发事件" {
     std.mem.writeInt(u32, chunk_data[12..16][0..4], 50, .big); // payload_protocol_id
     @memcpy(chunk_data[16..20], "test");
 
-    // 测试：解析 Data Chunk（这是私有方法，需要通过公共接口测试）
-    // 简化：只验证 Data Chunk 可以正确解析
+    // 测试：解析 Data Chunk（验证 Data Chunk 可以正确解析）
     const data_chunk = try sctp.chunk.DataChunk.parse(allocator, &chunk_data);
     defer data_chunk.deinit(allocator);
     
