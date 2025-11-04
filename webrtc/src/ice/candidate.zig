@@ -140,21 +140,21 @@ pub const Candidate = struct {
             var ip_str_buf: [64]u8 = undefined;
             var rel_fmt_buf = std.io.fixedBufferStream(&ip_str_buf);
             try rel_addr.format("", .{}, rel_fmt_buf.writer());
-            var formatted = rel_fmt_buf.getWritten();
+            var rel_formatted = rel_fmt_buf.getWritten();
             
             // 提取 IP 地址部分（去除端口）
             var ip_str: []const u8 = undefined;
-            if (formatted[0] == '[') {
+            if (rel_formatted[0] == '[') {
                 // IPv6 格式：[address]:port
-                if (std.mem.indexOfScalar(u8, formatted, ']')) |bracket_pos| {
-                    ip_str = formatted[1..bracket_pos];
+                if (std.mem.indexOfScalar(u8, rel_formatted, ']')) |bracket_pos| {
+                    ip_str = rel_formatted[1..bracket_pos];
                 } else {
-                    ip_str = formatted;
+                    ip_str = rel_formatted;
                 }
             } else {
                 // IPv4 格式：address:port 或 IPv6 格式：address:port
-                if (std.mem.lastIndexOfScalar(u8, formatted, ':')) |colon_pos| {
-                    const before_colon = formatted[0..colon_pos];
+                if (std.mem.lastIndexOfScalar(u8, rel_formatted, ':')) |colon_pos| {
+                    const before_colon = rel_formatted[0..colon_pos];
                     // 检查是否是 IPv6 地址的一部分
                     var is_ipv6 = false;
                     for (before_colon) |c| {
@@ -168,11 +168,11 @@ pub const Candidate = struct {
                         ip_str = before_colon;
                     } else {
                         // IPv6 地址本身包含冒号，保持原样
-                        ip_str = formatted;
+                        ip_str = rel_formatted;
                     }
                 } else {
                     // 没有端口
-                    ip_str = formatted;
+                    ip_str = rel_formatted;
                 }
             }
             
