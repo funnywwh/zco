@@ -131,7 +131,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     std.log.info("[Alice] 等待 Bob 加入房间的通知...", .{});
     var buffer: [8192]u8 = undefined;
     var bob_joined = false;
-    
+
     // 直接读取消息，readMessage 会阻塞等待数据（在协程中）
     while (!bob_joined) {
         // 尝试读取消息（readMessage 会阻塞等待，直到有数据或连接关闭）
@@ -166,7 +166,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
             continue;
         };
         defer parsed.deinit();
-        var msg = parsed.value;
+        const msg = parsed.value;
 
         std.log.info("[Alice] 收到消息类型: {}", .{msg.type});
 
@@ -179,13 +179,13 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                     std.log.info("[Alice] Bob 已上线，准备发送 offer", .{});
                 }
             }
-            msg.deinit(schedule.allocator);
+            // 注意：parsed.deinit() 会释放 msg 内部的所有内存，不需要单独调用 msg.deinit()
             if (bob_joined) break;
             continue;
         } else {
             // 其他消息类型，先保存起来，稍后处理
             std.log.info("[Alice] 收到其他类型消息: {}（等待 Bob 加入后处理）", .{msg.type});
-            msg.deinit(schedule.allocator);
+            // 注意：parsed.deinit() 会释放 msg 内部的所有内存，不需要单独调用 msg.deinit()
             continue;
         }
     }
@@ -263,7 +263,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
             continue;
         };
         defer parsed.deinit();
-        var msg = parsed.value;
+        const msg = parsed.value;
 
         std.log.info("[Alice] 收到消息类型: {}", .{msg.type});
 
@@ -274,7 +274,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                 if (msg.user_id) |joined_user_id| {
                     std.log.info("[Alice] 收到 user_joined 通知: {s} 已加入房间（等待 answer 期间）", .{joined_user_id});
                 }
-                msg.deinit(schedule.allocator);
+                // 注意：parsed.deinit() 会释放 msg 内部的所有内存，不需要单独调用 msg.deinit()
                 message_count += 1;
                 continue;
             },
@@ -312,7 +312,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
             },
         }
 
-        msg.deinit(schedule.allocator);
+        // 注意：parsed.deinit() 会释放 msg 内部的所有内存，不需要单独调用 msg.deinit()
         message_count += 1;
     }
 
@@ -570,7 +570,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
             continue;
         };
         defer parsed.deinit();
-        var msg = parsed.value;
+        const msg = parsed.value;
 
         std.log.info("[Bob] 收到消息类型: {}", .{msg.type});
 
@@ -585,7 +585,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                         std.log.info("[Bob] Alice 已上线，准备接收 offer", .{});
                     }
                 }
-                msg.deinit(schedule.allocator);
+                // 注意：parsed.deinit() 会释放 msg 内部的所有内存，不需要单独调用 msg.deinit()
                 message_count += 1;
                 continue;
             },
@@ -667,7 +667,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
             },
         }
 
-        msg.deinit(schedule.allocator);
+        // 注意：parsed.deinit() 会释放 msg 内部的所有内存，不需要单独调用 msg.deinit()
         message_count += 1;
     }
 

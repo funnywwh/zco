@@ -48,7 +48,7 @@ pub const SignalingServer = struct {
             }
         }
 
-        pub fn broadcast(self: *Room, sender_id: []const u8, msg: []const u8) !void {
+        pub fn broadcast(self: *Room, sender_id: []const u8, msg: []const u8) void {
             var it = self.users.iterator();
             while (it.next()) |entry| {
                 const user_id = entry.key_ptr.*;
@@ -56,7 +56,12 @@ pub const SignalingServer = struct {
 
                 // 不发送给发送者自己
                 if (!std.mem.eql(u8, user_id, sender_id)) {
-                    try client.send(msg);
+                    client.send(msg) catch |err| {
+                        // 发送失败不应该导致整个连接关闭
+                        // 记录错误但继续处理其他用户
+                        std.log.err("[服务器] 发送消息给 {s} 失败: {}", .{ user_id, err });
+                        // 可以选择从房间中移除该用户，但这里先只记录错误
+                    };
                 }
             }
         }
@@ -177,7 +182,11 @@ pub const SignalingServer = struct {
             defer parsed.deinit();
 
             // 处理消息
-            try server.handleMessage(client, &msg);
+            server.handleMessage(client, &msg) catch |err| {
+                // 处理消息失败不应该导致连接关闭
+                std.log.err("[服务器] 处理消息失败: {}", .{err});
+                // 继续处理下一个消息
+            };
 
             // 不需要手动调用 msg.deinit()，因为 parsed.deinit() 会处理
         }
@@ -198,7 +207,7 @@ pub const SignalingServer = struct {
                         defer leave_msg.deinit(server.allocator);
                         const leave_json = try (@as(*const message.SignalingMessage, &leave_msg)).toJson(server.allocator);
                         defer server.allocator.free(leave_json);
-                        try room.broadcast(user_id, leave_json);
+                        room.broadcast(user_id, leave_json);
                     }
                 }
             }
@@ -206,6 +215,7 @@ pub const SignalingServer = struct {
     }
 
     /// 处理信令消息
+    /// 注意：函数内部的错误会被捕获，不会导致连接关闭
     fn handleMessage(self: *Self, client: *Client, msg: *message.SignalingMessage) !void {
         switch (msg.type) {
             .join => {
@@ -241,7 +251,7 @@ pub const SignalingServer = struct {
 
                 client.room_id = try self.allocator.dupe(u8, room_id);
                 client.user_id = user_id_dup;
-                
+
                 std.log.info("[服务器] 房间 {s} 当前有 {} 个用户", .{ room_id, room_entry.value_ptr.*.users.count() });
 
                 // 1. 通知新加入的用户：房间中已有的其他用户
@@ -284,7 +294,7 @@ pub const SignalingServer = struct {
                     const notify_json = try (@as(*const message.SignalingMessage, &user_joined_msg)).toJson(self.allocator);
                     defer self.allocator.free(notify_json);
                     std.log.info("[服务器] 广播 user_joined 通知: {s} 加入房间 {s}", .{ user_id, room_id });
-                    try room_entry.value_ptr.*.broadcast(user_id, notify_json);
+                    room_entry.value_ptr.*.broadcast(user_id, notify_json);
                 }
             },
             .offer, .answer, .ice_candidate => {
@@ -297,7 +307,7 @@ pub const SignalingServer = struct {
                             defer self.allocator.free(msg_json);
                             const recipient_count = room.users.count() - 1; // 排除发送者
                             std.log.info("[服务器] 房间 {s} 中有 {} 个接收者", .{ room_id, recipient_count });
-                            
+
                             // 保存 offer 和 answer 用于新用户加入时转发
                             if (msg.type == .offer) {
                                 // 释放旧的 offer
@@ -314,8 +324,8 @@ pub const SignalingServer = struct {
                                 // 保存新的 answer（深拷贝）
                                 room.last_answer = try self.allocator.dupe(u8, msg_json);
                             }
-                            
-                            try room.broadcast(user_id, msg_json);
+
+                            room.broadcast(user_id, msg_json);
                             std.log.info("[服务器] ✅ 消息已广播", .{});
                         }
                     } else {
