@@ -1,6 +1,9 @@
 const std = @import("std");
 const chunk = @import("./chunk.zig");
 const stream = @import("./stream.zig");
+const association = @import("./association.zig");
+
+const Association = association.Association;
 
 /// WebRTC 数据通道协议类型
 /// 遵循 RFC 8832 Section 4
