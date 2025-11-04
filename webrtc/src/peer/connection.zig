@@ -4,7 +4,7 @@ const crypto = std.crypto;
 const ice = @import("../ice/root.zig");
 const dtls = @import("../dtls/root.zig");
 const srtp = @import("../srtp/root.zig");
-const rtp_packet = @import("../rtp/packet.zig");
+const rtp = @import("../rtp/root.zig");
 const sctp = @import("../sctp/root.zig");
 const signaling = @import("../signaling/root.zig");
 
@@ -124,6 +124,7 @@ pub const PeerConnection = struct {
     srtp_sender: ?*srtp.Transform = null,
     srtp_receiver: ?*srtp.Transform = null,
     sctp_association: ?*sctp.Association = null,
+    ssrc_manager: ?*rtp.SsrcManager = null, // SSRC 管理器
 
     // SDP 描述
     local_description: ?*SessionDescription = null,
@@ -172,6 +173,15 @@ pub const PeerConnection = struct {
         self.dtls_handshake = try dtls.Handshake.init(allocator, self.dtls_record.?);
         errdefer if (self.dtls_handshake) |handshake| handshake.deinit();
 
+        // 初始化 SSRC 管理器
+        const ssrc_manager = try allocator.create(rtp.SsrcManager);
+        ssrc_manager.* = rtp.SsrcManager.init(allocator);
+        self.ssrc_manager = ssrc_manager;
+        errdefer if (self.ssrc_manager) |manager| {
+            manager.deinit();
+            allocator.destroy(manager);
+        };
+
         return self;
     }
 
@@ -179,6 +189,11 @@ pub const PeerConnection = struct {
     pub fn deinit(self: *Self) void {
         if (self.sctp_association) |assoc| {
             assoc.deinit();
+        }
+
+        if (self.ssrc_manager) |manager| {
+            manager.deinit();
+            self.allocator.destroy(manager);
         }
 
         if (self.srtp_receiver) |transform_ptr| {
@@ -759,14 +774,14 @@ pub const PeerConnection = struct {
                                 record.setUdp(udp);
                                 // 处理服务器端握手流程（接收 ClientHello 并发送 ServerHello 等）
                                 try handshake.processServerHandshake(remote_address);
-                                
+
                                 // 完成服务器端握手（接收 ClientKeyExchange、ChangeCipherSpec、Finished 并发送响应）
                                 // 注意：这是阻塞操作，实际应该在协程中处理
                                 handshake.completeServerHandshake(remote_address) catch |err| {
                                     std.log.warn("Failed to complete server handshake: {}", .{err});
                                     // 继续执行，不中断流程
                                 };
-                                
+
                                 std.log.info("DTLS server handshake completed", .{});
                             } else {
                                 return error.NoUdpSocket;
@@ -1082,6 +1097,130 @@ pub const PeerConnection = struct {
         return self.connection_state;
     }
 
+    /// 发送 RTP 包
+    /// 包会被 SRTP 加密后通过 UDP 发送
+    pub fn sendRtpPacket(self: *Self, packet: *rtp.Packet) !void {
+        if (self.srtp_sender == null) {
+            return error.SrtpNotInitialized;
+        }
+
+        if (self.ice_agent == null) {
+            return error.NoIceAgent;
+        }
+
+        // 编码 RTP 包
+        const rtp_data = try packet.encode(self.allocator);
+        defer self.allocator.free(rtp_data);
+
+        // 使用 SRTP 加密
+        const srtp_data = try self.srtp_sender.?.protect(rtp_data, self.allocator);
+        defer self.allocator.free(srtp_data);
+
+        // 通过 UDP 发送（从 ICE Agent 获取 UDP socket 和远程地址）
+        const agent = self.ice_agent.?;
+        if (agent.udp) |udp| {
+            if (agent.getSelectedPair()) |pair| {
+                const remote_address = std.net.Address.initIp(pair.remote.address, pair.remote.port);
+                try udp.sendTo(srtp_data, remote_address);
+            } else {
+                return error.NoSelectedPair;
+            }
+        } else {
+            return error.NoUdpSocket;
+        }
+    }
+
+    /// 接收 RTP 包
+    /// 从 UDP 接收 SRTP 包，解密后解析为 RTP 包
+    pub fn recvRtpPacket(self: *Self, allocator: std.mem.Allocator) !rtp.Packet {
+        if (self.srtp_receiver == null) {
+            return error.SrtpNotInitialized;
+        }
+
+        if (self.ice_agent == null) {
+            return error.NoIceAgent;
+        }
+
+        // 从 UDP 接收数据（从 ICE Agent 获取 UDP socket）
+        const agent = self.ice_agent.?;
+        if (agent.udp) |udp| {
+            var buffer: [2048]u8 = undefined;
+            const result = try udp.recvFrom(&buffer);
+
+            // 使用 SRTP 解密
+            const rtp_data = try self.srtp_receiver.?.unprotect(result.data, allocator);
+            defer allocator.free(rtp_data);
+
+            // 解析 RTP 包
+            return try rtp.Packet.parse(allocator, rtp_data);
+        } else {
+            return error.NoUdpSocket;
+        }
+    }
+
+    /// 发送 RTCP 包
+    /// 包会被 SRTCP 加密后通过 UDP 发送
+    pub fn sendRtcpPacket(self: *Self, packet_data: []const u8) !void {
+        if (self.srtp_sender == null) {
+            return error.SrtpNotInitialized;
+        }
+
+        if (self.ice_agent == null) {
+            return error.NoIceAgent;
+        }
+
+        // 使用 SRTCP 加密（SRTP Transform 支持 RTCP）
+        const srtcp_data = try self.srtp_sender.?.protectRtcp(packet_data, self.allocator);
+        defer self.allocator.free(srtcp_data);
+
+        // 通过 UDP 发送
+        const agent = self.ice_agent.?;
+        if (agent.udp) |udp| {
+            if (agent.getSelectedPair()) |pair| {
+                const remote_address = std.net.Address.initIp(pair.remote.address, pair.remote.port);
+                try udp.sendTo(srtcp_data, remote_address);
+            } else {
+                return error.NoSelectedPair;
+            }
+        } else {
+            return error.NoUdpSocket;
+        }
+    }
+
+    /// 接收 RTCP 包
+    /// 从 UDP 接收 SRTCP 包，解密后返回
+    pub fn recvRtcpPacket(self: *Self, allocator: std.mem.Allocator) ![]u8 {
+        if (self.srtp_receiver == null) {
+            return error.SrtpNotInitialized;
+        }
+
+        if (self.ice_agent == null) {
+            return error.NoIceAgent;
+        }
+
+        // 从 UDP 接收数据
+        const agent = self.ice_agent.?;
+        if (agent.udp) |udp| {
+            var buffer: [2048]u8 = undefined;
+            const result = try udp.recvFrom(&buffer);
+
+            // 使用 SRTCP 解密
+            return try self.srtp_receiver.?.unprotectRtcp(result.data, allocator);
+        } else {
+            return error.NoUdpSocket;
+        }
+    }
+
+    /// 获取或创建本地 SSRC
+    /// 用于发送 RTP 包时标识发送源
+    pub fn getLocalSsrc(self: *Self) !u32 {
+        if (self.ssrc_manager) |manager| {
+            return try manager.generateAndAddSsrc();
+        } else {
+            return error.NoSsrcManager;
+        }
+    }
+
     pub const Error = error{
         NoRemoteDescription,
         NoIceAgent,
@@ -1092,5 +1231,7 @@ pub const PeerConnection = struct {
         NoUdpSocket,
         DtlsHandshakeNotComplete,
         NoDtlsHandshake,
+        SrtpNotInitialized,
+        NoSsrcManager,
     };
 };
