@@ -442,7 +442,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 先等待一小段时间，确保加入房间的请求已处理
     const current_co = try schedule.getCurrentCo();
     try current_co.Sleep(500 * std.time.ns_per_ms);
-    
+
     std.log.info("[Bob] 开始等待接收 offer...", .{});
     var buffer: [8192]u8 = undefined;
     var offer_received = false;
@@ -494,7 +494,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                         continue;
                     };
                     errdefer remote_sdp.deinit();
-                    
+
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
                     const remote_sdp_ptr = schedule.allocator.create(webrtc.signaling.sdp.Sdp) catch |err| {
