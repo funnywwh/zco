@@ -1323,6 +1323,91 @@ pub const PeerConnection = struct {
         return receiver;
     }
 
+    /// 创建数据通道
+    /// 遵循 W3C WebRTC 1.0 规范
+    pub fn createDataChannel(
+        self: *Self,
+        label: []const u8,
+        options: ?DataChannelOptions,
+    ) !*sctp.DataChannel {
+        // 初始化 SCTP Association（如果尚未初始化）
+        if (self.sctp_association == null) {
+            // SCTP 需要在 DTLS 握手完成后才能建立
+            // 检查 DTLS 握手是否完成
+            if (self.dtls_handshake) |handshake| {
+                if (handshake.state != .handshake_complete) {
+                    return error.DtlsHandshakeNotComplete;
+                }
+            } else {
+                return error.NoDtlsHandshake;
+            }
+
+            // 创建 SCTP Association
+            // 注意：需要从 DTLS 获取传输层信息
+            // 简化实现：使用默认配置
+            const assoc = try sctp.Association.init(self.allocator, self.schedule);
+            errdefer assoc.deinit();
+            self.sctp_association = assoc;
+        }
+
+        // 使用默认选项（如果未提供）
+        const opts = options orelse DataChannelOptions{};
+
+        // 确定通道类型
+        const channel_type: sctp.datachannel.ChannelType = if (opts.max_retransmits) |_| 
+            .partial_reliable_rexmit 
+        else if (opts.max_packet_life_time) |_| 
+            .partial_reliable_timed 
+        else 
+            .reliable;
+
+        // 确定可靠性参数
+        const reliability_param: u32 = if (opts.max_retransmits) |max_retrans| 
+            @as(u32, max_retrans) 
+        else if (opts.max_packet_life_time) |max_life| 
+            @as(u32, max_life) 
+        else 
+            0;
+
+        // 创建数据通道
+        // DataChannel.init 需要 Association、Stream ID、label、protocol、channel_type、priority、reliability_parameter、ordered
+        if (self.sctp_association) |_| {
+            // 简化实现：使用固定的 Stream ID（0）
+            // TODO: 实现 Stream ID 管理，从 Association 获取可用的 Stream ID
+            const stream_id: u16 = 0;
+            const priority: u16 = 0; // 默认优先级
+            
+            const channel = try self.allocator.create(sctp.DataChannel);
+            errdefer self.allocator.destroy(channel);
+            
+            channel.* = try sctp.DataChannel.init(
+                self.allocator,
+                stream_id,
+                label,
+                try self.allocator.dupe(u8, opts.protocol),
+                channel_type,
+                priority,
+                reliability_param,
+                opts.ordered,
+            );
+
+            // 添加到数据通道列表（如果存在）
+            // TODO: 实现数据通道列表管理
+
+            return channel;
+        } else {
+            return error.NoSctpAssociation;
+        }
+    }
+
+    /// 数据通道选项
+    pub const DataChannelOptions = struct {
+        ordered: bool = true, // 是否有序传输
+        max_retransmits: ?u16 = null, // 最大重传次数（null 表示无限）
+        max_packet_life_time: ?u16 = null, // 最大包生存时间（毫秒）
+        protocol: []const u8 = "", // 子协议名称
+    };
+
     pub const Error = error{
         NoRemoteDescription,
         NoIceAgent,
