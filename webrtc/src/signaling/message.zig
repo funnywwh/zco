@@ -19,46 +19,15 @@ pub const MessageType = enum {
         const str = switch (self) {
             .offer => "offer",
             .answer => "answer",
-            .ice_candidate => "ice-candidate",
+            .ice_candidate => "ice_candidate", // 使用下划线，与枚举名一致
             .@"error" => "error",
             .join => "join",
             .leave => "leave",
-            .user_joined => "user-joined",
+            .user_joined => "user_joined", // 使用下划线，与枚举名一致
         };
         try json.encodeJsonString(str, .{}, out_stream);
     }
 
-    pub fn jsonParse(
-        _: std.mem.Allocator,
-        source: anytype,
-        _: json.ParseOptions,
-    ) !MessageType {
-        // 从 TokenStream 读取字符串 token
-        const token = try source.next();
-        const str_slice = switch (token) {
-            .string => |s| s,
-            else => return error.InvalidEnumTag,
-        };
-        
-        // 匹配 JSON 字符串格式（注意：JSON 中的枚举值格式）
-        if (std.mem.eql(u8, str_slice, "offer")) {
-            return .offer;
-        } else if (std.mem.eql(u8, str_slice, "answer")) {
-            return .answer;
-        } else if (std.mem.eql(u8, str_slice, "ice-candidate")) {
-            return .ice_candidate;
-        } else if (std.mem.eql(u8, str_slice, "error")) {
-            return .@"error";
-        } else if (std.mem.eql(u8, str_slice, "join")) {
-            return .join;
-        } else if (std.mem.eql(u8, str_slice, "leave")) {
-            return .leave;
-        } else if (std.mem.eql(u8, str_slice, "user-joined")) {
-            return .user_joined;
-        } else {
-            return error.InvalidEnumTag;
-        }
-    }
 };
 
 /// WebRTC 信令消息
@@ -115,11 +84,11 @@ pub const SignalingMessage = struct {
         const type_str = switch (self.type) {
             .offer => "offer",
             .answer => "answer",
-            .ice_candidate => "ice-candidate",
+            .ice_candidate => "ice_candidate", // 使用下划线，与枚举名一致
             .@"error" => "error",
             .join => "join",
             .leave => "leave",
-            .user_joined => "user-joined",
+            .user_joined => "user_joined", // 使用下划线，与枚举名一致
         };
         try writer.print("\"type\":\"{s}\"", .{type_str});
 
