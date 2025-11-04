@@ -27,6 +27,33 @@ pub const MessageType = enum {
         };
         try json.encodeJsonString(str, .{}, out_stream);
     }
+
+    pub fn jsonParse(
+        allocator: std.mem.Allocator,
+        source: anytype,
+        options: json.ParseOptions,
+    ) !MessageType {
+        const str = try json.parse(json.String, allocator, source, options);
+        defer allocator.free(str);
+        
+        if (std.mem.eql(u8, str, "offer")) {
+            return .offer;
+        } else if (std.mem.eql(u8, str, "answer")) {
+            return .answer;
+        } else if (std.mem.eql(u8, str, "ice-candidate")) {
+            return .ice_candidate;
+        } else if (std.mem.eql(u8, str, "error")) {
+            return .@"error";
+        } else if (std.mem.eql(u8, str, "join")) {
+            return .join;
+        } else if (std.mem.eql(u8, str, "leave")) {
+            return .leave;
+        } else if (std.mem.eql(u8, str, "user-joined")) {
+            return .user_joined;
+        } else {
+            return error.InvalidEnumTag;
+        }
+    }
 };
 
 /// WebRTC 信令消息
