@@ -321,7 +321,7 @@ pub const PeerConnection = struct {
         offer.version = 0;
         const origin = SessionDescription.Origin{
             .username = try allocator.dupe(u8, "zco"),
-            .session_id = std.time.milliTimestamp(),
+            .session_id = @as(u64, @intCast(std.time.milliTimestamp())),
             .session_version = 1,
             .nettype = "IN",
             .addrtype = "IP4",
@@ -454,7 +454,7 @@ pub const PeerConnection = struct {
         answer.version = 0;
         const origin = SessionDescription.Origin{
             .username = try allocator.dupe(u8, "zco"),
-            .session_id = std.time.milliTimestamp(),
+            .session_id = @as(u64, @intCast(std.time.milliTimestamp())),
             .session_version = 1,
             .nettype = "IN",
             .addrtype = "IP4",
@@ -697,7 +697,7 @@ pub const PeerConnection = struct {
                 if (std.mem.eql(u8, attr.name, "candidate")) {
                     if (attr.value) |candidate_str| {
                         // 解析 candidate 字符串
-                        const candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
+                        var candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
                         errdefer candidate.deinit();
 
                         // 创建堆分配的 candidate
@@ -716,7 +716,7 @@ pub const PeerConnection = struct {
                     if (std.mem.eql(u8, attr.name, "candidate")) {
                         if (attr.value) |candidate_str| {
                             // 解析 candidate 字符串
-                            const candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
+                            var candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
                             errdefer candidate.deinit();
 
                             // 创建堆分配的 candidate
@@ -794,7 +794,7 @@ pub const PeerConnection = struct {
                 // 获取远程地址（从 ICE Agent 的 selected pair）
                 if (self.ice_agent) |agent| {
                     if (agent.getSelectedPair()) |pair| {
-                        const remote_address = std.net.Address.initIp(pair.remote.address, pair.remote.port);
+                        const remote_address = pair.remote.address;
                         // 设置 DTLS Record 的 UDP socket
                         if (self.dtls_record) |record| {
                             if (agent.udp) |udp| {
@@ -975,11 +975,11 @@ pub const PeerConnection = struct {
                     // 获取远程地址（从 ICE selected pair）
                     if (agent.getSelectedPair()) |pair| {
                         // 构建远程地址
-                        const remote_address = std.net.Address.initIp(pair.remote.address, pair.remote.port);
+                        const remote_address = pair.remote.address;
 
                         // 发送 ClientHello
                         try handshake.sendClientHello(remote_address);
-                        std.log.info("DTLS ClientHello sent to {}:{}", .{ pair.remote.address, pair.remote.port });
+                        std.log.info("DTLS ClientHello sent to {}", .{pair.remote.address});
                     } else {
                         return error.NoSelectedPair;
                     }

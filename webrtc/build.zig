@@ -97,6 +97,50 @@ pub fn build(b: *std.Build) void {
     const run_datachannel_echo_step = b.step("run-echo", "Run the datachannel echo example");
     run_datachannel_echo_step.dependOn(&run_datachannel_echo_cmd.step);
 
+    // 信令服务器应用
+    const signaling_server = b.addExecutable(.{
+        .name = "signaling_server",
+        .root_source_file = b.path("examples/signaling_server.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    signaling_server.root_module.addImport("zco", zco);
+    signaling_server.root_module.addImport("nets", nets);
+    signaling_server.root_module.addImport("websocket", websocket);
+    signaling_server.root_module.addImport("webrtc", webrtc);
+    b.installArtifact(signaling_server);
+
+    const run_signaling_server_cmd = b.addRunArtifact(signaling_server);
+    run_signaling_server_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_signaling_server_cmd.addArgs(args);
+    }
+
+    const run_signaling_server_step = b.step("run-signaling", "Run the signaling server");
+    run_signaling_server_step.dependOn(&run_signaling_server_cmd.step);
+
+    // 信令客户端应用
+    const signaling_client = b.addExecutable(.{
+        .name = "signaling_client",
+        .root_source_file = b.path("examples/signaling_client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    signaling_client.root_module.addImport("zco", zco);
+    signaling_client.root_module.addImport("nets", nets);
+    signaling_client.root_module.addImport("websocket", websocket);
+    signaling_client.root_module.addImport("webrtc", webrtc);
+    b.installArtifact(signaling_client);
+
+    const run_signaling_client_cmd = b.addRunArtifact(signaling_client);
+    run_signaling_client_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_signaling_client_cmd.addArgs(args);
+    }
+
+    const run_signaling_client_step = b.step("run-client", "Run the signaling client (alice|bob room_id)");
+    run_signaling_client_step.dependOn(&run_signaling_client_cmd.step);
+
     // UDP 测试应用
     const udp_test = b.addExecutable(.{
         .name = "udp_test",

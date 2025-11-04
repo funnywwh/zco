@@ -102,6 +102,7 @@ pub const SignalingServer = struct {
             entry.value_ptr.*.deinit();
         }
         self.rooms.deinit();
+        self.tcp.close();
         self.tcp.deinit();
         self.allocator.destroy(self);
     }
