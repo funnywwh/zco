@@ -67,4 +67,3 @@ test "DataChannel setState and getState" {
     channel.setState(.closed);
     try testing.expect(channel.getState() == .closed);
 }
-
