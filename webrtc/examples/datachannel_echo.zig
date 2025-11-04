@@ -92,11 +92,18 @@ fn setupAlice(pc: *PeerConnection, schedule: *zco.Schedule) !void {
     // 设置 DTLS Record（需要 UDP Socket）
     if (pc.ice_agent) |agent| {
         if (agent.udp) |udp| {
+            std.log.debug("[Alice] ICE Agent UDP Socket 存在", .{});
             if (pc.dtls_record) |record| {
+                std.log.debug("[Alice] DTLS Record 存在，开始关联 UDP Socket", .{});
                 // 将 ICE Agent 的 UDP Socket 关联到 DTLS Record
                 record.setUdp(udp);
                 std.log.info("[Alice] DTLS Record 已关联 UDP Socket", .{});
+                std.log.debug("[Alice] 验证关联: DTLS Record.udp = {}", .{record.udp != null});
+            } else {
+                std.log.err("[Alice] DTLS Record 为 null，无法关联 UDP Socket", .{});
             }
+        } else {
+            std.log.err("[Alice] ICE Agent UDP Socket 为 null", .{});
         }
     }
 }
@@ -124,11 +131,18 @@ fn setupBob(pc: *PeerConnection, schedule: *zco.Schedule) !void {
     // 设置 DTLS Record（需要 UDP Socket）
     if (pc.ice_agent) |agent| {
         if (agent.udp) |udp| {
+            std.log.debug("[Bob] ICE Agent UDP Socket 存在", .{});
             if (pc.dtls_record) |record| {
+                std.log.debug("[Bob] DTLS Record 存在，开始关联 UDP Socket", .{});
                 // 将 ICE Agent 的 UDP Socket 关联到 DTLS Record
                 record.setUdp(udp);
                 std.log.info("[Bob] DTLS Record 已关联 UDP Socket", .{});
+                std.log.debug("[Bob] 验证关联: DTLS Record.udp = {}", .{record.udp != null});
+            } else {
+                std.log.err("[Bob] DTLS Record 为 null，无法关联 UDP Socket", .{});
             }
+        } else {
+            std.log.err("[Bob] ICE Agent UDP Socket 为 null", .{});
         }
     }
 }

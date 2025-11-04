@@ -70,8 +70,15 @@ pub const Udp = struct {
             .co = co,
         };
 
+        const xloop_ptr = if (self.schedule.xLoop) |*xloop| xloop else {
+            std.log.err("UDP.recvFrom: xLoop 为 null", .{});
+            return error.NoEventLoop;
+        };
+        
+        std.log.debug("UDP.recvFrom: 调用 xobj.read", .{});
+        
         xobj.read(
-            &(self.schedule.xLoop.?),
+            xloop_ptr,
             &c_read,
             &state,
             .{ .slice = buffer },
@@ -91,6 +98,7 @@ pub const Udp = struct {
                     const _r = ud orelse unreachable;
                     _r.addr = addr;
                     _r.size = r;
+                    std.log.debug("UDP.recvFrom callback: 收到数据，恢复协程", .{});
                     _r.co.Resume() catch |e| {
                         std.log.err("nets udp recvFrom ResumeCo error:{s}", .{@errorName(e)});
                     };
@@ -98,6 +106,8 @@ pub const Udp = struct {
                 }
             }.callback,
         );
+        
+        std.log.debug("UDP.recvFrom: 已注册到事件循环，准备挂起协程", .{});
 
         std.log.debug("UDP.recvFrom: 挂起协程，等待数据到达...", .{});
         try co.Suspend();

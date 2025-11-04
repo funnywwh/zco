@@ -1528,9 +1528,18 @@ pub const PeerConnection = struct {
 
         // 从 DTLS Record 接收数据
         var buffer: [8192]u8 = undefined;
-        const record = if (self.dtls_record) |r| r else return error.NoDtlsRecord;
+        const record = if (self.dtls_record) |r| r else {
+            std.log.err("PeerConnection.recvSctpData: DTLS Record 为 null", .{});
+            return error.NoDtlsRecord;
+        };
 
-        std.log.debug("PeerConnection.recvSctpData: 等待接收 DTLS 数据...", .{});
+        // 检查 DTLS Record 的 UDP socket
+        if (record.udp == null) {
+            std.log.err("PeerConnection.recvSctpData: DTLS Record 的 UDP socket 为 null", .{});
+            return error.NoUdpSocket;
+        }
+
+        std.log.debug("PeerConnection.recvSctpData: 等待接收 DTLS 数据 (UDP socket: {})", .{record.udp != null});
         const result = record.recv(&buffer) catch |err| {
             // 如果没有数据可接收，返回（非阻塞）
             // 注意：DTLS Record 的 recv 可能返回其他错误，这里简化处理

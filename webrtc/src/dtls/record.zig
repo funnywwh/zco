@@ -219,7 +219,9 @@ pub const Record = struct {
 
     /// 设置 UDP socket
     pub fn setUdp(self: *Self, udp: *nets.Udp) void {
+        std.log.debug("DTLS Record.setUdp: 关联 UDP socket", .{});
         self.udp = udp;
+        std.log.debug("DTLS Record.setUdp: UDP socket 已关联", .{});
     }
 
     /// 设置读取加密状态
@@ -288,7 +290,18 @@ pub const Record = struct {
 
         std.log.debug("DTLS Record.recv: 等待接收 UDP 数据...", .{});
         var recv_buffer: [2048]u8 = undefined;
-        const result = try self.udp.?.recvFrom(&recv_buffer);
+
+        // 检查 UDP socket 是否存在
+        if (self.udp == null) {
+            std.log.err("DTLS Record.recv: UDP socket 为 null", .{});
+            return error.NoUdpSocket;
+        }
+
+        std.log.debug("DTLS Record.recv: 调用 UDP.recvFrom...", .{});
+        const result = self.udp.?.recvFrom(&recv_buffer) catch |err| {
+            std.log.err("DTLS Record.recv: UDP.recvFrom 失败: {}", .{err});
+            return err;
+        };
 
         std.log.debug("DTLS Record.recv: 收到 UDP 数据 ({} 字节) 来自 {}", .{ result.data.len, result.addr });
 
