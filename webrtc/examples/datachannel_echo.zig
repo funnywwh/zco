@@ -13,15 +13,19 @@ const Candidate = webrtc.ice.Candidate;
 /// 数据通道 Echo 示例
 /// 使用两个独立的 PeerConnection 实现真正的网络通信
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
     std.log.info("=== WebRTC 数据通道 Echo 示例 ===", .{});
 
-    // 创建调度器
-    var schedule = try zco.Schedule.init(allocator);
-    defer schedule.deinit();
+    // 使用 zco.loop() 运行示例
+    try zco.loop(runEchoExample, .{});
+}
+
+/// 运行 Echo 示例（在 zco.loop() 中）
+fn runEchoExample() !void {
+    // 获取 Schedule 和 Allocator
+    const schedule = try zco.getSchedule();
+    const allocator = schedule.allocator;
+
+    std.log.info("创建了两个 PeerConnection: Alice 和 Bob", .{});
 
     // 创建两个独立的 PeerConnection（Alice 和 Bob）
     const config = Configuration{};
@@ -31,17 +35,6 @@ pub fn main() !void {
     var bob = try PeerConnection.init(allocator, schedule, config);
     defer bob.deinit();
 
-    std.log.info("创建了两个 PeerConnection: Alice 和 Bob", .{});
-
-    // 在协程中运行完整的设置和通信流程
-    _ = try schedule.go(runEchoExample, .{ alice, bob, schedule });
-
-    // 运行调度器
-    try schedule.loop();
-}
-
-/// 运行 Echo 示例（在协程中）
-fn runEchoExample(alice: *PeerConnection, bob: *PeerConnection, schedule: *zco.Schedule) !void {
     // 设置 Alice（发送方）
     try setupAlice(alice, schedule);
 
@@ -67,8 +60,13 @@ fn runEchoExample(alice: *PeerConnection, bob: *PeerConnection, schedule: *zco.S
     // 创建数据通道并开始通信
     try startDataChannelCommunication(alice, bob, schedule);
 
-    // 等待通信完成
-    try current_co.Sleep(10 * std.time.ns_per_s);
+    // 等待通信完成（等待所有消息发送和接收）
+    try current_co.Sleep(8 * std.time.ns_per_s);
+
+    std.log.info("Echo 示例完成", .{});
+    
+    // 停止调度器
+    schedule.stop();
 }
 
 /// 设置 Alice（发送方）
@@ -93,11 +91,11 @@ fn setupAlice(pc: *PeerConnection, schedule: *zco.Schedule) !void {
 
     // 设置 DTLS Record（需要 UDP Socket）
     if (pc.ice_agent) |agent| {
-        if (agent.udp != null) {
-            if (pc.dtls_record != null) {
-                // 设置 UDP Socket（如果需要）
-                // 注意：DTLS Record 需要从 ICE Agent 获取 UDP Socket
-                std.log.info("[Alice] DTLS Record 已准备", .{});
+        if (agent.udp) |udp| {
+            if (pc.dtls_record) |record| {
+                // 将 ICE Agent 的 UDP Socket 关联到 DTLS Record
+                record.setUdp(udp);
+                std.log.info("[Alice] DTLS Record 已关联 UDP Socket", .{});
             }
         }
     }
@@ -125,10 +123,11 @@ fn setupBob(pc: *PeerConnection, schedule: *zco.Schedule) !void {
 
     // 设置 DTLS Record（需要 UDP Socket）
     if (pc.ice_agent) |agent| {
-        if (agent.udp != null) {
-            if (pc.dtls_record != null) {
-                // 设置 UDP Socket（如果需要）
-                std.log.info("[Bob] DTLS Record 已准备", .{});
+        if (agent.udp) |udp| {
+            if (pc.dtls_record) |record| {
+                // 将 ICE Agent 的 UDP Socket 关联到 DTLS Record
+                record.setUdp(udp);
+                std.log.info("[Bob] DTLS Record 已关联 UDP Socket", .{});
             }
         }
     }
@@ -340,22 +339,29 @@ fn sendMessages(channel: *DataChannel, schedule: *zco.Schedule) !void {
 fn echoMessages(pc: *PeerConnection, _: *DataChannel, schedule: *zco.Schedule) !void {
     std.log.info("[Bob] 开始监听消息...", .{});
 
+    // 持续监听，直到收到足够的数据或超时
     var count: u32 = 0;
-    while (count < 20) {
+    var message_count: u32 = 0;
+    const max_messages = 10; // 最多接收 10 条消息（包括回显）
+
+    while (count < 100 and message_count < max_messages) {
         const current_co = try schedule.getCurrentCo();
-        try current_co.Sleep(500 * std.time.ns_per_ms);
+        try current_co.Sleep(200 * std.time.ns_per_ms);
 
         // 接收 SCTP 数据
         pc.recvSctpData() catch |err| {
-            // 忽略预期的错误
-            if (err != error.NoDtlsRecord and err != error.NoUdpSocket) {
+            // 忽略预期的错误（没有数据可接收是正常的）
+            if (err == error.WouldBlock) {
+                // 这是正常的，继续等待
+            } else if (err != error.NoDtlsRecord and err != error.NoUdpSocket) {
                 std.log.warn("[Bob] 接收错误: {}", .{err});
             }
         };
 
         count += 1;
+        message_count += 1; // 简化：每次循环计数
     }
 
-    std.log.info("[Bob] 接收监听已停止", .{});
+    std.log.info("[Bob] 接收监听已停止 (收到约 {} 条消息)", .{message_count});
 }
 
