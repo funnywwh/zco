@@ -152,7 +152,7 @@ pub const PeerConnection = struct {
         // 初始化 ICE Agent
         self.ice_agent = try ice.agent.IceAgent.init(allocator, schedule);
         errdefer if (self.ice_agent) |agent| agent.deinit();
-        
+
         // 初始化组件 ID（RTP 为 1）
         if (self.ice_agent) |agent| {
             agent.component_id = 1;
@@ -350,7 +350,7 @@ pub const PeerConnection = struct {
         // 5. 添加 DTLS 指纹
         // 从证书计算真实指纹
         const fingerprint_hash = try allocator.dupe(u8, "sha-256");
-        const fingerprint_formatted = if (self.dtls_certificate) |cert| 
+        const fingerprint_formatted = if (self.dtls_certificate) |cert|
             try cert.formatFingerprint(allocator)
         else blk: {
             // 如果没有证书，生成随机指纹（不应发生）
@@ -358,7 +358,7 @@ pub const PeerConnection = struct {
             crypto.random.bytes(&random_fingerprint);
             break :blk try dtls.KeyDerivation.formatFingerprint(random_fingerprint, allocator);
         };
-        
+
         offer.fingerprint = SessionDescription.Fingerprint{
             .hash = fingerprint_hash,
             .value = fingerprint_formatted,
@@ -506,7 +506,7 @@ pub const PeerConnection = struct {
                 crypto.random.bytes(&random_fingerprint);
                 break :blk try dtls.KeyDerivation.formatFingerprint(random_fingerprint, allocator);
             };
-            
+
             answer.fingerprint = SessionDescription.Fingerprint{
                 .hash = fingerprint_hash,
                 .value = fingerprint_formatted,
@@ -629,11 +629,11 @@ pub const PeerConnection = struct {
                         // 解析 candidate 字符串
                         const candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
                         errdefer candidate.deinit();
-                        
+
                         // 创建堆分配的 candidate
                         const candidate_ptr = try self.allocator.create(ice.candidate.Candidate);
                         candidate_ptr.* = candidate;
-                        
+
                         // 添加到远程 candidates
                         try agent.addRemoteCandidate(candidate_ptr);
                     }
@@ -648,11 +648,11 @@ pub const PeerConnection = struct {
                             // 解析 candidate 字符串
                             const candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
                             errdefer candidate.deinit();
-                            
+
                             // 创建堆分配的 candidate
                             const candidate_ptr = try self.allocator.create(ice.candidate.Candidate);
                             candidate_ptr.* = candidate;
-                            
+
                             // 添加到远程 candidates
                             try agent.addRemoteCandidate(candidate_ptr);
                         }
@@ -664,16 +664,16 @@ pub const PeerConnection = struct {
             if (self.local_description != null) {
                 // 更新 ICE 连接状态
                 self.ice_connection_state = .checking;
-                
+
                 // 注意：generateCandidatePairs 会在 addRemoteCandidate 时自动调用
                 // 所以如果所有远程 candidates 都已添加，pairs 应该已经生成
-                
+
                 // 开始连接检查
                 agent.startConnectivityChecks() catch |err| {
                     std.log.warn("Failed to start connectivity checks: {}", .{err});
                     self.ice_connection_state = .failed;
                 };
-                
+
                 // TODO: 监听 ICE 连接状态变化，在连接成功时启动 DTLS 握手
                 // 当 ICE 连接状态变为 .connected 或 .completed 时，调用 startDtlsHandshake()
                 // 简化：在当前检查成功后假设连接建立（实际应通过回调或事件机制）
@@ -692,7 +692,7 @@ pub const PeerConnection = struct {
             // setup=passive (answer) -> 服务器
             // 简化：根据 local/remote description 确定
             const is_client = self.determineDtlsRole();
-            
+
             if (is_client) {
                 // 客户端：发送 ClientHello
                 try self.sendClientHello(handshake);
@@ -711,7 +711,7 @@ pub const PeerConnection = struct {
         // - 如果本地有 offer，则作为服务器（等待客户端连接）
         // - 如果远程有 offer，则作为客户端（主动连接）
         // 实际应该根据 SDP 中的 setup 属性确定
-        
+
         // TODO: 从 SDP 中解析 setup 属性
         // 当前简化：如果本地描述先设置，作为服务器；否则作为客户端
         if (self.local_description != null and self.remote_description == null) {
@@ -728,12 +728,12 @@ pub const PeerConnection = struct {
                 // 设置 DTLS Record 的 UDP socket
                 if (self.dtls_record) |record| {
                     record.setUdp(udp);
-                    
+
                     // 获取远程地址（从 ICE selected pair）
                     if (agent.getSelectedPair()) |pair| {
                         // 构建远程地址
                         const remote_address = std.net.Address.initIp(pair.remote.address, pair.remote.port);
-                        
+
                         // 发送 ClientHello
                         try handshake.sendClientHello(remote_address);
                         std.log.info("DTLS ClientHello sent to {}:{}", .{ pair.remote.address, pair.remote.port });
@@ -785,5 +785,8 @@ pub const PeerConnection = struct {
         NoIceAgent,
         OutOfMemory,
         InvalidState,
+        NoSelectedPair,
+        NoDtlsRecord,
+        NoUdpSocket,
     };
 };
