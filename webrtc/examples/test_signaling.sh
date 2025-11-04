@@ -27,10 +27,19 @@ echo "=== WebRTC 信令和数据通道测试 ==="
 echo "日志目录: $LOG_DIR"
 echo ""
 
-# 清理之前的进程
-pkill -f "zig build run-signaling" 2>/dev/null || true
-pkill -f "signaling_client" 2>/dev/null || true
-sleep 1
+# 清理之前的进程和端口占用
+echo "清理之前的进程..."
+pkill -9 -f "zig build run-signaling" 2>/dev/null || true
+pkill -9 -f "signaling_server" 2>/dev/null || true
+pkill -9 -f "signaling_client" 2>/dev/null || true
+sleep 2
+
+# 检查端口是否被占用
+if lsof -ti:8080 >/dev/null 2>&1; then
+    echo "⚠️  端口 8080 被占用，尝试释放..."
+    lsof -ti:8080 | xargs kill -9 2>/dev/null || true
+    sleep 1
+fi
 
 # 启动信令服务器
 echo "[1/4] 启动信令服务器..."

@@ -19,6 +19,8 @@ pub const Tcp = struct {
         return tcp;
     }
     pub fn deinit(self: *Self) void {
+        // 注意：如果 xobj 存在，应该在调用 deinit 之前先调用 close()
+        // 这里只负责销毁对象本身
         const allocator = self.schedule.allocator;
         allocator.destroy(self);
     }

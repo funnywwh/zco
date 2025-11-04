@@ -102,8 +102,15 @@ pub const SignalingServer = struct {
             entry.value_ptr.*.deinit();
         }
         self.rooms.deinit();
-        self.tcp.close();
+        
+        // 清理 TCP socket
+        if (self.tcp.xobj) |_| {
+            self.tcp.close();
+        }
         self.tcp.deinit();
+        self.allocator.destroy(self.tcp);
+        
+        // 最后销毁服务器对象
         self.allocator.destroy(self);
     }
 
