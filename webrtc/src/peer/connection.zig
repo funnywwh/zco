@@ -1391,6 +1391,9 @@ pub const PeerConnection = struct {
                 opts.ordered,
             );
 
+            // 设置关联的 SCTP Association
+            channel.setAssociation(assoc);
+
             // 添加到数据通道列表（如果存在）
             // TODO: 实现数据通道列表管理
 
