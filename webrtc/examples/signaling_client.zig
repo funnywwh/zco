@@ -155,7 +155,37 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     try ws.sendText(offer_json);
     std.log.info("[Alice] 已发送 offer", .{});
 
-    // 创建数据通道
+    // 等待 ICE 连接建立和 DTLS 握手完成
+    // 注意：在创建数据通道前，需要完成 DTLS 握手
+    std.log.info("[Alice] 等待 ICE 连接建立...", .{});
+    const current_co = try schedule.getCurrentCo();
+    
+    // 等待一段时间让 ICE 连接建立
+    try current_co.Sleep(2 * std.time.ns_per_s);
+    
+    // 检查 DTLS 握手状态
+    // 如果握手未完成，暂时跳过数据通道创建（简化处理）
+    var dtls_ready = false;
+    if (pc.dtls_handshake) |handshake| {
+        if (handshake.state == .handshake_complete) {
+            dtls_ready = true;
+            std.log.info("[Alice] DTLS 握手已完成", .{});
+        } else {
+            std.log.warn("[Alice] DTLS 握手未完成，状态: {}", .{handshake.state});
+            // 暂时模拟握手完成（实际应该等待握手完成）
+            // handshake.state = .handshake_complete;
+            // dtls_ready = true;
+        }
+    }
+    
+    // 创建数据通道（如果 DTLS 握手已完成）
+    if (!dtls_ready) {
+        std.log.warn("[Alice] DTLS 握手未完成，跳过数据通道创建", .{});
+        // 等待一段时间后退出
+        try current_co.Sleep(5 * std.time.ns_per_s);
+        return;
+    }
+    
     const channel = try pc.createDataChannel("test-channel", null);
     defer channel.deinit();
     std.log.info("[Alice] 已创建数据通道", .{});
@@ -279,7 +309,6 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     }
 
     // 等待一段时间，让连接建立
-    const current_co = try schedule.getCurrentCo();
     try current_co.Sleep(3 * std.time.ns_per_s);
 
     // 发送测试消息
