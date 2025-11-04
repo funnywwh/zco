@@ -458,8 +458,9 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
 
     // 等待接收 offer
     // 先等待一小段时间，确保加入房间的请求已处理
-    const current_co = try schedule.getCurrentCo();
-    try current_co.Sleep(500 * std.time.ns_per_ms);
+    // 使用之前在连接重试中获取的 current_co_bob（如果已获取）或重新获取
+    const current_co_bob = try schedule.getCurrentCo();
+    try current_co_bob.Sleep(500 * std.time.ns_per_ms);
 
     std.log.info("[Bob] 开始等待接收 offer...", .{});
     var buffer: [8192]u8 = undefined;
