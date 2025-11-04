@@ -1,6 +1,7 @@
 const std = @import("std");
 const zco = @import("zco");
 const nets = @import("nets");
+const posix = std.posix;
 const Candidate = @import("./candidate.zig").Candidate;
 const Stun = @import("./stun.zig").Stun;
 const Turn = @import("./turn.zig").Turn;
@@ -299,9 +300,11 @@ pub const IceAgent = struct {
                 };
                 break :blk bind_addr;
             } else {
-                // 已经绑定，使用已绑定的地址（不重新绑定）
-                // 简化：使用 127.0.0.1 作为默认地址（实际应该通过 getsockname 获取）
-                break :blk try std.net.Address.parseIp4("127.0.0.1", 0);
+                // 已经绑定，使用默认地址（但端口不能为 0，否则会导致 sendTo 失败）
+                // TODO: 使用 getsockname 获取实际绑定的地址和端口
+                // 目前使用默认地址和端口，避免端口为 0 导致的 errno 22 错误
+                std.log.warn("ICE: UDP socket 已绑定，使用默认地址 127.0.0.1:5000（实际应该通过 getsockname 获取）", .{});
+                break :blk try std.net.Address.parseIp4("127.0.0.1", 5000);
             }
         } else blk: {
             // 创建并绑定 UDP socket

@@ -150,6 +150,11 @@ pub const Udp = struct {
 
     /// 异步发送 UDP 数据到指定地址
     pub fn sendTo(self: *Self, buffer: []const u8, address: std.net.Address) !usize {
+        // 验证地址有效性：端口不能为 0
+        if (address.getPort() == 0) {
+            std.log.err("UDP.sendTo: 无效的地址，端口为 0: {}", .{address});
+            return error.InvalidAddress;
+        }
         std.log.debug("UDP.sendTo: 发送 {} 字节到 {}", .{ buffer.len, address });
         const xobj = self.xobj orelse return error.NotInit;
         // UDP State 需要初始化 op 字段，这里初始化为 send 操作
