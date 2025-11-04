@@ -47,7 +47,7 @@ pub fn main() !void {
     _ = try schedule.go(sendMessages, .{channel});
 
     // 在协程中接收消息（模拟接收流程）
-    _ = try schedule.go(receiveMessages, .{&pc});
+    _ = try schedule.go(receiveMessages, .{pc});
 
     std.log.info("开始发送和接收消息...", .{});
     std.log.info("（注意：这是一个演示，实际需要完整的连接建立）", .{});
@@ -105,7 +105,7 @@ fn sendMessages(channel: *DataChannel) !void {
     };
 
     for (messages, 0..) |msg, i| {
-        try zco.Sleep(1000); // 等待 1 秒
+        try zco.sleep(1000); // 等待 1 秒
 
         std.log.info("[发送] 消息 {}: {s}", .{ i + 1, msg });
 
@@ -128,7 +128,7 @@ fn receiveMessages(pc: *PeerConnection) !void {
 
     var count: u32 = 0;
     while (count < 10) {
-        try zco.Sleep(500); // 每 500ms 检查一次
+        try zco.sleep(500); // 每 500ms 检查一次
 
         // 尝试接收数据（在实际应用中，这应该在 DTLS 握手完成后调用）
         pc.recvSctpData() catch |err| {
