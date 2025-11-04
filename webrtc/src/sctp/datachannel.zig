@@ -316,7 +316,7 @@ pub const DataChannel = struct {
             // Stream 不存在，需要创建
             // 创建 Stream（有序传输）
             const sctp_stream = try assoc.stream_manager.createStream(self.stream_id, self.ordered);
-            errdefer assoc.stream_manager.removeStream(self.stream_id);
+            errdefer _ = assoc.stream_manager.removeStream(self.stream_id) catch {};
 
             // 创建并发送数据块
             const current_tsn = assoc.next_tsn;
