@@ -242,6 +242,36 @@ pub fn build(b: *std.Build) void {
     sctp_datachannel_tests.root_module.addImport("zco", zco);
     const run_sctp_datachannel_tests = b.addRunArtifact(sctp_datachannel_tests);
 
+    // Media Track 测试
+    const media_track_tests = b.addTest(.{
+        .root_source_file = b.path("src/media/track_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_media_track_tests = b.addRunArtifact(media_track_tests);
+
+    // PeerConnection Sender 测试
+    const sender_tests = b.addTest(.{
+        .root_source_file = b.path("src/peer/sender_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    sender_tests.root_module.addImport("zco", zco);
+    sender_tests.root_module.addImport("nets", nets);
+    sender_tests.root_module.addImport("websocket", websocket);
+    const run_sender_tests = b.addRunArtifact(sender_tests);
+
+    // PeerConnection Receiver 测试
+    const receiver_tests = b.addTest(.{
+        .root_source_file = b.path("src/peer/receiver_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    receiver_tests.root_module.addImport("zco", zco);
+    receiver_tests.root_module.addImport("nets", nets);
+    receiver_tests.root_module.addImport("websocket", websocket);
+    const run_receiver_tests = b.addRunArtifact(receiver_tests);
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -267,4 +297,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_sctp_association_tests.step);
     test_step.dependOn(&run_sctp_stream_tests.step);
     test_step.dependOn(&run_sctp_datachannel_tests.step);
+    test_step.dependOn(&run_media_track_tests.step);
+    test_step.dependOn(&run_sender_tests.step);
+    test_step.dependOn(&run_receiver_tests.step);
 }

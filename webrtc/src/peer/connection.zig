@@ -7,6 +7,10 @@ const srtp = @import("../srtp/root.zig");
 const rtp = @import("../rtp/root.zig");
 const sctp = @import("../sctp/root.zig");
 const signaling = @import("../signaling/root.zig");
+const media = @import("../media/root.zig");
+
+const Sender = @import("./sender.zig").Sender;
+const Receiver = @import("./receiver.zig").Receiver;
 
 const sdp = signaling.sdp;
 
@@ -126,6 +130,10 @@ pub const PeerConnection = struct {
     sctp_association: ?*sctp.Association = null,
     ssrc_manager: ?*rtp.SsrcManager = null, // SSRC 管理器
 
+    // 媒体轨道
+    senders: std.ArrayList(*Sender), // RTP 发送器列表
+    receivers: std.ArrayList(*Receiver), // RTP 接收器列表
+
     // SDP 描述
     local_description: ?*SessionDescription = null,
     remote_description: ?*SessionDescription = null,
@@ -150,6 +158,8 @@ pub const PeerConnection = struct {
             .allocator = allocator,
             .schedule = schedule,
             .configuration = config,
+            .senders = std.ArrayList(*Sender).init(allocator),
+            .receivers = std.ArrayList(*Receiver).init(allocator),
         };
 
         // 初始化 ICE Agent
@@ -182,6 +192,7 @@ pub const PeerConnection = struct {
             allocator.destroy(manager);
         };
 
+
         return self;
     }
 
@@ -195,6 +206,18 @@ pub const PeerConnection = struct {
             manager.deinit();
             self.allocator.destroy(manager);
         }
+
+        // 清理发送器
+        for (self.senders.items) |sender| {
+            sender.deinit();
+        }
+        self.senders.deinit();
+
+        // 清理接收器
+        for (self.receivers.items) |receiver| {
+            receiver.deinit();
+        }
+        self.receivers.deinit();
 
         if (self.srtp_receiver) |transform_ptr| {
             transform_ptr.ctx.deinit();
@@ -684,8 +707,8 @@ pub const PeerConnection = struct {
             }
 
             // 检查 media-level candidates
-            for (description.media_descriptions.items) |media| {
-                for (media.attributes.items) |attr| {
+            for (description.media_descriptions.items) |media_desc| {
+                for (media_desc.attributes.items) |attr| {
                     if (std.mem.eql(u8, attr.name, "candidate")) {
                         if (attr.value) |candidate_str| {
                             // 解析 candidate 字符串
@@ -914,8 +937,8 @@ pub const PeerConnection = struct {
     /// 返回 setup 属性值（"actpass", "active", "passive"）或 null
     fn parseSetupAttribute(description: *SessionDescription) ?[]const u8 {
         // 检查媒体级别的 setup 属性（优先）
-        for (description.media_descriptions.items) |media| {
-            for (media.attributes.items) |attr| {
+        for (description.media_descriptions.items) |media_desc| {
+            for (media_desc.attributes.items) |attr| {
                 if (std.mem.eql(u8, attr.name, "setup")) {
                     if (attr.value) |value| {
                         return value;
@@ -1221,6 +1244,86 @@ pub const PeerConnection = struct {
         }
     }
 
+    /// 添加媒体轨道
+    /// 创建 RTCRtpSender 并开始发送媒体
+    pub fn addTrack(self: *Self, track: *media.Track) !*Sender {
+        // 创建发送器
+        const sender = try Sender.init(self.allocator);
+        errdefer sender.deinit();
+
+        // 设置轨道
+        sender.setTrack(track);
+
+        // 根据轨道类型确定载荷类型
+        const payload_type: u7 = switch (track.kind) {
+            .audio => 111, // 默认音频载荷类型（Opus）
+            .video => 96, // 默认视频载荷类型（VP8）
+        };
+        sender.setPayloadType(payload_type);
+
+        // 生成 SSRC
+        const ssrc = try self.getLocalSsrc();
+        sender.setSsrc(ssrc);
+
+        // 添加到发送器列表
+        try self.senders.append(sender);
+
+        // 如果连接已建立，可以开始发送媒体
+        // 注意：实际发送需要实现媒体编码和 RTP 包生成
+
+        return sender;
+    }
+
+    /// 移除媒体轨道
+    /// 移除对应的 RTCRtpSender
+    pub fn removeTrack(self: *Self, sender: *Sender) !void {
+        // 从列表中移除
+        for (self.senders.items, 0..) |s, i| {
+            if (s == sender) {
+                _ = self.senders.swapRemove(i);
+                sender.deinit();
+                return;
+            }
+        }
+        return error.SenderNotFound;
+    }
+
+    /// 获取所有发送器
+    pub fn getSenders(self: *const Self) []const *Sender {
+        return self.senders.items;
+    }
+
+    /// 获取所有接收器
+    pub fn getReceivers(self: *const Self) []const *Receiver {
+        return self.receivers.items;
+    }
+
+    /// 创建接收器（当接收到远程媒体轨道时）
+    /// 通常由 PeerConnection 内部调用
+    pub fn createReceiver(self: *Self, kind: media.TrackKind, ssrc: u32, payload_type: u7) !*Receiver {
+        // 创建接收器
+        const receiver = try Receiver.init(self.allocator);
+        errdefer receiver.deinit();
+
+        // 创建媒体轨道
+        const track_id = try std.fmt.allocPrint(self.allocator, "receiver-{d}", .{ssrc});
+        defer self.allocator.free(track_id);
+        const track_label = try std.fmt.allocPrint(self.allocator, "Remote {s}", .{@tagName(kind)});
+        defer self.allocator.free(track_label);
+
+        const track = try media.Track.init(self.allocator, track_id, kind, track_label);
+        errdefer track.deinit();
+
+        receiver.setTrack(track);
+        receiver.setSsrc(ssrc);
+        receiver.setPayloadType(payload_type);
+
+        // 添加到接收器列表
+        try self.receivers.append(receiver);
+
+        return receiver;
+    }
+
     pub const Error = error{
         NoRemoteDescription,
         NoIceAgent,
@@ -1233,5 +1336,6 @@ pub const PeerConnection = struct {
         NoDtlsHandshake,
         SrtpNotInitialized,
         NoSsrcManager,
+        SenderNotFound,
     };
 };
