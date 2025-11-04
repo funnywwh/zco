@@ -240,6 +240,8 @@ pub const Record = struct {
     pub fn send(self: *Self, content_type: ContentType, data: []const u8, address: std.net.Address) !void {
         if (self.udp == null) return error.NoUdpSocket;
 
+        std.log.debug("DTLS Record.send: 发送 {} 类型记录 ({} 字节) 到 {}", .{ content_type, data.len, address });
+
         // 加密数据（如果有写加密）
         var payload: []const u8 = data;
         var encrypted_payload: ?[]u8 = null;
@@ -248,6 +250,9 @@ pub const Record = struct {
         if (self.write_cipher) |cipher| {
             encrypted_payload = try cipher.encrypt(data, self.allocator);
             payload = encrypted_payload.?;
+            std.log.debug("DTLS Record.send: 数据已加密 ({} -> {} 字节)", .{ data.len, payload.len });
+        } else {
+            std.log.debug("DTLS Record.send: 使用明文发送（未设置写加密）", .{});
         }
 
         // 构建记录头
@@ -267,8 +272,11 @@ pub const Record = struct {
         try record.appendSlice(&header_bytes);
         try record.appendSlice(payload);
 
+        std.log.debug("DTLS Record.send: 发送 DTLS 记录 (总长度: {} 字节)", .{record.items.len});
+
         // 发送
-        _ = try self.udp.?.sendTo(record.items, address);
+        const sent = try self.udp.?.sendTo(record.items, address);
+        std.log.debug("DTLS Record.send: 已通过 UDP 发送 {} 字节", .{sent});
 
         // 更新序列号
         self.write_sequence_number +%= 1;

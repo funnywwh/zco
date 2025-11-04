@@ -1489,9 +1489,12 @@ pub const PeerConnection = struct {
                 const remote_candidate = pair.remote;
                 const address = remote_candidate.address;
 
+                std.log.debug("PeerConnection.sendSctpData: 发送 SCTP 数据包 ({} 字节) 到 {}", .{ sctp_packet.len, address });
+
                 // 通过 DTLS Record 发送 SCTP 数据（使用 application_data 类型）
                 if (self.dtls_record) |record| {
                     try record.send(.application_data, sctp_packet, address);
+                    std.log.debug("PeerConnection.sendSctpData: SCTP 数据包已发送", .{});
                 }
             } else {
                 return error.NoSelectedPair;
@@ -1526,18 +1529,25 @@ pub const PeerConnection = struct {
         // 从 DTLS Record 接收数据
         var buffer: [8192]u8 = undefined;
         const record = if (self.dtls_record) |r| r else return error.NoDtlsRecord;
+        
+        std.log.debug("PeerConnection.recvSctpData: 等待接收 DTLS 数据...", .{});
         const result = record.recv(&buffer) catch |err| {
             // 如果没有数据可接收，返回（非阻塞）
             // 注意：DTLS Record 的 recv 可能返回其他错误，这里简化处理
+            std.log.debug("PeerConnection.recvSctpData: 接收失败: {}", .{err});
             return err;
         };
 
+        std.log.debug("PeerConnection.recvSctpData: 收到 DTLS 记录 (类型: {}, 数据长度: {})", .{ result.content_type, result.data.len });
+
         // 只处理 application_data 类型
         if (result.content_type != .application_data) {
+            std.log.debug("PeerConnection.recvSctpData: 忽略非 application_data 类型", .{});
             return;
         }
 
         // 处理接收到的 SCTP 数据
+        std.log.debug("PeerConnection.recvSctpData: 处理 SCTP 数据包 ({} 字节)", .{result.data.len});
         try self.handleSctpPacket(result.data);
     }
 
@@ -1590,8 +1600,12 @@ pub const PeerConnection = struct {
         // 获取 Stream ID
         const stream_id = data_chunk.stream_id;
 
+        std.log.debug("PeerConnection.handleDataChunk: 收到 Stream ID {} 的数据 ({} 字节)", .{ stream_id, data_chunk.user_data.len });
+
         // 查找对应的 DataChannel
         if (self.findDataChannelByStreamId(stream_id)) |channel| {
+            std.log.debug("PeerConnection.handleDataChunk: 找到 DataChannel (Stream ID: {})", .{stream_id});
+            
             // 找到对应的 Stream（如果不存在则创建）
             const sctp_stream = assoc.stream_manager.findStream(stream_id) orelse
                 try assoc.stream_manager.createStream(stream_id, channel.ordered);
@@ -1601,12 +1615,16 @@ pub const PeerConnection = struct {
 
             // 触发 DataChannel 的 onmessage 事件
             if (channel.onmessage) |callback| {
+                std.log.debug("PeerConnection.handleDataChunk: 触发 onmessage 事件 (Stream ID: {}, 数据长度: {})", .{ stream_id, data_chunk.user_data.len });
                 const user_data_copy = try self.allocator.dupe(u8, data_chunk.user_data);
                 defer self.allocator.free(user_data_copy);
                 callback(channel, user_data_copy);
+            } else {
+                std.log.debug("PeerConnection.handleDataChunk: DataChannel 没有设置 onmessage 回调", .{});
             }
         } else {
             // 没有找到对应的 DataChannel，可能是新通道
+            std.log.warn("PeerConnection.handleDataChunk: 没有找到 Stream ID {} 对应的 DataChannel", .{stream_id});
             // TODO: 处理自动创建 DataChannel 的情况
         }
     }

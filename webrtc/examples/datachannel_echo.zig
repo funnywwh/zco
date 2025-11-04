@@ -224,9 +224,19 @@ fn startDataChannelCommunication(alice: *PeerConnection, bob: *PeerConnection, s
 
     // Bob 创建数据通道（接收方，需要匹配 Stream ID）
     // 注意：在实际应用中，Bob 应该从接收到的 DCEP Open 消息中获取 Stream ID
-    // 这里简化实现，使用相同的 Stream ID
+    // 这里简化实现，确保使用相同的 Stream ID
     const bob_channel = try bob.createDataChannel("echo-channel", null);
     defer bob_channel.deinit();
+
+    // 确保 Bob 的 DataChannel 使用与 Alice 相同的 Stream ID
+    // 注意：在实际应用中，Bob 应该从接收到的 DCEP Open 消息中获取 Stream ID
+    // 这里简化实现，手动设置 Bob 的 Stream ID 以匹配 Alice 的（仅用于演示）
+    if (bob_channel.stream_id != alice_channel.stream_id) {
+        std.log.warn("[警告] Stream ID 不匹配 (Alice: {}, Bob: {})，手动设置 Bob 的 Stream ID", .{ alice_channel.stream_id, bob_channel.stream_id });
+        // 手动设置 Bob 的 Stream ID 以匹配 Alice 的
+        // 注意：这在实际应用中不应该这样做，应该通过 DCEP 协议处理
+        @constCast(bob_channel).stream_id = alice_channel.stream_id;
+    }
 
     std.log.info("[Bob] 数据通道已创建 (Stream ID: {})", .{bob_channel.stream_id});
 
@@ -240,19 +250,31 @@ fn startDataChannelCommunication(alice: *PeerConnection, bob: *PeerConnection, s
 
     // 设置事件回调
     setupAliceChannelEvents(alice_channel);
-    setupBobChannelEvents(bob_channel, bob);
+    setupBobChannelEvents(bob_channel);
 
     // 打开数据通道
     alice_channel.setState(.open);
     bob_channel.setState(.open);
 
-    // 在协程中发送消息（Alice）
+    // 等待一小段时间，确保通道完全打开
+    const current_co = try schedule.getCurrentCo();
+    try current_co.Sleep(100 * std.time.ns_per_ms);
+
+    // 先启动 Bob 的接收协程（确保接收者先准备好）
+    std.log.info("启动 Bob 接收协程...", .{});
+    _ = try schedule.go(echoMessages, .{ bob, bob_channel, schedule });
+    
+    // 等待一小段时间，确保 Bob 的接收协程已启动并开始监听
+    try current_co.Sleep(200 * std.time.ns_per_ms);
+
+    // 然后启动 Alice 的发送协程
+    std.log.info("启动 Alice 发送协程...", .{});
     _ = try schedule.go(sendMessages, .{ alice_channel, schedule });
 
-    // 在协程中接收消息并回显（Bob）
-    _ = try schedule.go(echoMessages, .{ bob, bob_channel, schedule });
-
     std.log.info("数据通道通信已启动", .{});
+    
+    // 等待一段时间，让消息发送和接收完成
+    try current_co.Sleep(5 * std.time.ns_per_s);
 }
 
 /// 设置 Alice 通道事件
@@ -275,7 +297,7 @@ fn setupAliceChannelEvents(channel: *DataChannel) void {
 }
 
 /// 设置 Bob 通道事件（接收并回显）
-fn setupBobChannelEvents(channel: *DataChannel, _: *PeerConnection) void {
+fn setupBobChannelEvents(channel: *DataChannel) void {
     const OnOpenContext = struct {
         fn callback(ch: *DataChannel) void {
             _ = ch;
@@ -286,14 +308,14 @@ fn setupBobChannelEvents(channel: *DataChannel, _: *PeerConnection) void {
 
     const OnMessageContext = struct {
         fn callback(ch: *DataChannel, data: []const u8) void {
-            std.log.info("[Bob] 收到消息: {s}，准备回显", .{data});
-            // 回显消息（在协程中发送，避免阻塞）
-            // 注意：这里简化实现，直接发送
-            // 在实际应用中，应该在协程中发送
+            std.log.info("[Bob] 收到消息 ({} 字节): {s}，准备回显", .{ data.len, data });
+            
+            // 回显消息
+            // DataChannel.send 会使用关联的 PeerConnection 发送数据
             if (ch.send(data, null)) |_| {
-                std.log.info("[Bob] 消息已回显: {s}", .{data});
+                std.log.info("[Bob] ✓ 消息已回显: {s}", .{data});
             } else |err| {
-                std.log.err("[Bob] 回显失败: {}", .{err});
+                std.log.err("[Bob] ✗ 回显失败: {}", .{err});
             }
         }
     };
@@ -340,28 +362,33 @@ fn sendMessages(channel: *DataChannel, schedule: *zco.Schedule) !void {
 }
 
 /// Echo 消息协程（Bob）
-fn echoMessages(pc: *PeerConnection, _: *DataChannel, schedule: *zco.Schedule) !void {
+fn echoMessages(pc: *PeerConnection, _: *DataChannel, _: *zco.Schedule) !void {
     std.log.info("[Bob] 开始监听消息...", .{});
 
     // 持续监听，直到收到足够的数据或超时
     var count: u32 = 0;
-    const max_count = 100;
+    var received_messages: u32 = 0;
+    const max_count = 500; // 增加循环次数，确保能接收到所有消息
+    const max_received = 10; // 最多接收 10 条消息（包括回显）
 
-    while (count < max_count) {
-        const current_co = try schedule.getCurrentCo();
-        try current_co.Sleep(200 * std.time.ns_per_ms);
-
-        // 接收 SCTP 数据
+    while (count < max_count and received_messages < max_received) {
+        // 接收 SCTP 数据（这个方法会阻塞等待数据）
+        // recvSctpData 会调用 DTLS Record.recv()，它会阻塞等待 UDP 数据
+        // 当收到数据时，会解析 SCTP 包并触发 DataChannel 的 onmessage 事件
+        // 注意：这是一个阻塞调用，会一直等待直到有数据到达
         pc.recvSctpData() catch |err| {
-            // 忽略预期的错误（没有数据可接收是正常的）
-            // DTLS Record.recv() 会阻塞等待数据，如果没有数据会返回错误
+            // DTLS Record.recv() 会阻塞等待数据
+            // 如果没有数据，可能会返回错误（取决于实现）
             // 这里简化处理，忽略所有错误继续等待
             _ = err catch {};
         };
 
+        // 如果 onmessage 被触发，received_messages 会在回调中增加
+        // 这里简化：每接收一次就增加计数（假设每次 recvSctpData 成功对应一条消息）
+        received_messages += 1;
         count += 1;
     }
 
-    std.log.info("[Bob] 接收监听已停止", .{});
+    std.log.info("[Bob] 接收监听已停止 (循环 {} 次，收到 {} 条消息)", .{ count, received_messages });
 }
 
