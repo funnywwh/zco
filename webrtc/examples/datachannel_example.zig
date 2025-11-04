@@ -2,9 +2,11 @@ const std = @import("std");
 const zco = @import("zco");
 const webrtc = @import("webrtc");
 
-const PeerConnection = webrtc.peer.PeerConnection;
+const peer = webrtc.peer;
+const connection = peer.connection;
+const PeerConnection = connection.PeerConnection;
+const Configuration = connection.Configuration;
 const DataChannel = webrtc.sctp.DataChannel;
-const Configuration = webrtc.peer.PeerConnection.Configuration;
 
 /// 数据通道示例应用
 /// 演示如何使用 WebRTC 数据通道进行双向消息传输
@@ -21,7 +23,7 @@ pub fn main() !void {
 
     // 创建 PeerConnection
     const config = Configuration{};
-    var pc = try PeerConnection.init(allocator, &schedule, config);
+    var pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     std.log.info("PeerConnection 已创建", .{});
