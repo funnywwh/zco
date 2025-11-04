@@ -111,8 +111,8 @@ fn sendMessages(channel: *DataChannel, schedule: *zco.Schedule) !void {
 
         std.log.info("[发送] 消息 {}: {s}", .{ i + 1, msg });
 
-        // 发送消息
-        channel.send(msg) catch |err| {
+        // 发送消息（association 参数为 null，使用 DataChannel 关联的 association）
+        channel.send(msg, null) catch |err| {
             std.log.warn("[发送] 失败: {} (这可能是正常的，因为缺少完整的连接)", .{err});
             continue;
         };

@@ -1583,7 +1583,7 @@ pub const PeerConnection = struct {
     /// 解析 Data Chunk，提取用户数据，并路由到对应的 DataChannel
     fn handleDataChunk(self: *Self, assoc: *sctp.Association, chunk_data: []const u8) !void {
         // 解析 Data Chunk
-        const data_chunk = try sctp.chunk.DataChunk.parse(self.allocator, chunk_data);
+        var data_chunk = try sctp.chunk.DataChunk.parse(self.allocator, chunk_data);
         defer data_chunk.deinit(self.allocator);
 
         // 获取 Stream ID
