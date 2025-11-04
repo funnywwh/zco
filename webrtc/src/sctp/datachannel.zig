@@ -309,8 +309,16 @@ pub const DataChannel = struct {
             // 5. 通过网络发送（如果 PeerConnection 可用）
             if (self.peer_connection) |pc| {
                 const PeerConnection = @import("../peer/connection.zig").PeerConnection;
-                const pc_ptr: *PeerConnection = @ptrCast(@alignCast(pc));
-                try pc_ptr.sendSctpData(sctp_packet);
+                // 使用 @ptrFromInt 避免 @alignCast 的运行时检查
+                const pc_addr = @intFromPtr(pc);
+                const pc_align = @alignOf(PeerConnection);
+                if (pc_addr % pc_align == 0) {
+                    const aligned_ptr: [*]align(@alignOf(PeerConnection)) u8 = @ptrFromInt(pc_addr);
+                    const pc_ptr: *PeerConnection = @as(*PeerConnection, @ptrCast(aligned_ptr));
+                    try pc_ptr.sendSctpData(sctp_packet);
+                } else {
+                    std.log.err("DataChannel.send: peer_connection 指针未对齐", .{});
+                }
             }
         } else {
             // Stream 不存在，需要创建
@@ -341,8 +349,16 @@ pub const DataChannel = struct {
             // 通过网络发送（如果 PeerConnection 可用）
             if (self.peer_connection) |pc| {
                 const PeerConnection = @import("../peer/connection.zig").PeerConnection;
-                const pc_ptr: *PeerConnection = @ptrCast(@alignCast(pc));
-                try pc_ptr.sendSctpData(sctp_packet);
+                // 使用 @ptrFromInt 避免 @alignCast 的运行时检查
+                const pc_addr = @intFromPtr(pc);
+                const pc_align = @alignOf(PeerConnection);
+                if (pc_addr % pc_align == 0) {
+                    const aligned_ptr: [*]align(@alignOf(PeerConnection)) u8 = @ptrFromInt(pc_addr);
+                    const pc_ptr: *PeerConnection = @as(*PeerConnection, @ptrCast(aligned_ptr));
+                    try pc_ptr.sendSctpData(sctp_packet);
+                } else {
+                    std.log.err("DataChannel.send: peer_connection 指针未对齐", .{});
+                }
             }
         }
     }

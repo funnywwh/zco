@@ -285,81 +285,107 @@ pub const Record = struct {
     }
 
     /// 接收 DTLS 记录
+    /// 如果收到非 DTLS 消息（如 STUN），会重试接收
     pub fn recv(self: *Self, buffer: []u8) !struct { content_type: ContentType, data: []u8, from: std.net.Address } {
         if (self.udp == null) return error.NoUdpSocket;
 
-        std.log.debug("DTLS Record.recv: 等待接收 UDP 数据...", .{});
-        var recv_buffer: [2048]u8 = undefined;
+        // 事件驱动：直接调用 recvFrom，它会挂起协程直到收到数据
+        while (true) {
+            std.log.debug("DTLS Record.recv: 等待接收 UDP 数据（事件驱动）...", .{});
+            var recv_buffer: [2048]u8 = undefined;
 
-        // 检查 UDP socket 是否存在
-        if (self.udp == null) {
-            std.log.err("DTLS Record.recv: UDP socket 为 null", .{});
-            return error.NoUdpSocket;
-        }
+            std.log.debug("DTLS Record.recv: 调用 UDP.recvFrom（事件驱动）...", .{});
+            const result = self.udp.?.recvFrom(&recv_buffer) catch |err| {
+                std.log.err("DTLS Record.recv: UDP.recvFrom 失败: {}", .{err});
+                return err;
+            };
 
-        std.log.debug("DTLS Record.recv: 调用 UDP.recvFrom...", .{});
-        const result = self.udp.?.recvFrom(&recv_buffer) catch |err| {
-            std.log.err("DTLS Record.recv: UDP.recvFrom 失败: {}", .{err});
-            return err;
-        };
+            std.log.debug("DTLS Record.recv: 收到 UDP 数据 ({} 字节) 来自 {}", .{ result.data.len, result.addr });
 
-        std.log.debug("DTLS Record.recv: 收到 UDP 数据 ({} 字节) 来自 {}", .{ result.data.len, result.addr });
+            // 检查是否是 STUN 消息（magic cookie 0x2112A442）
+            // 注意：STUN 消息的前 4 字节是消息类型，第 5-8 字节是 magic cookie
+            // 如果消息长度 >= 8 且 magic cookie 匹配，则可能是 STUN 消息
+            // 但也要检查第一个字节是否是有效的 DTLS ContentType（0x14-0x17）
+            if (result.data.len >= 8) {
+                const first_byte = result.data[0];
+                // DTLS ContentType 范围：0x14 (alert), 0x15 (handshake), 0x16 (application_data), 0x17 (heartbeat)
+                // STUN 消息的第一个字节通常是 0x00 或 0x01（请求/响应）
+                const is_dtls_content_type = (first_byte >= 0x14 and first_byte <= 0x17);
 
-        if (result.data.len < 13) {
-            std.log.debug("DTLS Record.recv: 数据太短 ({} 字节 < 13 字节)", .{result.data.len});
-            return error.InvalidRecord;
-        }
-
-        // 解析记录头
-        const header = try RecordHeader.parse(result.data);
-        std.log.debug("DTLS Record.recv: 解析记录头 (类型: {}, epoch: {}, 序列号: {}, 长度: {})", .{ header.content_type, header.epoch, header.sequence_number, header.length });
-
-        // 检查重放（如果已加密）
-        if (self.read_cipher != null) {
-            if (self.replay_window.checkReplay(header.sequence_number)) {
-                std.log.debug("DTLS Record.recv: 检测到重放 (序列号: {})", .{header.sequence_number});
-                return error.ReplayDetected;
+                if (!is_dtls_content_type) {
+                    const magic_cookie = std.mem.readInt(u32, result.data[4..8], .big);
+                    if (magic_cookie == 0x2112A442) {
+                        std.log.debug("DTLS Record.recv: 收到 STUN 消息而非 DTLS 记录，丢弃并重试（事件驱动）", .{});
+                        // 事件驱动：直接再次调用 recvFrom，不需要 sleep
+                        continue;
+                    }
+                }
             }
+
+            if (result.data.len < 13) {
+                std.log.debug("DTLS Record.recv: 数据太短 ({} 字节 < 13 字节)，可能是 STUN 消息，丢弃并重试", .{result.data.len});
+                // 事件驱动：直接再次调用 recvFrom，不需要 sleep
+                continue;
+            }
+
+            // 解析记录头
+            const header = RecordHeader.parse(result.data) catch |err| {
+                std.log.debug("DTLS Record.recv: 解析记录头失败: {}，可能是 STUN 消息，丢弃并重试（事件驱动）", .{err});
+                // 事件驱动：直接再次调用 recvFrom，不需要 sleep
+                continue;
+            };
+            std.log.debug("DTLS Record.recv: 解析记录头 (类型: {}, epoch: {}, 序列号: {}, 长度: {})", .{ header.content_type, header.epoch, header.sequence_number, header.length });
+
+            // 检查重放（如果已加密）
+            if (self.read_cipher != null) {
+                if (self.replay_window.checkReplay(header.sequence_number)) {
+                    std.log.debug("DTLS Record.recv: 检测到重放 (序列号: {})", .{header.sequence_number});
+                    return error.ReplayDetected;
+                }
+            }
+
+            // 提取负载
+            const payload_data = result.data[13..];
+            if (payload_data.len < header.length) {
+                std.log.debug("DTLS Record.recv: 数据不完整 (需要 {} 字节，实际 {} 字节)，丢弃并重试（事件驱动）", .{ header.length, payload_data.len });
+                // 事件驱动：直接再次调用 recvFrom，不需要 sleep
+                // 注意：UDP 是数据报协议，不应该出现数据不完整的情况
+                // 如果出现，可能是收到了部分数据包，应该等待下一个完整的数据包
+                continue;
+            }
+
+            const encrypted_payload = payload_data[0..header.length];
+            std.log.debug("DTLS Record.recv: 提取负载 ({} 字节)", .{encrypted_payload.len});
+
+            // 解密数据（如果有读加密）
+            var decrypted_data: ?[]u8 = null;
+            defer if (decrypted_data) |d| self.allocator.free(d);
+
+            const payload = if (self.read_cipher) |cipher| blk: {
+                std.log.debug("DTLS Record.recv: 开始解密数据 ({} 字节)", .{encrypted_payload.len});
+                decrypted_data = try cipher.decrypt(encrypted_payload, self.allocator);
+                std.log.debug("DTLS Record.recv: 解密完成 ({} -> {} 字节)", .{ encrypted_payload.len, decrypted_data.?.len });
+                break :blk decrypted_data.?;
+            } else blk: {
+                std.log.debug("DTLS Record.recv: 使用明文（未设置读加密）", .{});
+                break :blk encrypted_payload;
+            };
+
+            // 复制到用户缓冲区
+            if (payload.len > buffer.len) return error.BufferTooSmall;
+            @memcpy(buffer[0..payload.len], payload);
+
+            // 更新读取序列号（如果 epoch 匹配）
+            if (header.epoch == self.read_epoch) {
+                self.read_sequence_number = header.sequence_number;
+            }
+
+            return .{
+                .content_type = header.content_type,
+                .data = buffer[0..payload.len],
+                .from = result.addr,
+            };
         }
-
-        // 提取负载
-        const payload_data = result.data[13..];
-        if (payload_data.len < header.length) {
-            std.log.debug("DTLS Record.recv: 数据不完整 (需要 {} 字节，实际 {} 字节)", .{ header.length, payload_data.len });
-            return error.IncompleteRecord;
-        }
-
-        const encrypted_payload = payload_data[0..header.length];
-        std.log.debug("DTLS Record.recv: 提取负载 ({} 字节)", .{encrypted_payload.len});
-
-        // 解密数据（如果有读加密）
-        var decrypted_data: ?[]u8 = null;
-        defer if (decrypted_data) |d| self.allocator.free(d);
-
-        const payload = if (self.read_cipher) |cipher| blk: {
-            std.log.debug("DTLS Record.recv: 开始解密数据 ({} 字节)", .{encrypted_payload.len});
-            decrypted_data = try cipher.decrypt(encrypted_payload, self.allocator);
-            std.log.debug("DTLS Record.recv: 解密完成 ({} -> {} 字节)", .{ encrypted_payload.len, decrypted_data.?.len });
-            break :blk decrypted_data.?;
-        } else blk: {
-            std.log.debug("DTLS Record.recv: 使用明文（未设置读加密）", .{});
-            break :blk encrypted_payload;
-        };
-
-        // 复制到用户缓冲区
-        if (payload.len > buffer.len) return error.BufferTooSmall;
-        @memcpy(buffer[0..payload.len], payload);
-
-        // 更新读取序列号（如果 epoch 匹配）
-        if (header.epoch == self.read_epoch) {
-            self.read_sequence_number = header.sequence_number;
-        }
-
-        return .{
-            .content_type = header.content_type,
-            .data = buffer[0..payload.len],
-            .from = result.addr,
-        };
     }
 
     pub const Error = error{

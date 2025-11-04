@@ -74,7 +74,31 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     const tcp = try nets.Tcp.init(schedule);
     defer tcp.deinit();
 
-    try tcp.connect(server_addr);
+    // 尝试连接，如果失败则等待后重试（与 Bob 保持一致）
+    const max_retries = 5;
+    var retry_count: u32 = 0;
+    var connected = false;
+
+    while (retry_count < max_retries and !connected) {
+        tcp.connect(server_addr) catch |err| {
+            if (err == error.ConnectionRefused) {
+                retry_count += 1;
+                if (retry_count < max_retries) {
+                    std.log.info("[Alice] 连接被拒绝，等待后重试 ({}/{})...", .{ retry_count, max_retries });
+                    const current_co_alice = try schedule.getCurrentCo();
+                    try current_co_alice.Sleep(500 * std.time.ns_per_ms);
+                    continue;
+                }
+            }
+            return err;
+        };
+        connected = true;
+    }
+
+    if (!connected) {
+        std.log.err("[Alice] 连接失败，已达到最大重试次数", .{});
+        return error.ConnectionRefused;
+    }
     defer tcp.close();
 
     // 创建 WebSocket 连接
@@ -227,11 +251,12 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
 
     // 等待接收 answer 和 ICE candidates
     // 注意：buffer 已经在上面声明了，这里重新使用
-    var message_count: u32 = 0;
     var received_answer = false;
 
     std.log.info("[Alice] 开始等待 answer 和 ICE candidates...", .{});
-    while (message_count < 10) {
+    // 事件驱动：持续接收消息，直到收到 answer
+    // 收到 answer 后，立即退出循环（ICE candidates 会通过 onicecandidate 回调处理）
+    while (!received_answer) {
         const frame = ws.readMessage(buffer[0..]) catch |err| {
             // 区分连接关闭和真正的错误
             if (err == websocket.WebSocketError.ConnectionClosed or err == error.EOF) {
@@ -274,8 +299,6 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                 if (msg.user_id) |joined_user_id| {
                     std.log.info("[Alice] 收到 user_joined 通知: {s} 已加入房间（等待 answer 期间）", .{joined_user_id});
                 }
-                // 注意：parsed.deinit() 会释放 msg 内部的所有内存，不需要单独调用 msg.deinit()
-                message_count += 1;
                 continue;
             },
             .answer => {
@@ -289,6 +312,8 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                     try pc.setRemoteDescription(remote_sdp_ptr);
                     std.log.info("[Alice] 已设置远程 answer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
                     received_answer = true;
+                    std.log.info("[Alice] 已收到 answer，退出等待循环", .{});
+                    break; // 收到 answer 后立即退出
                 }
             },
             .ice_candidate => {
@@ -305,15 +330,13 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                     candidate_ptr.* = ice_candidate;
                     try pc.addIceCandidate(candidate_ptr);
                     std.log.info("[Alice] 已添加远程 ICE candidate，ICE 连接状态: {}", .{pc.getIceConnectionState()});
+                    continue;
                 }
             },
             else => {
                 std.log.info("[Alice] 收到其他类型消息: {}", .{msg.type});
             },
         }
-
-        // 注意：parsed.deinit() 会释放 msg 内部的所有内存，不需要单独调用 msg.deinit()
-        message_count += 1;
     }
 
     if (!received_answer) {
@@ -326,29 +349,36 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
 
     // 等待一段时间让 ICE candidates 交换完成
     std.log.info("[Alice] 等待 ICE candidates 交换完成...", .{});
-    try current_co_alice.Sleep(2 * std.time.ns_per_s);
+    try current_co_alice.Sleep(100 * std.time.ns_per_ms);
 
-    // 等待 ICE 连接建立和 DTLS 握手完成
-    // 注意：在创建数据通道前，需要完成 DTLS 握手
-    std.log.info("[Alice] 等待 ICE 连接建立和 DTLS 握手完成...", .{});
+    // 事件驱动：直接检查状态，如果未完成则等待（通过轮询，但间隔更长）
+    // 注意：由于 DTLS 握手是异步的，我们需要等待它完成
+    // 理想情况下应该使用回调，但为了简化，这里使用轻量级轮询
+    std.log.info("[Alice] 等待 ICE 连接建立和 DTLS 握手完成（事件驱动检查）...", .{});
 
-    // 轮询检查 ICE 连接和 DTLS 握手状态
-    const max_wait_time_ice: u64 = 10 * std.time.ns_per_s; // 最多等待 10 秒
-    const check_interval_ice: u64 = 500 * std.time.ns_per_ms; // 每 500ms 检查一次
-    var waited_time: u64 = 0;
     var dtls_ready = false;
+    var check_count: u32 = 0;
+    const max_checks = 60; // 最多检查 60 次（3 秒，每次 50ms）
 
-    while (waited_time < max_wait_time_ice and !dtls_ready) {
-        try current_co_alice.Sleep(check_interval_ice);
-        waited_time += check_interval_ice;
+    // 设置 DTLS 握手完成回调（用于快速响应）
+    pc.ondtlshandshakecomplete = struct {
+        fn callback(pc_self: *PeerConnection) void {
+            _ = pc_self;
+            std.log.info("[Alice] DTLS 握手完成回调被触发", .{});
+        }
+    }.callback;
 
+    // 轻量级检查循环（事件驱动检查，不频繁轮询）
+    while (check_count < max_checks and !dtls_ready) {
         // 检查 ICE 连接状态
         const ice_state = pc.getIceConnectionState();
-        std.log.debug("[Alice] ICE 连接状态: {}", .{ice_state});
+        if (ice_state == .failed) {
+            std.log.err("[Alice] ICE 连接失败", .{});
+            return;
+        }
 
         // 检查 DTLS 握手状态
         if (pc.dtls_handshake) |handshake| {
-            std.log.debug("[Alice] DTLS 握手状态: {}", .{handshake.state});
             if (handshake.state == .handshake_complete) {
                 dtls_ready = true;
                 std.log.info("[Alice] DTLS 握手已完成", .{});
@@ -356,23 +386,27 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
             }
         }
 
-        // 如果 ICE 连接失败，提前退出
-        if (ice_state == .failed) {
-            std.log.err("[Alice] ICE 连接失败", .{});
-            return;
+        // 如果 ICE 已连接但 DTLS 未完成，等待一段时间（事件驱动，协程会被挂起）
+        if (ice_state == .connected or ice_state == .completed) {
+            // ICE 已连接，等待 DTLS 握手完成（使用较长的间隔，减少 CPU 占用）
+            try current_co_alice.Sleep(50 * std.time.ns_per_ms);
+            check_count += 1;
+        } else {
+            // ICE 未连接，等待更长时间
+            try current_co_alice.Sleep(100 * std.time.ns_per_ms);
+            check_count += 1;
         }
     }
 
     // 创建数据通道（如果 DTLS 握手已完成）
     if (!dtls_ready) {
         std.log.warn("[Alice] DTLS 握手未完成（等待超时），跳过数据通道创建", .{});
-        // 等待一段时间后退出
-        try current_co_alice.Sleep(2 * std.time.ns_per_s);
         return;
     }
 
+    // 注意：DataChannel 的所有权由 PeerConnection 管理，不需要手动 deinit
+    // PeerConnection.deinit() 会自动释放所有 DataChannel
     const channel = try pc.createDataChannel("test-channel", null);
-    defer channel.deinit();
     std.log.info("[Alice] 已创建数据通道", .{});
 
     // 设置数据通道事件
@@ -422,7 +456,10 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     }
 
     // 等待一段时间，让连接建立
-    try current_co_alice.Sleep(3 * std.time.ns_per_s);
+    try current_co_alice.Sleep(200 * std.time.ns_per_ms);
+
+    // 接收数据通道消息（通过 recvSctpData 处理传入的数据）
+    _ = try schedule.go(receiveDataChannelMessages, .{pc});
 
     // 发送测试消息
     if (channel.getState() == .open) {
@@ -434,8 +471,8 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         }
     }
 
-    // 等待接收消息
-    try current_co_alice.Sleep(2 * std.time.ns_per_s);
+    // 等待接收消息（事件驱动）
+    try current_co_alice.Sleep(500 * std.time.ns_per_ms);
 }
 
 /// 运行 Bob（接收方）
@@ -644,6 +681,8 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                     std.log.info("[Bob] ✅ 已发送 answer (SDP 长度: {} 字节)", .{answer_sdp.len});
 
                     offer_received = true;
+                    std.log.info("[Bob] 已收到 offer 并发送 answer，退出等待循环", .{});
+                    break; // 收到 offer 并发送 answer 后立即退出
                 }
             },
             .ice_candidate => {
@@ -669,6 +708,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
 
         // 注意：parsed.deinit() 会释放 msg 内部的所有内存，不需要单独调用 msg.deinit()
         message_count += 1;
+
+        // 如果已收到 offer，等待少量消息后退出（类似 Alice 的逻辑）
+        if (offer_received and message_count >= 5) {
+            std.log.info("[Bob] 已收到 offer 和足够的消息，退出等待循环", .{});
+            break;
+        }
     }
 
     // 发送 ICE candidates
@@ -706,26 +751,127 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 获取当前协程用于等待
     const current_co_bob_final = try schedule.getCurrentCo();
 
-    // 等待连接建立
-    try current_co_bob_final.Sleep(3 * std.time.ns_per_s);
+    // 事件驱动：等待 ICE 连接建立和 DTLS 握手完成
+    std.log.info("[Bob] 等待 ICE 连接建立和 DTLS 握手完成（事件驱动检查）...", .{});
 
-    // 接收数据通道消息
+    var dtls_ready = false;
+    var check_count: u32 = 0;
+    const max_checks = 60; // 最多检查 60 次（3 秒，每次 50ms）
+
+    // 设置 DTLS 握手完成回调（用于快速响应）
+    pc.ondtlshandshakecomplete = struct {
+        fn callback(pc_self: *PeerConnection) void {
+            _ = pc_self;
+            std.log.info("[Bob] DTLS 握手完成回调被触发", .{});
+        }
+    }.callback;
+
+    // 轻量级检查循环（事件驱动检查，不频繁轮询）
+    while (check_count < max_checks and !dtls_ready) {
+        // 检查 ICE 连接状态
+        const ice_state = pc.getIceConnectionState();
+        if (ice_state == .failed) {
+            std.log.err("[Bob] ICE 连接失败", .{});
+            return;
+        }
+
+        // 检查 DTLS 握手状态
+        if (pc.dtls_handshake) |handshake| {
+            if (handshake.state == .handshake_complete) {
+                dtls_ready = true;
+                std.log.info("[Bob] DTLS 握手已完成", .{});
+                break;
+            }
+        }
+
+        // 如果 ICE 已连接但 DTLS 未完成，等待一段时间（事件驱动，协程会被挂起）
+        if (ice_state == .connected or ice_state == .completed) {
+            // ICE 已连接，等待 DTLS 握手完成（使用较长的间隔，减少 CPU 占用）
+            try current_co_bob_final.Sleep(50 * std.time.ns_per_ms);
+            check_count += 1;
+        } else {
+            // ICE 未连接，等待更长时间
+            try current_co_bob_final.Sleep(100 * std.time.ns_per_ms);
+            check_count += 1;
+        }
+    }
+
+    // 创建数据通道（匹配 Alice 创建的通道）
+    if (!dtls_ready) {
+        std.log.warn("[Bob] DTLS 握手未完成（等待超时），跳过数据通道创建", .{});
+        try current_co_bob_final.Sleep(200 * std.time.ns_per_ms);
+        return;
+    }
+
+    // Bob 也需要创建匹配的数据通道来接收和发送消息
+    // 注意：在实际 WebRTC 中，接收方会自动创建数据通道，这里需要手动创建匹配的通道
+    // 注意：DataChannel 的所有权由 PeerConnection 管理，不需要手动 deinit
+    // PeerConnection.deinit() 会自动释放所有 DataChannel
+    const channel = try pc.createDataChannel("test-channel", null);
+    std.log.info("[Bob] 已创建数据通道", .{});
+
+    // 设置数据通道事件
+    channel.setOnOpen(struct {
+        fn callback(ch: *DataChannel) void {
+            _ = ch;
+            std.log.info("[Bob] 数据通道已打开", .{});
+        }
+    }.callback);
+
+    // 设置消息接收回调，收到消息后回复
+    channel.setOnMessage(struct {
+        fn callback(ch: *DataChannel, data: []const u8) void {
+            std.log.info("[Bob] 收到消息: {s}", .{data});
+
+            // 回复消息
+            const reply_msg = "Hello from Bob! Received: ";
+            var reply_buffer: [256]u8 = undefined;
+            const reply = std.fmt.bufPrint(&reply_buffer, "{s}{s}", .{ reply_msg, data }) catch {
+                std.log.err("[Bob] 格式化回复消息失败", .{});
+                return;
+            };
+
+            ch.send(reply, null) catch |err| {
+                std.log.err("[Bob] 发送回复消息失败: {}", .{err});
+                return;
+            };
+            std.log.info("[Bob] 已发送回复消息", .{});
+        }
+    }.callback);
+
+    // 打开数据通道
+    channel.setState(.open);
+
+    // 等待连接建立
+    try current_co_bob_final.Sleep(200 * std.time.ns_per_ms);
+
+    // 接收数据通道消息（通过 recvSctpData 处理传入的数据）
     _ = try schedule.go(receiveDataChannelMessages, .{pc});
 
-    // 等待接收消息
-    try current_co_bob_final.Sleep(5 * std.time.ns_per_s);
+    // 等待接收和发送消息
+    try current_co_bob_final.Sleep(500 * std.time.ns_per_ms);
 }
 
-/// 接收数据通道消息
+/// 接收数据通道消息（处理 SCTP 数据包）
+/// 事件驱动：持续接收 SCTP 数据，直到出错或达到上限
 fn receiveDataChannelMessages(pc: *PeerConnection) !void {
-    std.log.info("[Bob] 开始接收数据通道消息...", .{});
+    const current_co = try pc.schedule.getCurrentCo();
+    std.log.info("开始接收数据通道消息（事件驱动）...", .{});
 
     var count: u32 = 0;
-    while (count < 100) {
+    const max_count = 100; // 最多接收 100 个数据包
+
+    // 事件驱动：recvSctpData 会挂起协程直到数据到达
+    while (count < max_count) {
         pc.recvSctpData() catch |err| {
-            _ = err catch {};
+            // 如果是非阻塞错误（如没有数据），等待后重试
+            std.log.debug("接收 SCTP 数据失败: {}，等待后重试", .{err});
+            try current_co.Sleep(50 * std.time.ns_per_ms);
             continue;
         };
         count += 1;
+        std.log.debug("已接收 SCTP 数据包 ({}/{})", .{ count, max_count });
     }
+
+    std.log.info("数据通道消息接收完成（已接收 {} 个数据包）", .{count});
 }

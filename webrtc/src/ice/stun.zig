@@ -535,6 +535,47 @@ pub const Stun = struct {
         return response;
     }
 
+    /// 创建并发送 STUN Binding Response
+    /// 用于响应接收到的 Binding Request
+    pub fn sendBindingResponse(self: *Self, request: Message, client_address: std.net.Address) !void {
+        if (self.udp == null) {
+            return error.UdpNotInitialized;
+        }
+
+        // 创建响应消息
+        var response = Message.init(self.allocator);
+        errdefer response.deinit();
+
+        // 设置响应消息头（使用相同的 transaction_id）
+        const message_type = MessageHeader.setType(.success_response, .binding);
+        response.header = .{
+            .message_type = message_type,
+            .message_length = 0,
+            .transaction_id = request.header.transaction_id,
+        };
+
+        // 添加 XOR-MAPPED-ADDRESS 属性（推荐使用）
+        // 注意：client_address 是请求的源地址，我们需要返回它作为 mapped address
+        const xor_mapped = XorMappedAddress{
+            .family = 0x01, // IPv4
+            .port = client_address.getPort(),
+            .address = client_address,
+            .transaction_id = request.header.transaction_id,
+        };
+        const xor_attr = try xor_mapped.encode(self.allocator);
+        errdefer self.allocator.free(xor_attr.value);
+        try response.addAttribute(xor_attr);
+
+        // 编码响应
+        const response_data = try response.encode(self.allocator);
+        defer self.allocator.free(response_data);
+
+        // 发送响应（使用请求的源地址）
+        _ = try self.udp.?.sendTo(response_data, client_address);
+
+        std.log.debug("STUN: 已发送 Binding Response 到 {}", .{client_address});
+    }
+
     /// 计算 MESSAGE-INTEGRITY
     /// 根据 RFC 5389，使用 HMAC-SHA1
     pub fn computeMessageIntegrity(message_data: []const u8, username: []const u8, realm: []const u8, password: []const u8) ![20]u8 {

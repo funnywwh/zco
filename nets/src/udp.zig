@@ -46,15 +46,29 @@ pub const Udp = struct {
         std.log.debug("UDP.bind: Socket 已绑定到 {} (fd: {})", .{ address, xobj.fd });
     }
 
+    /// 获取实际绑定的地址和端口
+    /// 使用 getsockname 系统调用获取 socket 的实际绑定地址
+    pub fn getBoundAddress(self: *Self) !std.net.Address {
+        const xobj = self.xobj orelse return error.NotInit;
+
+        var addr: posix.sockaddr = undefined;
+        var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr);
+
+        try posix.getsockname(xobj.fd, &addr, &addr_len);
+
+        // 使用 initPosix 从 posix.sockaddr 创建 Address
+        return std.net.Address.initPosix(@alignCast(&addr));
+    }
+
     /// 异步读取 UDP 数据（带地址信息）
     pub fn recvFrom(self: *Self, buffer: []u8) !struct { data: []u8, addr: std.net.Address } {
         const xobj = self.xobj orelse {
             std.log.err("UDP.recvFrom: xobj 为 null (socket 未初始化)", .{});
             return error.NotInit;
         };
-        
+
         std.log.debug("UDP.recvFrom: 开始接收，检查协程环境... (socket fd: {})", .{xobj.fd});
-        
+
         // UDP State 需要初始化 op 字段，这里初始化为 recv 操作
         // 注意：必须先设置 op = .{ .recv = undefined }，然后再设置完整结构
         var state: zco.xev.UDP.State = undefined;
@@ -74,7 +88,7 @@ pub const Udp = struct {
             std.log.err("UDP.recvFrom: 不在协程环境中（runningCo 为 null）", .{});
             return error.CallInSchedule;
         };
-        
+
         std.log.debug("UDP.recvFrom: 协程环境正常，开始异步接收...", .{});
 
         const Result = struct {
@@ -91,9 +105,9 @@ pub const Udp = struct {
             std.log.err("UDP.recvFrom: xLoop 为 null", .{});
             return error.NoEventLoop;
         };
-        
+
         std.log.debug("UDP.recvFrom: 调用 xobj.read", .{});
-        
+
         xobj.read(
             xloop_ptr,
             &c_read,
@@ -119,13 +133,13 @@ pub const Udp = struct {
                     };
                     _r.addr = addr;
                     _r.size = r;
-                    
+
                     if (r) |size| {
                         std.log.info("UDP.recvFrom callback: 收到 {} 字节数据，恢复协程", .{size});
                     } else |err| {
                         std.log.err("UDP.recvFrom callback: 接收错误: {}", .{err});
                     }
-                    
+
                     _r.co.Resume() catch |e| {
                         std.log.err("nets udp recvFrom ResumeCo error:{s}", .{@errorName(e)});
                     };
@@ -133,13 +147,13 @@ pub const Udp = struct {
                 }
             }.callback,
         );
-        
+
         std.log.debug("UDP.recvFrom: 已注册到事件循环，准备挂起协程", .{});
 
         std.log.debug("UDP.recvFrom: 挂起协程，等待数据到达...", .{});
         try co.Suspend();
         const size = try result.size;
-        
+
         std.log.debug("UDP.recvFrom: 收到数据，恢复协程 ({} 字节来自 {})", .{ size, result.addr });
 
         return .{

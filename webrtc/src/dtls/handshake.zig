@@ -784,7 +784,8 @@ pub const Handshake = struct {
 
     /// 处理客户端握手流程（接收服务器消息后）
     pub fn processClientHandshakeAfterServerHello(self: *Self) !void {
-        if (self.state != .server_hello_received) {
+        // 允许在收到 ServerHello 或 Certificate 后调用
+        if (self.state != .server_hello_received and self.state != .server_certificate_received) {
             return error.InvalidState;
         }
 

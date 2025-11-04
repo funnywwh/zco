@@ -61,21 +61,21 @@ echo ""
 echo "[2/4] 启动 Alice 客户端..."
 zig build run-client -- alice test-room > "$LOG_DIR/alice.log" 2>&1 &
 ALICE_PID=$!
-sleep 3
+sleep 1
 
 # 启动 Bob
 echo "[3/4] 启动 Bob 客户端..."
 zig build run-client -- bob test-room > "$LOG_DIR/bob.log" 2>&1 &
 BOB_PID=$!
-sleep 3
+sleep 1
 
 echo "✅ 客户端已启动"
 echo ""
 
 # 等待连接建立和通信
 echo "[4/4] 等待连接建立和数据通道通信..."
-echo "    (等待最多 30 秒...)"
-for i in {1..30}; do
+echo "    (等待最多 5 秒...)"
+for i in {1..5}; do
     sleep 1
     # 检查是否所有进程还在运行
     if ! kill -0 $SERVER_PID 2>/dev/null; then
@@ -158,11 +158,29 @@ else
     echo "⚠️  数据通道状态未知 (Alice)"
 fi
 
-# 检查消息发送
-if grep -q "已发送测试消息\|收到消息" "$LOG_DIR/alice.log" 2>/dev/null; then
-    echo "✅ 数据通道消息可能已发送/接收 (Alice)"
+# 检查消息发送和接收（双向验证）
+if grep -q "已发送测试消息" "$LOG_DIR/alice.log" 2>/dev/null; then
+    echo "✅ Alice 发送了测试消息"
 else
-    echo "⚠️  数据通道消息状态未知 (Alice)"
+    echo "❌ Alice 未发送测试消息"
+fi
+
+if grep -q "收到消息.*Hello from Alice" "$LOG_DIR/bob.log" 2>/dev/null; then
+    echo "✅ Bob 收到了 Alice 的消息"
+else
+    echo "❌ Bob 未收到 Alice 的消息"
+fi
+
+if grep -q "已发送回复消息" "$LOG_DIR/bob.log" 2>/dev/null; then
+    echo "✅ Bob 发送了回复消息"
+else
+    echo "❌ Bob 未发送回复消息"
+fi
+
+if grep -q "收到消息.*Hello from Bob" "$LOG_DIR/alice.log" 2>/dev/null; then
+    echo "✅ Alice 收到了 Bob 的回复"
+else
+    echo "❌ Alice 未收到 Bob 的回复"
 fi
 
 echo ""

@@ -37,6 +37,9 @@ pub const IceAgent = struct {
     // 选中的对
     selected_pair: ?*CandidatePair,
 
+    // 等待响应的 pending requests（transaction_id -> pair）
+    pending_requests: std.StringHashMap(*CandidatePair),
+
     // 组件 ID（RTP 通常为 1，RTCP 为 2）
     component_id: u32,
 
@@ -48,6 +51,11 @@ pub const IceAgent = struct {
 
     // TURN 客户端（用于 Relay Candidate）
     turn: ?*Turn = null,
+
+    // 状态变化回调
+    // 注意：第一个参数是上下文（用于传递 PeerConnection 指针），第二个参数是状态
+    on_state_change: ?*const fn (*anyopaque, State) void = null,
+    on_state_change_ctx: ?*anyopaque = null,
 
     /// ICE 状态枚举
     pub const State = enum {
@@ -145,6 +153,7 @@ pub const IceAgent = struct {
             .turn_servers = std.ArrayList(TurnServer).init(allocator),
             .check_list = std.ArrayList(Check).init(allocator),
             .selected_pair = null,
+            .pending_requests = std.StringHashMap(*CandidatePair).init(allocator),
             .component_id = component_id,
         };
         return self;
@@ -152,6 +161,9 @@ pub const IceAgent = struct {
 
     /// 清理资源
     pub fn deinit(self: *Self) void {
+        // 清理 pending_requests
+        self.pending_requests.deinit();
+
         // 清理本地 Candidates
         for (self.local_candidates.items) |candidate| {
             candidate.deinit();
@@ -279,7 +291,7 @@ pub const IceAgent = struct {
             return error.InvalidState;
         }
 
-        self.state = .gathering;
+        self.setState(.gathering);
 
         // 创建 UDP socket（如果没有）
         if (self.udp == null) {
@@ -287,7 +299,7 @@ pub const IceAgent = struct {
         }
 
         // 收集本地地址
-        // 简化实现：如果 UDP socket 已经绑定，使用已绑定的地址
+        // 如果 UDP socket 已经绑定，使用 getsockname 获取实际绑定的地址
         // 否则绑定到 0.0.0.0（让系统分配端口）
         const candidate_addr = if (self.udp) |udp| blk: {
             // 检查 UDP socket 是否已经绑定
@@ -298,13 +310,22 @@ pub const IceAgent = struct {
                     // 如果绑定失败，返回错误
                     return err;
                 };
-                break :blk bind_addr;
+                // 绑定后，使用 getsockname 获取实际绑定的地址
+                const actual_addr = udp.getBoundAddress() catch |err| {
+                    std.log.warn("ICE: 无法获取绑定地址，使用原始地址: {}", .{err});
+                    break :blk bind_addr;
+                };
+                std.log.debug("ICE: 获取到实际绑定地址: {}", .{actual_addr});
+                break :blk actual_addr;
             } else {
-                // 已经绑定，使用默认地址（但端口不能为 0，否则会导致 sendTo 失败）
-                // TODO: 使用 getsockname 获取实际绑定的地址和端口
-                // 目前使用默认地址和端口，避免端口为 0 导致的 errno 22 错误
-                std.log.warn("ICE: UDP socket 已绑定，使用默认地址 127.0.0.1:5000（实际应该通过 getsockname 获取）", .{});
-                break :blk try std.net.Address.parseIp4("127.0.0.1", 5000);
+                // 已经绑定，使用 getsockname 获取实际绑定的地址
+                const actual_addr = udp.getBoundAddress() catch |err| {
+                    std.log.warn("ICE: 无法获取绑定地址，使用默认地址: {}", .{err});
+                    // 如果获取失败，使用默认地址（但端口不能为 0）
+                    break :blk try std.net.Address.parseIp4("127.0.0.1", 5000);
+                };
+                std.log.debug("ICE: 获取到实际绑定地址: {}", .{actual_addr});
+                break :blk actual_addr;
             }
         } else blk: {
             // 创建并绑定 UDP socket
@@ -313,7 +334,13 @@ pub const IceAgent = struct {
             self.udp.?.bind(bind_addr) catch |err| {
                 return err;
             };
-            break :blk bind_addr;
+            // 绑定后，使用 getsockname 获取实际绑定的地址
+            const actual_addr = self.udp.?.getBoundAddress() catch |err| {
+                std.log.warn("ICE: 无法获取绑定地址，使用原始地址: {}", .{err});
+                break :blk bind_addr;
+            };
+            std.log.debug("ICE: 获取到实际绑定地址: {}", .{actual_addr});
+            break :blk actual_addr;
         };
 
         // 创建 Host Candidate
@@ -334,7 +361,7 @@ pub const IceAgent = struct {
             candidate_addr,
             .host,
         );
-        
+
         // 释放原始分配的字符串（Candidate.init() 已经复制了）
         self.allocator.free(foundation);
         self.allocator.free(transport);
@@ -344,6 +371,18 @@ pub const IceAgent = struct {
         candidate.calculatePriority(type_pref, 65535); // 使用最大 local preference
 
         try self.local_candidates.append(candidate);
+        std.log.info("ICE: 已收集 Host Candidate: {}", .{candidate.address});
+
+        // 如果已有远程 Candidates，立即生成 Candidate Pairs
+        // 这样当本地 candidates 收集完成后，如果远程 candidates 已经添加，就可以生成 pairs
+        if (self.remote_candidates.items.len > 0) {
+            try self.generateCandidatePairs();
+            std.log.debug("ICE: 已生成 Candidate Pairs (本地: {}, 远程: {}, Pairs: {})", .{
+                self.local_candidates.items.len,
+                self.remote_candidates.items.len,
+                self.candidate_pairs.items.len,
+            });
+        }
     }
 
     /// 收集 Server Reflexive Candidates
@@ -528,7 +567,7 @@ pub const IceAgent = struct {
 
     /// 生成 Candidate Pairs
     /// 根据 RFC 8445，每个本地 Candidate 与每个远程 Candidate 配对
-    fn generateCandidatePairs(self: *Self) !void {
+    pub fn generateCandidatePairs(self: *Self) !void {
         for (self.local_candidates.items) |local| {
             for (self.remote_candidates.items) |remote| {
                 // 跳过不同类型的配对（简化实现）
@@ -613,6 +652,9 @@ pub const IceAgent = struct {
                 _ = try self.schedule.go(performCheck, .{ self, pair });
             }
         }
+
+        // 启动协程监听接收到的 STUN 消息并响应
+        _ = try self.schedule.go(handleIncomingStunMessages, .{self});
     }
 
     /// 执行 Connectivity Check（协程函数）
@@ -620,28 +662,180 @@ pub const IceAgent = struct {
         const stun = self.stun orelse return error.StunNotInitialized;
         const remote_addr = pair.remote.address;
 
-        // 发送 STUN Binding Request
-        var response = stun.sendBindingRequest(remote_addr) catch {
-            pair.state = .failed;
-            // 继续检查其他 Pair
-            return;
-        };
-        defer response.deinit();
+        std.log.info("ICE.performCheck: 开始 Connectivity Check (远程地址: {})", .{remote_addr});
 
-        // 验证响应（简化实现：只要收到响应就认为成功）
-        if (response.header.getClass() == .success_response) {
-            pair.state = .succeeded;
-            // 检查是否应该选择这个 Pair
-            if (self.selected_pair == null) {
-                self.selected_pair = pair;
-                self.state = .connected;
+        // 生成 transaction_id
+        const transaction_id = try stun.generateTransactionId();
+
+        // 创建并发送 STUN Binding Request（不等待响应）
+        const message_type = Stun.MessageHeader.setType(.request, .binding);
+        var request = Stun.Message.init(self.allocator);
+        errdefer request.deinit();
+
+        request.header = .{
+            .message_type = message_type,
+            .message_length = 0,
+            .transaction_id = transaction_id,
+        };
+
+        const request_data = try request.encode(self.allocator);
+        defer self.allocator.free(request_data);
+
+        // 将 transaction_id 转换为字符串作为 key
+        var trans_id_str: [12]u8 = undefined;
+        @memcpy(&trans_id_str, &transaction_id);
+        const trans_id_key = try std.fmt.allocPrint(self.allocator, "{s}", .{trans_id_str});
+        defer self.allocator.free(trans_id_key);
+
+        // 记录 pending request
+        try self.pending_requests.put(trans_id_key, pair);
+
+        // 发送请求
+        _ = try stun.udp.?.sendTo(request_data, remote_addr);
+        std.log.debug("ICE.performCheck: 已发送 STUN Binding Request (transaction_id: {s})", .{trans_id_key});
+
+        // 等待响应（最多等待 5 秒）
+        const current_co = try self.schedule.getCurrentCo();
+        const max_wait: u64 = 5 * std.time.ns_per_s;
+        const check_interval: u64 = 100 * std.time.ns_per_ms;
+        var waited: u64 = 0;
+        var got_response = false;
+
+        while (waited < max_wait and !got_response) {
+            try current_co.Sleep(check_interval);
+            waited += check_interval;
+
+            // 检查 pair 状态是否已更新（handleIncomingStunMessages 会更新）
+            if (pair.state == .succeeded) {
+                got_response = true;
+                std.log.info("ICE.performCheck: Connectivity Check 成功 (远程地址: {})", .{remote_addr});
+
+                // 检查是否应该选择这个 Pair
+                if (self.selected_pair == null) {
+                    self.selected_pair = pair;
+                    self.setState(.connected);
+                    std.log.info("ICE.performCheck: 已选择 Candidate Pair，ICE 状态变为 connected", .{});
+                }
+                break;
+            } else if (pair.state == .failed) {
+                got_response = true;
+                std.log.debug("ICE.performCheck: Connectivity Check 失败", .{});
+                break;
             }
-        } else {
+        }
+
+        // 清理 pending request
+        _ = self.pending_requests.remove(trans_id_key);
+
+        if (!got_response) {
+            std.log.warn("ICE.performCheck: 等待响应超时", .{});
             pair.state = .failed;
         }
 
         // 检查是否所有检查都完成
         self.checkConnectionState();
+    }
+
+    /// 处理接收到的 STUN 消息（协程函数）
+    /// 监听 UDP 接收到的消息，如果是 STUN Binding Request，则响应
+    fn handleIncomingStunMessages(self: *Self) !void {
+        if (self.udp == null) {
+            return;
+        }
+
+        const udp = self.udp.?;
+        var buffer: [2048]u8 = undefined;
+        const current_co = try self.schedule.getCurrentCo();
+
+        std.log.debug("ICE: 开始监听接收到的 STUN 消息", .{});
+
+        // 持续监听，直到 ICE 连接建立或失败
+        // 一旦连接建立，所有消息应该由 DTLS/SCTP 处理
+        while (self.state != .connected and self.state != .completed and self.state != .failed and self.state != .closed) {
+            // 接收 UDP 数据（事件驱动，会挂起协程直到数据到达）
+            const result = udp.recvFrom(&buffer) catch |err| {
+                // 如果是非阻塞错误（如没有数据），等待后重试
+                std.log.debug("ICE.handleIncomingStunMessages: 接收数据失败: {}，等待后重试", .{err});
+                try current_co.Sleep(50 * std.time.ns_per_ms);
+                continue;
+            };
+
+            // 检查是否是 STUN 消息（至少 20 字节）
+            if (result.data.len < 20) {
+                // 可能是 DTLS 消息（最小 13 字节），跳过让 DTLS Record 处理
+                continue;
+            }
+
+            // 检查是否是 DTLS 消息（DTLS 记录头第一个字节是 content_type，范围 20-255）
+            // DTLS content_type: 20=change_cipher_spec, 21=alert, 22=handshake, 23=application_data
+            // 如果第一个字节是 DTLS content_type，且 ICE 已连接，跳过让 DTLS Record 处理
+            if (self.state == .connected or self.state == .completed) {
+                if (result.data[0] >= 20 and result.data[0] <= 23) {
+                    // ICE 已连接，DTLS 消息应该由 DTLS Record 处理
+                    std.log.debug("ICE.handleIncomingStunMessages: ICE 已连接，收到 DTLS 消息 (首字节: {})，跳过", .{result.data[0]});
+                    continue;
+                }
+            }
+
+            // 检查 STUN magic cookie（在第 4-7 字节）
+            if (result.data.len >= 8) {
+                const magic_cookie = std.mem.readInt(u32, result.data[4..8], .big);
+                if (magic_cookie != 0x2112A442) {
+                    // 不是 STUN 消息，可能是 DTLS 或其他协议，跳过
+                    std.log.debug("ICE.handleIncomingStunMessages: 不是 STUN 消息 (magic cookie: 0x{X})，跳过", .{magic_cookie});
+                    continue;
+                }
+            } else {
+                // 数据太短，不是有效的 STUN 消息
+                continue;
+            }
+
+            // 解析 STUN 消息
+            var stun_msg = Stun.Message.parse(result.data, self.allocator) catch |err| {
+                std.log.debug("ICE.handleIncomingStunMessages: 解析 STUN 消息失败: {}", .{err});
+                continue;
+            };
+            defer stun_msg.deinit();
+
+            // 检查消息类型
+            const msg_class = stun_msg.header.getClass();
+            const msg_method = stun_msg.header.getMethod();
+
+            if (msg_class == .request and msg_method == .binding) {
+                // 收到 Binding Request，发送 Response
+                std.log.info("ICE.handleIncomingStunMessages: 收到 STUN Binding Request 来自 {}", .{result.addr});
+
+                if (self.stun) |stun| {
+                    stun.sendBindingResponse(stun_msg, result.addr) catch |err| {
+                        std.log.warn("ICE.handleIncomingStunMessages: 发送 Binding Response 失败: {}", .{err});
+                    };
+                }
+            } else if (msg_class == .success_response and msg_method == .binding) {
+                // 收到 Binding Response，查找对应的 pending request
+                // 将 transaction_id 转换为字符串作为 key
+                const trans_id_key = try std.fmt.allocPrint(self.allocator, "{s}", .{stun_msg.header.transaction_id});
+                defer self.allocator.free(trans_id_key);
+
+                if (self.pending_requests.get(trans_id_key)) |pair| {
+                    std.log.info("ICE.handleIncomingStunMessages: 收到 STUN Binding Response，匹配到 pending request", .{});
+                    pair.state = .succeeded;
+
+                    // 检查是否应该选择这个 Pair
+                    if (self.selected_pair == null) {
+                        self.selected_pair = pair;
+                        self.setState(.connected);
+                        std.log.info("ICE.handleIncomingStunMessages: 已选择 Candidate Pair，ICE 状态变为 connected", .{});
+                    }
+
+                    // 检查是否所有检查都完成
+                    self.checkConnectionState();
+                } else {
+                    std.log.debug("ICE.handleIncomingStunMessages: 收到 Binding Response，但没有匹配的 pending request", .{});
+                }
+            }
+        }
+
+        std.log.debug("ICE: 停止监听 STUN 消息 (状态: {})", .{self.state});
     }
 
     /// Error 类型定义
@@ -654,6 +848,22 @@ pub const IceAgent = struct {
         OutOfMemory,
     };
 
+    /// 设置状态并触发回调
+    fn setState(self: *Self, new_state: State) void {
+        const old_state = self.state;
+        if (old_state != new_state) {
+            self.state = new_state;
+            std.log.info("ICE Agent 状态变化: {} -> {}", .{ old_state, new_state });
+
+            // 触发状态变化回调
+            if (self.on_state_change) |callback| {
+                if (self.on_state_change_ctx) |ctx| {
+                    callback(ctx, new_state);
+                }
+            }
+        }
+    }
+
     /// 检查状态是否已连接
     fn checkConnectionState(self: *Self) void {
         // 检查是否有成功的 Pair
@@ -661,8 +871,7 @@ pub const IceAgent = struct {
             if (pair.state == .succeeded) {
                 if (self.selected_pair == null) {
                     self.selected_pair = pair;
-                    self.state = .connected;
-                    // TODO: 触发 onSelectedPair 回调
+                    self.setState(.connected);
                 }
             }
         }
@@ -678,9 +887,9 @@ pub const IceAgent = struct {
 
         if (all_checked) {
             if (self.state == .connected) {
-                self.state = .completed;
+                self.setState(.completed);
             } else {
-                self.state = .failed;
+                self.setState(.failed);
             }
         }
     }
