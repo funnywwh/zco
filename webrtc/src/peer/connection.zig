@@ -1529,7 +1529,7 @@ pub const PeerConnection = struct {
         // 从 DTLS Record 接收数据
         var buffer: [8192]u8 = undefined;
         const record = if (self.dtls_record) |r| r else return error.NoDtlsRecord;
-        
+
         std.log.debug("PeerConnection.recvSctpData: 等待接收 DTLS 数据...", .{});
         const result = record.recv(&buffer) catch |err| {
             // 如果没有数据可接收，返回（非阻塞）
@@ -1605,7 +1605,7 @@ pub const PeerConnection = struct {
         // 查找对应的 DataChannel
         if (self.findDataChannelByStreamId(stream_id)) |channel| {
             std.log.debug("PeerConnection.handleDataChunk: 找到 DataChannel (Stream ID: {})", .{stream_id});
-            
+
             // 找到对应的 Stream（如果不存在则创建）
             const sctp_stream = assoc.stream_manager.findStream(stream_id) orelse
                 try assoc.stream_manager.createStream(stream_id, channel.ordered);

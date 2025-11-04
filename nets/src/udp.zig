@@ -102,6 +102,7 @@ pub const Udp = struct {
 
     /// 异步发送 UDP 数据到指定地址
     pub fn sendTo(self: *Self, buffer: []const u8, address: std.net.Address) !usize {
+        std.log.debug("UDP.sendTo: 发送 {} 字节到 {}", .{ buffer.len, address });
         const xobj = self.xobj orelse return error.NotInit;
         // UDP State 需要初始化 op 字段，这里初始化为 send 操作
         var state: zco.xev.UDP.State = undefined;
@@ -156,7 +157,9 @@ pub const Udp = struct {
         );
 
         try co.Suspend();
-        return result.size;
+        const sent = try result.size;
+        std.log.debug("UDP.sendTo: 已发送 {} 字节到 {}", .{ sent, address });
+        return sent;
     }
 
     /// 关闭 UDP socket

@@ -64,7 +64,7 @@ fn runEchoExample() !void {
     try current_co.Sleep(8 * std.time.ns_per_s);
 
     std.log.info("Echo 示例完成", .{});
-    
+
     // 停止调度器
     schedule.stop();
 }
@@ -199,8 +199,13 @@ fn establishIceConnection(alice: *PeerConnection, bob: *PeerConnection, _: *zco.
 fn establishDtlsHandshake(alice: *PeerConnection, bob: *PeerConnection, _: *zco.Schedule) !void {
     std.log.info("开始 DTLS 握手...", .{});
 
-    // 简化实现：直接设置握手状态为完成
-    // 在实际应用中，需要交换 ClientHello/ServerHello 等消息
+    // 简化实现：直接设置握手状态为完成，并设置加密密钥
+    // 在实际应用中，需要交换 ClientHello/ServerHello 等消息，并从 Master Secret 派生密钥
+    // 这里为了测试，使用相同的密钥（仅用于演示）
+    const test_key = [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10 };
+    const test_iv = [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c };
+    const epoch: u16 = 1; // DTLS epoch 从 1 开始（0 用于握手）
+
     if (alice.dtls_handshake) |handshake| {
         handshake.state = .handshake_complete;
         std.log.info("[Alice] DTLS 握手完成", .{});
@@ -209,6 +214,22 @@ fn establishDtlsHandshake(alice: *PeerConnection, bob: *PeerConnection, _: *zco.
     if (bob.dtls_handshake) |handshake| {
         handshake.state = .handshake_complete;
         std.log.info("[Bob] DTLS 握手完成", .{});
+    }
+
+    // 设置加密密钥（用于测试：Alice 和 Bob 使用相同的密钥）
+    // 注意：在实际应用中，客户端和服务器的密钥应该是不同的（从 Master Secret 派生）
+    if (alice.dtls_record) |record| {
+        // Alice 作为客户端：write_cipher 用于发送，read_cipher 用于接收
+        record.setWriteCipher(test_key, test_iv, epoch);
+        record.setReadCipher(test_key, test_iv, epoch);
+        std.log.info("[Alice] DTLS 加密密钥已设置", .{});
+    }
+
+    if (bob.dtls_record) |record| {
+        // Bob 作为服务器：write_cipher 用于发送，read_cipher 用于接收
+        record.setWriteCipher(test_key, test_iv, epoch);
+        record.setReadCipher(test_key, test_iv, epoch);
+        std.log.info("[Bob] DTLS 加密密钥已设置", .{});
     }
 }
 
@@ -263,7 +284,7 @@ fn startDataChannelCommunication(alice: *PeerConnection, bob: *PeerConnection, s
     // 先启动 Bob 的接收协程（确保接收者先准备好）
     std.log.info("启动 Bob 接收协程...", .{});
     _ = try schedule.go(echoMessages, .{ bob, bob_channel, schedule });
-    
+
     // 等待一小段时间，确保 Bob 的接收协程已启动并开始监听
     try current_co.Sleep(200 * std.time.ns_per_ms);
 
@@ -272,7 +293,7 @@ fn startDataChannelCommunication(alice: *PeerConnection, bob: *PeerConnection, s
     _ = try schedule.go(sendMessages, .{ alice_channel, schedule });
 
     std.log.info("数据通道通信已启动", .{});
-    
+
     // 等待一段时间，让消息发送和接收完成
     try current_co.Sleep(5 * std.time.ns_per_s);
 }
@@ -309,7 +330,7 @@ fn setupBobChannelEvents(channel: *DataChannel) void {
     const OnMessageContext = struct {
         fn callback(ch: *DataChannel, data: []const u8) void {
             std.log.info("[Bob] 收到消息 ({} 字节): {s}，准备回显", .{ data.len, data });
-            
+
             // 回显消息
             // DataChannel.send 会使用关联的 PeerConnection 发送数据
             if (ch.send(data, null)) |_| {
@@ -391,4 +412,3 @@ fn echoMessages(pc: *PeerConnection, _: *DataChannel, _: *zco.Schedule) !void {
 
     std.log.info("[Bob] 接收监听已停止 (循环 {} 次，收到 {} 条消息)", .{ count, received_messages });
 }
-

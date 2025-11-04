@@ -112,48 +112,48 @@ pub const Record = struct {
         pub fn encrypt(self: Cipher, plaintext: []const u8, allocator: std.mem.Allocator) ![]u8 {
             // AES-128-GCM 加密
             const Aes128Gcm = crypto.aead.aes_gcm.Aes128Gcm;
-            
+
             // 分配密文空间（明文 + tag）
             const ciphertext = try allocator.alloc(u8, plaintext.len + Aes128Gcm.tag_length);
             errdefer allocator.free(ciphertext);
-            
+
             // 密文部分（不包括 tag）
             const ciphertext_only = ciphertext[0..plaintext.len];
             // Tag 部分
             var tag: [Aes128Gcm.tag_length]u8 = undefined;
-            
+
             // 关联数据（AAD）：DTLS 记录头（简化：使用空数据）
             const ad: []const u8 = &[_]u8{};
-            
+
             // 执行加密
             Aes128Gcm.encrypt(ciphertext_only, &tag, plaintext, ad, self.iv, self.key);
-            
+
             // 将 tag 追加到密文后面
             @memcpy(ciphertext[plaintext.len..], &tag);
-            
+
             return ciphertext;
         }
 
         /// 解密数据（AES-128-GCM）
         pub fn decrypt(self: Cipher, ciphertext: []const u8, allocator: std.mem.Allocator) ![]u8 {
             const Aes128Gcm = crypto.aead.aes_gcm.Aes128Gcm;
-            
+
             if (ciphertext.len < Aes128Gcm.tag_length) return error.InvalidCiphertext;
-            
+
             // 提取 tag 和密文
             const tag: [Aes128Gcm.tag_length]u8 = ciphertext[ciphertext.len - Aes128Gcm.tag_length ..][0..Aes128Gcm.tag_length].*;
-            const encrypted_data = ciphertext[0..ciphertext.len - Aes128Gcm.tag_length];
-            
+            const encrypted_data = ciphertext[0 .. ciphertext.len - Aes128Gcm.tag_length];
+
             // 分配明文空间
             const plaintext = try allocator.alloc(u8, encrypted_data.len);
             errdefer allocator.free(plaintext);
-            
+
             // 关联数据（AAD）：DTLS 记录头（简化：使用空数据）
             const ad: []const u8 = &[_]u8{};
-            
+
             // 执行解密
             try Aes128Gcm.decrypt(plaintext, encrypted_data, tag, ad, self.iv, self.key);
-            
+
             return plaintext;
         }
     };
@@ -286,35 +286,52 @@ pub const Record = struct {
     pub fn recv(self: *Self, buffer: []u8) !struct { content_type: ContentType, data: []u8, from: std.net.Address } {
         if (self.udp == null) return error.NoUdpSocket;
 
+        std.log.debug("DTLS Record.recv: 等待接收 UDP 数据...", .{});
         var recv_buffer: [2048]u8 = undefined;
         const result = try self.udp.?.recvFrom(&recv_buffer);
 
-        if (result.data.len < 13) return error.InvalidRecord;
+        std.log.debug("DTLS Record.recv: 收到 UDP 数据 ({} 字节) 来自 {}", .{ result.data.len, result.addr });
+
+        if (result.data.len < 13) {
+            std.log.debug("DTLS Record.recv: 数据太短 ({} 字节 < 13 字节)", .{result.data.len});
+            return error.InvalidRecord;
+        }
 
         // 解析记录头
         const header = try RecordHeader.parse(result.data);
+        std.log.debug("DTLS Record.recv: 解析记录头 (类型: {}, epoch: {}, 序列号: {}, 长度: {})", .{ header.content_type, header.epoch, header.sequence_number, header.length });
 
         // 检查重放（如果已加密）
         if (self.read_cipher != null) {
             if (self.replay_window.checkReplay(header.sequence_number)) {
+                std.log.debug("DTLS Record.recv: 检测到重放 (序列号: {})", .{header.sequence_number});
                 return error.ReplayDetected;
             }
         }
 
         // 提取负载
         const payload_data = result.data[13..];
-        if (payload_data.len < header.length) return error.IncompleteRecord;
+        if (payload_data.len < header.length) {
+            std.log.debug("DTLS Record.recv: 数据不完整 (需要 {} 字节，实际 {} 字节)", .{ header.length, payload_data.len });
+            return error.IncompleteRecord;
+        }
 
         const encrypted_payload = payload_data[0..header.length];
+        std.log.debug("DTLS Record.recv: 提取负载 ({} 字节)", .{encrypted_payload.len});
 
         // 解密数据（如果有读加密）
         var decrypted_data: ?[]u8 = null;
         defer if (decrypted_data) |d| self.allocator.free(d);
 
         const payload = if (self.read_cipher) |cipher| blk: {
+            std.log.debug("DTLS Record.recv: 开始解密数据 ({} 字节)", .{encrypted_payload.len});
             decrypted_data = try cipher.decrypt(encrypted_payload, self.allocator);
+            std.log.debug("DTLS Record.recv: 解密完成 ({} -> {} 字节)", .{ encrypted_payload.len, decrypted_data.?.len });
             break :blk decrypted_data.?;
-        } else encrypted_payload;
+        } else blk: {
+            std.log.debug("DTLS Record.recv: 使用明文（未设置读加密）", .{});
+            break :blk encrypted_payload;
+        };
 
         // 复制到用户缓冲区
         if (payload.len > buffer.len) return error.BufferTooSmall;
