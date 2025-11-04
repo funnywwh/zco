@@ -858,3 +858,6 @@ test "all state getters return correct initial values" {
     try testing.expect(pc.getConnectionState() == .new);
 }
 
+// 导入集成测试
+const _ = @import("./connection_integration_test.zig");
+
