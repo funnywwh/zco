@@ -86,6 +86,7 @@ pub const Vp8Codec = struct {
     /// 清理解码器
     fn deinitDecoderImpl(context: *anyopaque, allocator: std.mem.Allocator) void {
         const self: *Self = @ptrCast(@alignCast(context));
+        _ = allocator; // 使用 allocator 销毁 self
         allocator.destroy(self);
     }
 
