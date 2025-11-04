@@ -37,6 +37,9 @@ pub const Udp = struct {
     /// 异步读取 UDP 数据（带地址信息）
     pub fn recvFrom(self: *Self, buffer: []u8) !struct { data: []u8, addr: std.net.Address } {
         const xobj = self.xobj orelse return error.NotInit;
+        
+        std.log.debug("UDP.recvFrom: 开始接收，检查协程环境...", .{});
+        
         // UDP State 需要初始化 op 字段，这里初始化为 recv 操作
         var state: zco.xev.UDP.State = undefined;
         state.userdata = null;
@@ -50,7 +53,12 @@ pub const Udp = struct {
         };
 
         var c_read = zco.xev.Completion{};
-        const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
+        const co: *zco.Co = self.schedule.runningCo orelse {
+            std.log.err("UDP.recvFrom: 不在协程环境中（runningCo 为 null）", .{});
+            return error.CallInSchedule;
+        };
+        
+        std.log.debug("UDP.recvFrom: 协程环境正常，开始异步接收...", .{});
 
         const Result = struct {
             co: *zco.Co,
@@ -91,8 +99,11 @@ pub const Udp = struct {
             }.callback,
         );
 
+        std.log.debug("UDP.recvFrom: 挂起协程，等待数据到达...", .{});
         try co.Suspend();
         const size = try result.size;
+        
+        std.log.debug("UDP.recvFrom: 收到数据，恢复协程 ({} 字节来自 {})", .{ size, result.addr });
 
         return .{
             .data = buffer[0..size],

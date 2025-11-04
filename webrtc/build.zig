@@ -97,6 +97,28 @@ pub fn build(b: *std.Build) void {
     const run_datachannel_echo_step = b.step("run-echo", "Run the datachannel echo example");
     run_datachannel_echo_step.dependOn(&run_datachannel_echo_cmd.step);
 
+    // UDP 测试应用
+    const udp_test = b.addExecutable(.{
+        .name = "udp_test",
+        .root_source_file = b.path("examples/udp_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    udp_test.root_module.addImport("zco", zco);
+    udp_test.root_module.addImport("nets", nets);
+    udp_test.root_module.addImport("websocket", websocket);
+    udp_test.root_module.addImport("webrtc", webrtc);
+    b.installArtifact(udp_test);
+
+    const run_udp_test_cmd = b.addRunArtifact(udp_test);
+    run_udp_test_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_udp_test_cmd.addArgs(args);
+    }
+
+    const run_udp_test_step = b.step("run-udp-test", "Run the UDP test");
+    run_udp_test_step.dependOn(&run_udp_test_cmd.step);
+
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
