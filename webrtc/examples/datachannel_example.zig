@@ -48,13 +48,13 @@ pub fn main() !void {
         std.log.warn("警告：SCTP Association 未创建", .{});
     }
 
+    // 先设置数据通道事件回调（在设置状态之前，这样 onopen 事件才能触发）
+    setupDataChannelEvents(channel);
+
     // 模拟数据通道打开（在实际应用中，这应该通过接收 DCEP ACK 完成）
     // 在真实场景中，当接收到对方的 DCEP ACK 时，状态会自动变为 open
     channel.setState(.open);
-    std.log.info("数据通道状态已设置为 open（模拟）", .{});
-
-    // 设置数据通道事件回调
-    setupDataChannelEvents(channel);
+    std.log.info("数据通道状态已设置为 open（模拟），应该看到 onopen 事件", .{});
 
     // 在协程中发送消息
     _ = try schedule.go(sendMessages, .{ channel, schedule });
@@ -64,6 +64,7 @@ pub fn main() !void {
 
     std.log.info("开始发送和接收消息...", .{});
     std.log.info("（注意：这是一个演示，实际需要完整的连接建立）", .{});
+    std.log.info("（当前演示：数据通道状态管理、事件系统、消息发送流程）", .{});
 
     // 运行调度器
     try schedule.loop();
@@ -117,6 +118,19 @@ fn sendMessages(channel: *DataChannel, schedule: *zco.Schedule) !void {
         "消息 4: 测试消息传输",
     };
 
+    // 等待数据通道打开
+    var wait_count: u32 = 0;
+    while (!channel.isOpen() and wait_count < 10) {
+        const current_co = try schedule.getCurrentCo();
+        try current_co.Sleep(100 * std.time.ns_per_ms);
+        wait_count += 1;
+    }
+
+    if (!channel.isOpen()) {
+        std.log.warn("[发送] 数据通道未打开，无法发送消息", .{});
+        return;
+    }
+
     for (messages, 0..) |msg, i| {
         // 休眠 1 秒
         const current_co = try schedule.getCurrentCo();
@@ -126,12 +140,15 @@ fn sendMessages(channel: *DataChannel, schedule: *zco.Schedule) !void {
 
         // 发送消息（association 参数为 null，使用 DataChannel 关联的 association）
         channel.send(msg, null) catch |err| {
-            std.log.warn("[发送] 失败: {} (这可能是正常的，因为缺少完整的连接)", .{err});
+            std.log.warn("[发送] 失败: {} (这可能是正常的，因为缺少完整的网络连接)", .{err});
+            // 即使发送失败，也继续演示其他消息
             continue;
         };
+        
+        std.log.info("[发送] 消息 {} 已成功发送", .{i + 1});
     }
 
-    std.log.info("[发送] 所有消息已发送", .{});
+    std.log.info("[发送] 所有消息已处理", .{});
 }
 
 /// 接收消息协程（模拟）
@@ -140,6 +157,7 @@ fn receiveMessages(pc: *PeerConnection, schedule: *zco.Schedule) !void {
     // 并调用 pc.recvSctpData() 来处理接收到的数据
 
     std.log.info("[接收] 开始监听消息...", .{});
+    std.log.info("[接收] （注意：在没有完整连接的情况下，接收会失败，这是正常的）", .{});
 
     var count: u32 = 0;
     while (count < 10) {
@@ -150,7 +168,11 @@ fn receiveMessages(pc: *PeerConnection, schedule: *zco.Schedule) !void {
         // 尝试接收数据（在实际应用中，这应该在 DTLS 握手完成后调用）
         pc.recvSctpData() catch |err| {
             // 如果没有数据可接收，这是正常的
-            if (err != error.NoDtlsRecord) {
+            if (err == error.NoDtlsRecord) {
+                // 这是正常的，因为 DTLS Record 可能未初始化或没有数据
+            } else if (err == error.NoUdpSocket) {
+                // 这是正常的，因为缺少 UDP Socket（需要完整的 ICE 连接）
+            } else {
                 std.log.warn("[接收] 错误: {}", .{err});
             }
         };
