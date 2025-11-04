@@ -36,7 +36,7 @@ pub const MessageType = enum {
         // 从 TokenStream 读取字符串 token
         const token = try source.next();
         const str_slice = switch (token) {
-            .string => |s| s.slice,
+            .string => |s| s,
             else => return error.InvalidEnumTag,
         };
         
