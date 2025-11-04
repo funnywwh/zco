@@ -77,10 +77,9 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
 
     // 加入房间
     const user_id = "alice";
+    // 注意：这些内存会被 join_msg.deinit 释放
     const room_id_dup = try schedule.allocator.dupe(u8, room_id);
-    defer schedule.allocator.free(room_id_dup);
     const user_id_dup = try schedule.allocator.dupe(u8, user_id);
-    defer schedule.allocator.free(user_id_dup);
     
     var join_msg = SignalingMessage{
         .type = .join,
@@ -240,13 +239,18 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         for (agent.local_candidates.items) |candidate| {
             const candidate_str = try candidate.toSdpCandidate(schedule.allocator);
             defer schedule.allocator.free(candidate_str);
+            
+            // 注意：这些内存会被 ice_msg.deinit 释放
+            const ice_room_id_dup = try schedule.allocator.dupe(u8, room_id);
+            const ice_user_id_dup = try schedule.allocator.dupe(u8, user_id);
+            const ice_candidate_str_dup = try schedule.allocator.dupe(u8, candidate_str);
 
             var ice_msg = SignalingMessage{
                 .type = .ice_candidate,
-                .room_id = room_id,
-                .user_id = user_id,
+                .room_id = ice_room_id_dup,
+                .user_id = ice_user_id_dup,
                 .candidate = .{
-                    .candidate = candidate_str,
+                    .candidate = ice_candidate_str_dup,
                 },
             };
             defer ice_msg.deinit(schedule.allocator);
@@ -303,10 +307,13 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
 
     // 加入房间
     const user_id = "bob";
+    const bob_room_id_dup = try schedule.allocator.dupe(u8, room_id);
+    const bob_user_id_dup = try schedule.allocator.dupe(u8, user_id);
+    
     var join_msg = SignalingMessage{
         .type = .join,
-        .room_id = room_id,
-        .user_id = user_id,
+        .room_id = bob_room_id_dup,
+        .user_id = bob_user_id_dup,
     };
     defer join_msg.deinit(schedule.allocator);
 
@@ -389,13 +396,19 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                     std.log.info("[Bob] 已创建并设置本地 answer", .{});
 
                     // 发送 answer
+                    // 注意：这些内存会被 answer_msg.deinit 释放
+                    const answer_room_id_dup = try schedule.allocator.dupe(u8, room_id);
+                    const answer_user_id_dup = try schedule.allocator.dupe(u8, user_id);
+                    const answer_sdp_dup = try schedule.allocator.dupe(u8, answer_sdp);
+                    
                     var answer_msg = SignalingMessage{
                         .type = .answer,
-                        .room_id = room_id,
-                        .user_id = user_id,
-                        .sdp = answer_sdp,
+                        .room_id = answer_room_id_dup,
+                        .user_id = answer_user_id_dup,
+                        .sdp = answer_sdp_dup,
                     };
                     defer answer_msg.deinit(schedule.allocator);
+                    defer schedule.allocator.free(answer_sdp); // 释放原始 answer_sdp
 
                     const answer_json = try answer_msg.toJson(schedule.allocator);
                     defer schedule.allocator.free(answer_json);
@@ -432,13 +445,18 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
         for (agent.local_candidates.items) |candidate| {
             const candidate_str = try candidate.toSdpCandidate(schedule.allocator);
             defer schedule.allocator.free(candidate_str);
+            
+            // 注意：这些内存会被 ice_msg.deinit 释放
+            const bob_ice_room_id_dup = try schedule.allocator.dupe(u8, room_id);
+            const bob_ice_user_id_dup = try schedule.allocator.dupe(u8, user_id);
+            const bob_ice_candidate_str_dup = try schedule.allocator.dupe(u8, candidate_str);
 
             var ice_msg = SignalingMessage{
                 .type = .ice_candidate,
-                .room_id = room_id,
-                .user_id = user_id,
+                .room_id = bob_ice_room_id_dup,
+                .user_id = bob_ice_user_id_dup,
                 .candidate = .{
-                    .candidate = candidate_str,
+                    .candidate = bob_ice_candidate_str_dup,
                 },
             };
             defer ice_msg.deinit(schedule.allocator);
