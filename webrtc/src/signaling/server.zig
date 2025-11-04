@@ -253,6 +253,12 @@ pub const SignalingServer = struct {
                     }
                 }
 
+                // 1.5. 如果房间中有未发送的 offer，转发给新加入的用户
+                if (room_entry.value_ptr.*.last_offer) |offer| {
+                    std.log.info("[服务器] 转发之前的 offer 给新用户 {s}", .{user_id});
+                    try client.send(offer);
+                }
+
                 // 2. 广播新用户加入的通知给房间中的其他用户（不包括刚加入的用户）
                 if (room_entry.value_ptr.*.users.count() > 1) {
                     const room_id_dup = try self.allocator.dupe(u8, room_id);
@@ -279,6 +285,24 @@ pub const SignalingServer = struct {
                             defer self.allocator.free(msg_json);
                             const recipient_count = room.users.count() - 1; // 排除发送者
                             std.log.info("[服务器] 房间 {s} 中有 {} 个接收者", .{ room_id, recipient_count });
+                            
+                            // 保存 offer 和 answer 用于新用户加入时转发
+                            if (msg.type == .offer) {
+                                // 释放旧的 offer
+                                if (room.last_offer) |old_offer| {
+                                    self.allocator.free(old_offer);
+                                }
+                                // 保存新的 offer（深拷贝）
+                                room.last_offer = try self.allocator.dupe(u8, msg_json);
+                            } else if (msg.type == .answer) {
+                                // 释放旧的 answer
+                                if (room.last_answer) |old_answer| {
+                                    self.allocator.free(old_answer);
+                                }
+                                // 保存新的 answer（深拷贝）
+                                room.last_answer = try self.allocator.dupe(u8, msg_json);
+                            }
+                            
                             try room.broadcast(user_id, msg_json);
                             std.log.info("[服务器] ✅ 消息已广播", .{});
                         }
