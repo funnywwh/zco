@@ -165,13 +165,9 @@ pub const PeerConnection = struct {
             .data_channels = std.ArrayList(*sctp.DataChannel).init(allocator),
         };
 
-        // 初始化 ICE Agent
-        self.ice_agent = try ice.agent.IceAgent.init(allocator, schedule, config.ice_transport_policy);
+        // 初始化 ICE Agent（组件 ID 1 表示 RTP）
+        self.ice_agent = try ice.agent.IceAgent.init(allocator, schedule, 1);
         errdefer if (self.ice_agent) |agent| agent.deinit();
-
-        // 初始化组件 ID（RTP 为 1）
-        if (self.ice_agent) |agent| {
-            agent.component_id = 1;
         }
 
         // 初始化 DTLS 证书（生成自签名证书）
