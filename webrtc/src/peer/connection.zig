@@ -192,7 +192,6 @@ pub const PeerConnection = struct {
             allocator.destroy(manager);
         };
 
-
         return self;
     }
 

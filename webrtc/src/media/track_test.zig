@@ -61,4 +61,3 @@ test "Track video kind" {
     try testing.expectEqualStrings("video-track", t.getId());
     try testing.expectEqualStrings("Camera", t.getLabel());
 }
-
