@@ -25,14 +25,16 @@ pub const OpusCodec = struct {
             .bitrate = bitrate,
         };
 
-        const vtable = codec.Codec.Encoder.VTable{
-            .encode = encodeImpl,
-            .deinit = deinitEncoderImpl,
-            .getInfo = getInfoImpl,
+        const vtable = struct {
+            pub const vtbl: codec.Codec.Encoder.VTable = .{
+                .encode = encodeImpl,
+                .deinit = deinitEncoderImpl,
+                .getInfo = getInfoImpl,
+            };
         };
 
         return codec.Codec.Encoder{
-            .vtable = &vtable,
+            .vtable = &vtbl.vtbl,
             .context = self,
         };
     }
@@ -49,14 +51,16 @@ pub const OpusCodec = struct {
             .bitrate = 0, // 解码器不需要 bitrate
         };
 
-        const vtable = codec.Codec.Decoder.VTable{
-            .decode = decodeImpl,
-            .deinit = deinitDecoderImpl,
-            .getInfo = getInfoImpl,
+        const vtable = struct {
+            pub const vtbl: codec.Codec.Decoder.VTable = .{
+                .decode = decodeImpl,
+                .deinit = deinitDecoderImpl,
+                .getInfo = getInfoImpl,
+            };
         };
 
         return codec.Codec.Decoder{
-            .vtable = &vtable,
+            .vtable = &vtbl.vtbl,
             .context = self,
         };
     }
