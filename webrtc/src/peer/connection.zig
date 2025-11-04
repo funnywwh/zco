@@ -197,6 +197,7 @@ pub const PeerConnection = struct {
     pub fn deinit(self: *Self) void {
         if (self.sctp_association) |assoc| {
             assoc.deinit();
+            self.allocator.destroy(assoc);
         }
 
         if (self.ssrc_manager) |manager| {
@@ -235,26 +236,32 @@ pub const PeerConnection = struct {
 
         if (self.dtls_handshake) |handshake| {
             handshake.deinit();
+            // handshake.deinit() 内部已经调用了 destroy，不需要再次调用
         }
 
         if (self.dtls_record) |record| {
             record.deinit();
+            // record.deinit() 内部已经调用了 destroy，不需要再次调用
         }
 
         if (self.dtls_certificate) |cert| {
             cert.deinit();
+            // cert.deinit() 内部已经调用了 destroy，不需要再次调用
         }
 
         if (self.ice_agent) |agent| {
             agent.deinit();
+            self.allocator.destroy(agent);
         }
 
         if (self.local_description) |desc| {
             desc.deinit();
+            self.allocator.destroy(desc);
         }
 
         if (self.remote_description) |desc| {
             desc.deinit();
+            self.allocator.destroy(desc);
         }
 
         self.allocator.destroy(self);
