@@ -473,17 +473,20 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
         defer parsed.deinit();
         var msg = parsed.value;
 
+        std.log.info("[Bob] 收到消息类型: {}", .{msg.type});
+
         // 处理消息
         switch (msg.type) {
             .offer => {
                 if (msg.sdp) |sdp| {
+                    std.log.info("[Bob] 收到 offer，开始处理... (SDP 长度: {} 字节)", .{sdp.len});
                     const remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
                     const remote_sdp_ptr = try schedule.allocator.create(webrtc.signaling.sdp.Sdp);
                     remote_sdp_ptr.* = remote_sdp;
                     try pc.setRemoteDescription(remote_sdp_ptr);
-                    std.log.info("[Bob] 已设置远程 offer", .{});
+                    std.log.info("[Bob] 已设置远程 offer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
 
                     // 创建 answer
                     std.log.info("[Bob] 开始创建 answer...", .{});
@@ -521,6 +524,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
             },
             .ice_candidate => {
                 if (msg.candidate) |candidate| {
+                    std.log.info("[Bob] 收到 ICE candidate: {s}", .{candidate.candidate});
                     var ice_candidate = try webrtc.ice.candidate.Candidate.fromSdpCandidate(
                         schedule.allocator,
                         candidate.candidate,
@@ -531,10 +535,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                     const candidate_ptr = try schedule.allocator.create(webrtc.ice.candidate.Candidate);
                     candidate_ptr.* = ice_candidate;
                     try pc.addIceCandidate(candidate_ptr);
-                    std.log.info("[Bob] 已添加远程 ICE candidate", .{});
+                    std.log.info("[Bob] 已添加远程 ICE candidate，ICE 连接状态: {}", .{pc.getIceConnectionState()});
                 }
             },
-            else => {},
+            else => {
+                std.log.info("[Bob] 收到其他类型消息: {}", .{msg.type});
+            },
         }
 
         msg.deinit(schedule.allocator);
