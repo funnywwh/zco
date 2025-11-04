@@ -4,7 +4,6 @@ const codec = @import("../codec.zig");
 /// Opus 音频编解码器
 /// 遵循 RFC 6716
 /// 注意：当前实现为占位符，实际需要集成 libopus 或实现 Opus 编解码器
-
 pub const OpusCodec = struct {
     const Self = @This();
 
@@ -102,4 +101,3 @@ pub const OpusCodec = struct {
         };
     }
 };
-

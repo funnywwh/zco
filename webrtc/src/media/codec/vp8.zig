@@ -4,7 +4,6 @@ const codec = @import("../codec.zig");
 /// VP8 视频编解码器
 /// 遵循 RFC 6386
 /// 注意：当前实现为占位符，实际需要集成 libvpx 或实现 VP8 编解码器
-
 pub const Vp8Codec = struct {
     const Self = @This();
 
@@ -102,4 +101,3 @@ pub const Vp8Codec = struct {
         };
     }
 };
-
