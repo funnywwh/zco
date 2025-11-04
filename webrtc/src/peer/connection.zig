@@ -704,6 +704,72 @@ pub const PeerConnection = struct {
         }
     }
 
+    /// 在 DTLS 握手完成后派生 SRTP 密钥并创建 Transform
+    /// 应该在 DTLS 握手成功后被调用
+    pub fn setupSrtp(self: *Self) !void {
+        if (self.dtls_handshake) |handshake| {
+            // 检查握手是否完成
+            if (handshake.state != .handshake_complete) {
+                return error.DtlsHandshakeNotComplete;
+            }
+
+            // 获取握手参数
+            const master_secret = handshake.master_secret;
+            const client_random = handshake.client_random;
+            const server_random = handshake.server_random;
+
+            // 确定角色（用于密钥交换）
+            const is_client = self.determineDtlsRole();
+
+            // 派生 SRTP 密钥
+            const srtp_keys = try dtls.KeyDerivation.deriveSrtpKeys(
+                master_secret,
+                client_random,
+                server_random,
+                is_client,
+            );
+
+            // 创建 SRTP Context（发送方）
+            // 根据角色选择使用哪个密钥
+            const sender_key = if (is_client) srtp_keys.client_master_key else srtp_keys.server_master_key;
+            const sender_salt = if (is_client) srtp_keys.client_master_salt else srtp_keys.server_master_salt;
+            
+            const sender_ctx = try srtp.Context.init(
+                self.allocator,
+                sender_key,
+                sender_salt,
+                0, // SSRC（将在实际使用时设置）
+            );
+            errdefer sender_ctx.deinit();
+
+            // 创建 SRTP Context（接收方）
+            const receiver_key = if (is_client) srtp_keys.server_master_key else srtp_keys.client_master_key;
+            const receiver_salt = if (is_client) srtp_keys.server_master_salt else srtp_keys.client_master_salt;
+            
+            const receiver_ctx = try srtp.Context.init(
+                self.allocator,
+                receiver_key,
+                receiver_salt,
+                0, // SSRC（将在实际使用时设置）
+            );
+            errdefer receiver_ctx.deinit();
+
+            // 创建 SRTP Transform（发送方和接收方）
+            // Transform.init 返回值类型，需要堆分配
+            const sender_transform_ptr = try self.allocator.create(srtp.Transform);
+            sender_transform_ptr.* = srtp.Transform.init(sender_ctx);
+            self.srtp_sender = sender_transform_ptr;
+
+            const receiver_transform_ptr = try self.allocator.create(srtp.Transform);
+            receiver_transform_ptr.* = srtp.Transform.init(receiver_ctx);
+            self.srtp_receiver = receiver_transform_ptr;
+
+            std.log.info("SRTP transforms created successfully", .{});
+        } else {
+            return error.NoDtlsHandshake;
+        }
+    }
+
     /// 确定 DTLS role（客户端或服务器）
     /// 返回 true 表示客户端，false 表示服务器
     fn determineDtlsRole(self: *Self) bool {
