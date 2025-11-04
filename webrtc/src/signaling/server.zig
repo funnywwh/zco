@@ -213,11 +213,14 @@ pub const SignalingServer = struct {
                 const room_id = msg.room_id.?;
                 const user_id = msg.user_id.?;
 
+                std.log.info("[服务器] 用户 {s} 加入房间 {s}", .{ user_id, room_id });
+
                 // 获取或创建房间
                 const room_entry = try self.rooms.getOrPut(room_id);
                 if (!room_entry.found_existing) {
                     room_entry.key_ptr.* = try self.allocator.dupe(u8, room_id);
                     room_entry.value_ptr.* = Room.init(self.allocator);
+                    std.log.info("[服务器] 创建新房间: {s}", .{room_id});
                 }
 
                 // 添加用户到房间
@@ -226,17 +229,27 @@ pub const SignalingServer = struct {
 
                 client.room_id = try self.allocator.dupe(u8, room_id);
                 client.user_id = user_id_dup;
+                
+                std.log.info("[服务器] 房间 {s} 当前有 {} 个用户", .{ room_id, room_entry.value_ptr.*.users.count() });
             },
             .offer, .answer, .ice_candidate => {
                 // 转发消息到房间中的其他用户
                 if (client.room_id) |room_id| {
                     if (self.rooms.getPtr(room_id)) |room| {
                         if (client.user_id) |user_id| {
+                            std.log.info("[服务器] 转发 {s} 消息从 {s} 到房间 {s} 的其他用户", .{ @tagName(msg.type), user_id, room_id });
                             const msg_json = try msg.toJson(self.allocator);
                             defer self.allocator.free(msg_json);
+                            const recipient_count = room.users.count() - 1; // 排除发送者
+                            std.log.info("[服务器] 房间 {s} 中有 {} 个接收者", .{ room_id, recipient_count });
                             try room.broadcast(user_id, msg_json);
+                            std.log.info("[服务器] ✅ 消息已广播", .{});
                         }
+                    } else {
+                        std.log.warn("[服务器] 房间 {s} 不存在", .{room_id});
                     }
+                } else {
+                    std.log.warn("[服务器] 客户端未加入房间", .{});
                 }
             },
             .leave => {

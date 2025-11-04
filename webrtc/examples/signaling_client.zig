@@ -435,11 +435,16 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     }
 
     // 等待接收 offer
+    // 先等待一小段时间，确保加入房间的请求已处理
+    const current_co = try schedule.getCurrentCo();
+    try current_co.Sleep(500 * std.time.ns_per_ms);
+    
+    std.log.info("[Bob] 开始等待接收 offer...", .{});
     var buffer: [8192]u8 = undefined;
     var offer_received = false;
     var message_count: u32 = 0;
 
-    while (message_count < 10) {
+    while (message_count < 20) { // 增加最大消息数
         const frame = ws.readMessage(buffer[0..]) catch |err| {
             // 区分连接关闭和真正的错误
             if (err == websocket.WebSocketError.ConnectionClosed) {
