@@ -247,12 +247,11 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         return;
     }
 
-    // 获取当前协程（用于等待）
-    const current_co = try schedule.getCurrentCo();
+    // 使用之前获取的 current_co_alice
 
     // 等待一段时间让 ICE candidates 交换完成
     std.log.info("[Alice] 等待 ICE candidates 交换完成...", .{});
-    try current_co.Sleep(2 * std.time.ns_per_s);
+    try current_co_alice.Sleep(2 * std.time.ns_per_s);
 
     // 等待 ICE 连接建立和 DTLS 握手完成
     // 注意：在创建数据通道前，需要完成 DTLS 握手
@@ -265,7 +264,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     var dtls_ready = false;
 
     while (waited_time < max_wait_time and !dtls_ready) {
-        try current_co.Sleep(check_interval);
+        try current_co_alice.Sleep(check_interval);
         waited_time += check_interval;
 
         // 检查 ICE 连接状态
@@ -293,7 +292,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     if (!dtls_ready) {
         std.log.warn("[Alice] DTLS 握手未完成（等待超时），跳过数据通道创建", .{});
         // 等待一段时间后退出
-        try current_co.Sleep(2 * std.time.ns_per_s);
+        try current_co_alice.Sleep(2 * std.time.ns_per_s);
         return;
     }
 
