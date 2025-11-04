@@ -179,12 +179,14 @@ pub const PeerConnection = struct {
             assoc.deinit();
         }
 
-        if (self.srtp_receiver) |transform| {
-            transform.ctx.deinit();
+        if (self.srtp_receiver) |transform_ptr| {
+            transform_ptr.ctx.deinit();
+            self.allocator.destroy(transform_ptr);
         }
 
-        if (self.srtp_sender) |transform| {
-            transform.ctx.deinit();
+        if (self.srtp_sender) |transform_ptr| {
+            transform_ptr.ctx.deinit();
+            self.allocator.destroy(transform_ptr);
         }
 
         if (self.dtls_handshake) |handshake| {
@@ -854,5 +856,7 @@ pub const PeerConnection = struct {
         NoSelectedPair,
         NoDtlsRecord,
         NoUdpSocket,
+        DtlsHandshakeNotComplete,
+        NoDtlsHandshake,
     };
 };
