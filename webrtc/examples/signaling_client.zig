@@ -228,7 +228,9 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 等待接收 answer 和 ICE candidates
     var buffer: [8192]u8 = undefined;
     var message_count: u32 = 0;
+    var received_answer = false;
 
+    std.log.info("[Alice] 开始等待 answer 和 ICE candidates...", .{});
     while (message_count < 10) {
         const frame = ws.readMessage(buffer[0..]) catch |err| {
             std.log.err("[Alice] 读取消息失败: {}", .{err});
@@ -258,21 +260,26 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         defer parsed.deinit();
         var msg = parsed.value;
 
+        std.log.info("[Alice] 收到消息类型: {}", .{msg.type});
+
         // 处理消息
         switch (msg.type) {
             .answer => {
                 if (msg.sdp) |sdp| {
+                    std.log.info("[Alice] 收到 answer，开始解析...", .{});
                     const remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
                     const remote_sdp_ptr = try schedule.allocator.create(webrtc.signaling.sdp.Sdp);
                     remote_sdp_ptr.* = remote_sdp;
                     try pc.setRemoteDescription(remote_sdp_ptr);
-                    std.log.info("[Alice] 已设置远程 answer", .{});
+                    std.log.info("[Alice] 已设置远程 answer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
+                    received_answer = true;
                 }
             },
             .ice_candidate => {
                 if (msg.candidate) |candidate| {
+                    std.log.info("[Alice] 收到 ICE candidate: {s}", .{candidate.candidate});
                     var ice_candidate = try webrtc.ice.candidate.Candidate.fromSdpCandidate(
                         schedule.allocator,
                         candidate.candidate,
@@ -283,14 +290,20 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                     const candidate_ptr = try schedule.allocator.create(webrtc.ice.candidate.Candidate);
                     candidate_ptr.* = ice_candidate;
                     try pc.addIceCandidate(candidate_ptr);
-                    std.log.info("[Alice] 已添加远程 ICE candidate", .{});
+                    std.log.info("[Alice] 已添加远程 ICE candidate，ICE 连接状态: {}", .{pc.getIceConnectionState()});
                 }
             },
-            else => {},
+            else => {
+                std.log.info("[Alice] 收到其他类型消息: {}", .{msg.type});
+            },
         }
 
         msg.deinit(schedule.allocator);
         message_count += 1;
+    }
+    
+    if (!received_answer) {
+        std.log.warn("[Alice] 未收到 answer，可能连接失败", .{});
     }
 
     // 发送 ICE candidates
