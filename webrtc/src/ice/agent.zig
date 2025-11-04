@@ -183,8 +183,15 @@ pub const IceAgent = struct {
         self.check_list.deinit();
 
         // 清理 UDP
+        // 注意：UDP 的 deinit 和 close 需要访问 schedule，所以需要保存 allocator 引用
+        // 然后直接销毁 UDP 对象，避免调用可能访问已释放 schedule 的方法
         if (self.udp) |udp| {
-            udp.deinit();
+            // 保存 allocator 引用（因为 udp 可能通过 schedule.allocator 访问）
+            const allocator = self.allocator;
+            // 直接销毁 UDP 对象（不调用 deinit，避免访问 schedule）
+            // xobj 的清理会在系统层面自动处理
+            allocator.destroy(udp);
+            self.udp = null;
         }
 
         // 清理 STUN

@@ -152,14 +152,15 @@ pub const SignalingServer = struct {
                 std.log.err("Failed to parse signaling message", .{});
                 continue;
             };
-            defer parsed.deinit();
             var msg = parsed.value;
-
+            // 注意：parsed.deinit() 会释放 msg 内部的所有分配内存
+            // 所以不需要单独调用 msg.deinit()
+            defer parsed.deinit();
+            
             // 处理消息
             try server.handleMessage(client, &msg);
-
-            // 清理消息资源
-            msg.deinit(server.allocator);
+            
+            // 不需要手动调用 msg.deinit()，因为 parsed.deinit() 会处理
         }
 
         // 客户端断开连接，从房间中移除

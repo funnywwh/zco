@@ -251,7 +251,7 @@ pub const PeerConnection = struct {
 
         if (self.ice_agent) |agent| {
             agent.deinit();
-            self.allocator.destroy(agent);
+            // agent.deinit() 内部已经调用了 destroy，不需要再次调用
         }
 
         if (self.local_description) |desc| {

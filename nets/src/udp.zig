@@ -22,7 +22,13 @@ pub const Udp = struct {
     }
 
     /// 清理 UDP 资源
+    /// 注意：此方法会销毁 UDP 对象本身，调用者需要确保不再使用此对象
     pub fn deinit(self: *Self) void {
+        // 先关闭 socket（如果已绑定）
+        if (self.xobj) |_| {
+            self.close();
+        }
+        // 保存 allocator 引用（因为 self 即将被销毁）
         const allocator = self.schedule.allocator;
         allocator.destroy(self);
     }
