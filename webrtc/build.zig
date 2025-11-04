@@ -302,6 +302,17 @@ pub fn build(b: *std.Build) void {
     datachannel_list_tests.root_module.addImport("websocket", websocket);
     const run_datachannel_list_tests = b.addRunArtifact(datachannel_list_tests);
 
+    // PeerConnection SCTP 接收测试
+    const sctp_receive_tests = b.addTest(.{
+        .root_source_file = b.path("src/peer/connection_sctp_receive_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    sctp_receive_tests.root_module.addImport("zco", zco);
+    sctp_receive_tests.root_module.addImport("nets", nets);
+    sctp_receive_tests.root_module.addImport("websocket", websocket);
+    const run_sctp_receive_tests = b.addRunArtifact(sctp_receive_tests);
+
     // SCTP DataChannel 发送/接收测试
     const datachannel_send_tests = b.addTest(.{
         .root_source_file = b.path("src/sctp/datachannel_send_test.zig"),
@@ -355,4 +366,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_datachannel_send_tests.step);
     test_step.dependOn(&run_datachannel_events_tests.step);
     test_step.dependOn(&run_datachannel_list_tests.step);
+    test_step.dependOn(&run_sctp_receive_tests.step);
 }

@@ -1503,6 +1503,116 @@ pub const PeerConnection = struct {
         }
     }
 
+    /// 接收 SCTP 数据
+    /// 从 DTLS 接收 application_data，解析为 SCTP 包，并路由到对应的 DataChannel
+    /// 注意：需要在 DTLS 握手完成后才能接收
+    pub fn recvSctpData(self: *Self) !void {
+        if (self.dtls_record == null) {
+            return error.NoDtlsRecord;
+        }
+
+        // 检查 DTLS 握手是否完成
+        if (self.dtls_handshake) |handshake| {
+            if (handshake.state != .handshake_complete) {
+                return error.DtlsHandshakeNotComplete;
+            }
+        } else {
+            return error.NoDtlsHandshake;
+        }
+
+        // 检查 SCTP Association 是否存在
+        if (self.sctp_association == null) {
+            return error.NoSctpAssociation;
+        }
+
+        // 从 DTLS Record 接收数据
+        var buffer: [8192]u8 = undefined;
+        const record = if (self.dtls_record) |r| r else return error.NoDtlsRecord;
+        const result = record.recv(&buffer) catch |err| {
+            // 如果没有数据可接收，返回（非阻塞）
+            // 注意：DTLS Record 的 recv 可能返回其他错误，这里简化处理
+            return err;
+        };
+
+        // 只处理 application_data 类型
+        if (result.content_type != .application_data) {
+            return;
+        }
+
+        // 处理接收到的 SCTP 数据
+        try self.handleSctpPacket(result.data);
+    }
+
+    /// 处理 SCTP 数据包
+    /// 解析 SCTP 包，提取 Data Chunk，并路由到对应的 DataChannel
+    fn handleSctpPacket(self: *Self, packet_data: []const u8) !void {
+        if (self.sctp_association == null) {
+            return error.NoSctpAssociation;
+        }
+
+        const assoc = self.sctp_association.?;
+
+        // 解析 SCTP Common Header（至少需要 12 字节）
+        if (packet_data.len < 12) {
+            return error.InvalidSctpPacket;
+        }
+
+        const common_header = try sctp.chunk.CommonHeader.parse(packet_data);
+
+        // 验证 Verification Tag（简化：只检查是否匹配）
+        if (common_header.verification_tag != assoc.local_verification_tag and
+            common_header.verification_tag != assoc.remote_verification_tag)
+        {
+            // 可能是新的关联，暂时忽略
+            return;
+        }
+
+        // 解析 Chunk（从第 12 字节开始）
+        if (packet_data.len < 16) {
+            return error.InvalidSctpPacket;
+        }
+
+        const chunk_data = packet_data[12..];
+        const chunk_type = chunk_data[0];
+
+        // 只处理 DATA Chunk（类型 0）
+        if (chunk_type == 0) {
+            try self.handleDataChunk(assoc, chunk_data);
+        }
+        // TODO: 处理其他 Chunk 类型（SACK, HEARTBEAT 等）
+    }
+
+    /// 处理 DATA Chunk
+    /// 解析 Data Chunk，提取用户数据，并路由到对应的 DataChannel
+    fn handleDataChunk(self: *Self, assoc: *sctp.Association, chunk_data: []const u8) !void {
+        // 解析 Data Chunk
+        const data_chunk = try sctp.chunk.DataChunk.parse(self.allocator, chunk_data);
+        defer data_chunk.deinit(self.allocator);
+
+        // 获取 Stream ID
+        const stream_id = data_chunk.stream_id;
+
+        // 查找对应的 DataChannel
+        if (self.findDataChannelByStreamId(stream_id)) |channel| {
+            // 找到对应的 Stream（如果不存在则创建）
+            const sctp_stream = assoc.stream_manager.findStream(stream_id) orelse
+                try assoc.stream_manager.createStream(stream_id, channel.ordered);
+
+            // 将数据添加到 Stream 的接收缓冲区
+            try sctp_stream.receive_buffer.appendSlice(data_chunk.user_data);
+
+            // 触发 DataChannel 的 onmessage 事件
+            if (channel.onmessage) |callback| {
+                const user_data_copy = try self.allocator.dupe(u8, data_chunk.user_data);
+                defer self.allocator.free(user_data_copy);
+                callback(channel, user_data_copy);
+            }
+        } else {
+            // 没有找到对应的 DataChannel，可能是新通道
+            // TODO: 处理自动创建 DataChannel 的情况
+        }
+    }
+
     /// 数据通道选项
     pub const DataChannelOptions = struct {
         ordered: bool = true, // 是否有序传输
@@ -1527,5 +1637,6 @@ pub const PeerConnection = struct {
         NoSctpAssociation,
         OutOfStreamIds,
         ChannelNotFound,
+        InvalidSctpPacket,
     };
 };
