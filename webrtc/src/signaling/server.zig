@@ -102,14 +102,14 @@ pub const SignalingServer = struct {
             entry.value_ptr.*.deinit();
         }
         self.rooms.deinit();
-        
+
         // 清理 TCP socket
         // 注意：tcp.deinit() 会调用 allocator.destroy(self.tcp)，所以不需要再次 destroy
         if (self.tcp.xobj) |_| {
             self.tcp.close();
         }
         self.tcp.deinit();
-        
+
         // 最后销毁服务器对象
         self.allocator.destroy(self);
     }
@@ -163,10 +163,10 @@ pub const SignalingServer = struct {
             // 注意：parsed.deinit() 会释放 msg 内部的所有分配内存
             // 所以不需要单独调用 msg.deinit()
             defer parsed.deinit();
-            
+
             // 处理消息
             try server.handleMessage(client, &msg);
-            
+
             // 不需要手动调用 msg.deinit()，因为 parsed.deinit() 会处理
         }
 
@@ -229,7 +229,7 @@ pub const SignalingServer = struct {
 
                 client.room_id = try self.allocator.dupe(u8, room_id);
                 client.user_id = user_id_dup;
-                
+
                 std.log.info("[服务器] 房间 {s} 当前有 {} 个用户", .{ room_id, room_entry.value_ptr.*.users.count() });
 
                 // 广播 user_joined 通知给房间中的其他用户（不包括刚加入的用户）
