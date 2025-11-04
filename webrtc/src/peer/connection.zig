@@ -672,6 +672,7 @@ pub const PeerConnection = struct {
     pub fn setRemoteDescription(self: *Self, description: *SessionDescription) !void {
         if (self.remote_description) |desc| {
             desc.deinit();
+            self.allocator.destroy(desc);
         }
 
         self.remote_description = description;
