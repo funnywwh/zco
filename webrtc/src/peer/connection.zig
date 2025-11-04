@@ -1486,7 +1486,8 @@ pub const PeerConnection = struct {
         // 获取远程地址（从 ICE Agent）
         if (self.ice_agent) |agent| {
             if (agent.selected_pair) |pair| {
-                const address = std.net.Address.initIp4(pair.remote_address, pair.remote_port);
+                const remote_candidate = pair.remote_candidate;
+                const address = std.net.Address.initIp4(remote_candidate.address, remote_candidate.port);
 
                 // 通过 DTLS Record 发送 SCTP 数据（使用 application_data 类型）
                 if (self.dtls_record) |record| {
