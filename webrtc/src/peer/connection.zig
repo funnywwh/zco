@@ -1350,7 +1350,9 @@ pub const PeerConnection = struct {
             // 创建 SCTP Association
             // 注意：需要从 DTLS 获取传输层信息
             // 简化实现：使用默认配置
-            const assoc = try sctp.Association.init(self.allocator, 5000);
+            const assoc = try self.allocator.create(sctp.Association);
+            errdefer self.allocator.destroy(assoc);
+            assoc.* = try sctp.Association.init(self.allocator, 5000);
             errdefer assoc.deinit();
             self.sctp_association = assoc;
         }
