@@ -620,13 +620,13 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 这里暂时跳过，等待后续完善
 
     // 等待连接建立
-    try current_co.Sleep(3 * std.time.ns_per_s);
+    try current_co_bob.Sleep(3 * std.time.ns_per_s);
 
     // 接收数据通道消息
     _ = try schedule.go(receiveDataChannelMessages, .{pc});
 
     // 等待接收消息
-    try current_co.Sleep(5 * std.time.ns_per_s);
+    try current_co_bob.Sleep(5 * std.time.ns_per_s);
 }
 
 /// 接收数据通道消息
