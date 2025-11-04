@@ -486,6 +486,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                     std.log.info("[Bob] 已设置远程 offer", .{});
 
                     // 创建 answer
+                    std.log.info("[Bob] 开始创建 answer...", .{});
                     const answer = try pc.createAnswer(schedule.allocator);
                     // 注意：answer 会被 setLocalDescription 接管，不需要手动 deinit
                     const answer_sdp = try answer.generate();
@@ -495,6 +496,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                     std.log.info("[Bob] 已创建并设置本地 answer", .{});
 
                     // 发送 answer
+                    std.log.info("[Bob] 准备发送 answer...", .{});
                     // 注意：这些内存会被 answer_msg.deinit 释放
                     const answer_room_id_dup = try schedule.allocator.dupe(u8, room_id);
                     const answer_user_id_dup = try schedule.allocator.dupe(u8, user_id);
@@ -507,12 +509,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
                         .sdp = answer_sdp_dup,
                     };
                     defer answer_msg.deinit(schedule.allocator);
-                    defer schedule.allocator.free(answer_sdp); // 释放原始 answer_sdp
+                    // 注意：answer_sdp 会被 answer_msg.deinit 释放（通过 answer_sdp_dup），不需要再次释放
 
                     const answer_json = try answer_msg.toJson(schedule.allocator);
                     defer schedule.allocator.free(answer_json);
                     try ws.sendText(answer_json);
-                    std.log.info("[Bob] 已发送 answer", .{});
+                    std.log.info("[Bob] ✅ 已发送 answer (SDP 长度: {} 字节)", .{answer_sdp.len});
 
                     offer_received = true;
                 }
