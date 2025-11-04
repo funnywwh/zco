@@ -354,7 +354,7 @@ test "createOffer and createAnswer have different fingerprints" {
     try testing.expect(different);
 }
 
-test "determineDtlsRole logic" {
+test "determineDtlsRole from setup attribute" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -363,22 +363,42 @@ test "determineDtlsRole logic" {
     defer schedule.deinit();
 
     const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
-    defer pc.deinit();
 
-    // 创建 offer 并设置本地描述
-    const offer = try pc.createOffer(allocator);
+    // Peer 1: 创建 offer（setup=actpass）
+    const pc1 = try PeerConnection.init(allocator, &schedule, config);
+    defer pc1.deinit();
+    const offer = try pc1.createOffer(allocator);
     defer offer.deinit();
     defer allocator.destroy(offer);
-    try pc.setLocalDescription(offer);
+    try pc1.setLocalDescription(offer);
 
-    // 此时只有本地描述，应该是服务器（等待客户端连接）
-    // 注意：determineDtlsRole 是私有方法，我们通过观察行为间接测试
-    // 或者我们可以通过 startDtlsHandshake 的行为来推断
+    // Peer 2: 创建 answer（setup=active，表示作为客户端）
+    const pc2 = try PeerConnection.init(allocator, &schedule, config);
+    defer pc2.deinit();
+    try pc2.setRemoteDescription(offer);
+    const answer = try pc2.createAnswer(allocator);
+    defer answer.deinit();
+    defer allocator.destroy(answer);
+    try pc2.setLocalDescription(answer);
 
-    // 设置远程描述后，应该变为客户端
-    try pc.setRemoteDescription(offer);
-    // 此时应该识别为客户端（因为远程有 offer）
+    // 验证 answer 中的 setup 属性是 "active"
+    const audio_media = answer.media_descriptions.items[0];
+    var has_active_setup = false;
+    for (audio_media.attributes.items) |attr| {
+        if (std.mem.eql(u8, attr.name, "setup")) {
+            if (attr.value) |value| {
+                try testing.expect(std.mem.eql(u8, value, "active"));
+                has_active_setup = true;
+            }
+        }
+    }
+    try testing.expect(has_active_setup);
+
+    // Peer 1: 接收 answer
+    try pc1.setRemoteDescription(answer);
+
+    // 此时 Peer1 应该识别为服务器（因为 answer 中没有指定，但本地有 offer）
+    // Peer2 应该识别为客户端（因为 answer 中 setup=active）
 }
 
 test "ICE candidate parsing from SDP" {

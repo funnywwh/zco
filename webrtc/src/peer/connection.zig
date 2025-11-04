@@ -774,18 +774,73 @@ pub const PeerConnection = struct {
 
     /// 确定 DTLS role（客户端或服务器）
     /// 返回 true 表示客户端，false 表示服务器
+    /// 遵循 RFC 5763：根据 SDP 中的 setup 属性确定
     fn determineDtlsRole(self: *Self) bool {
-        // 简化逻辑：
-        // - 如果本地有 offer，则作为服务器（等待客户端连接）
-        // - 如果远程有 offer，则作为客户端（主动连接）
-        // 实际应该根据 SDP 中的 setup 属性确定
+        // RFC 5763 Section 5: DTLS role determination
+        // setup 属性值：
+        // - "actpass": offer 中的值，表示可以接受任何角色
+        // - "active": answer 中的值，表示作为客户端
+        // - "passive": answer 中的值，表示作为服务器
 
-        // TODO: 从 SDP 中解析 setup 属性
-        // 当前简化：如果本地描述先设置，作为服务器；否则作为客户端
+        // 优先从 answer 中获取 setup 属性（如果有）
+        if (self.remote_description) |remote| {
+            const remote_setup = Self.parseSetupAttribute(remote);
+            if (remote_setup) |setup| {
+                // answer 中的 setup 属性决定 role
+                if (std.mem.eql(u8, setup, "active")) {
+                    return true; // 客户端
+                } else if (std.mem.eql(u8, setup, "passive")) {
+                    return false; // 服务器
+                }
+                // "actpass" 在 answer 中不应该出现
+            }
+        }
+
+        // 如果没有 answer，从本地 offer 中获取
+        if (self.local_description) |local| {
+            const local_setup = Self.parseSetupAttribute(local);
+            if (local_setup) |setup| {
+                // offer 中的 "actpass" 表示可以接受任何角色
+                // 简化：如果本地是 offer 且没有远程描述，作为服务器等待连接
+                if (std.mem.eql(u8, setup, "actpass")) {
+                    if (self.remote_description == null) {
+                        return false; // 服务器（等待客户端）
+                    }
+                }
+            }
+        }
+
+        // 默认逻辑：如果本地描述先设置，作为服务器；否则作为客户端
         if (self.local_description != null and self.remote_description == null) {
             return false; // 服务器
         }
         return true; // 客户端
+    }
+
+    /// 从 SDP 中解析 setup 属性
+    /// 返回 setup 属性值（"actpass", "active", "passive"）或 null
+    fn parseSetupAttribute(description: *SessionDescription) ?[]const u8 {
+        // 检查媒体级别的 setup 属性（优先）
+        for (description.media_descriptions.items) |media| {
+            for (media.attributes.items) |attr| {
+                if (std.mem.eql(u8, attr.name, "setup")) {
+                    if (attr.value) |value| {
+                        return value;
+                    }
+                }
+            }
+        }
+
+        // 检查会话级别的 setup 属性
+        for (description.attributes.items) |attr| {
+            if (std.mem.eql(u8, attr.name, "setup")) {
+                if (attr.value) |value| {
+                    return value;
+                }
+            }
+        }
+
+        return null;
     }
 
     /// 发送 ClientHello（DTLS 客户端）
