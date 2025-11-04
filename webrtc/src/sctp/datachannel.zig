@@ -258,6 +258,52 @@ pub const DataChannel = struct {
         self.state = .open;
     }
 
+    /// 发送数据
+    /// 将数据通过 SCTP Association 发送
+    /// 注意：需要关联的 SCTP Association
+    pub fn send(self: *Self, data: []const u8, association: *Association) !void {
+        // 检查状态
+        if (self.state != .open) {
+            return Error.ChannelNotOpen;
+        }
+
+        // 通过 SCTP Association 发送数据
+        // 简化实现：需要找到对应的 Stream
+        // TODO: 实现 Stream 查找和发送逻辑
+        _ = association;
+        _ = data;
+        // 实际实现需要：
+        // 1. 找到对应的 Stream（通过 stream_id）
+        // 2. 创建 Data Chunk
+        // 3. 通过 Association 发送
+    }
+
+    /// 接收数据
+    /// 从 SCTP Association 接收数据
+    pub fn recv(self: *Self, association: *Association, allocator: std.mem.Allocator) ![]u8 {
+        // 检查状态
+        if (self.state != .open) {
+            return Error.ChannelNotOpen;
+        }
+
+        // 从 SCTP Association 接收数据
+        // 简化实现：需要找到对应的 Stream
+        // TODO: 实现 Stream 查找和接收逻辑
+        _ = association;
+        _ = allocator;
+        return Error.NotImplemented;
+    }
+
+    /// 设置状态
+    pub fn setState(self: *Self, new_state: DataChannelState) void {
+        self.state = new_state;
+    }
+
+    /// 获取状态
+    pub fn getState(self: *const Self) DataChannelState {
+        return self.state;
+    }
+
     /// 发送用户数据
     /// 将用户数据封装为 SCTP DATA 块
     pub fn sendData(
