@@ -53,22 +53,36 @@ pub const SignalingServer = struct {
             for (keys_to_free.items) |key| {
                 self.allocator.free(key);
             }
-            
+
             self.users.deinit();
         }
 
         pub fn broadcast(self: *Room, sender_id: []const u8, msg: []const u8) void {
             // 收集所有需要发送的用户（避免在迭代时修改 HashMap）
+            // 注意：需要深拷贝 user_id，因为原始指针可能在客户端断开连接时被释放
             var users_to_notify = std.ArrayList([]const u8).init(self.users.allocator);
-            defer users_to_notify.deinit();
+            defer {
+                // 释放所有深拷贝的 user_id
+                for (users_to_notify.items) |user_id| {
+                    self.allocator.free(user_id);
+                }
+                users_to_notify.deinit();
+            }
 
             var it = self.users.iterator();
             while (it.next()) |entry| {
                 const user_id = entry.key_ptr.*;
                 // 不发送给发送者自己
                 if (!std.mem.eql(u8, user_id, sender_id)) {
-                    users_to_notify.append(user_id) catch {
+                    // 深拷贝 user_id，避免在客户端断开连接时访问已释放的内存
+                    const user_id_dup = self.allocator.dupe(u8, user_id) catch {
                         // 如果分配失败，记录错误但继续
+                        std.log.err("[服务器] 复制用户 ID 失败，跳过该用户", .{});
+                        continue;
+                    };
+                    users_to_notify.append(user_id_dup) catch {
+                        // 如果追加失败，释放刚分配的 user_id_dup
+                        self.allocator.free(user_id_dup);
                         std.log.err("[服务器] 收集用户列表失败，跳过广播", .{});
                         return;
                     };
@@ -86,14 +100,14 @@ pub const SignalingServer = struct {
                         // 发送失败不应该导致整个连接关闭
                         // 记录错误但继续处理其他用户
                         // 注意：连接可能已经关闭，这是正常的（客户端断开连接）
+                        // 注意：user_id 是我们深拷贝的，所以可以安全地用于日志记录
                         std.log.debug("[服务器] 发送消息给 {s} 失败: {}（可能已断开连接）", .{ user_id, err });
                         // 可以选择从房间中移除该用户，但这里先只记录错误
                         // 因为用户可能在其他协程中正在断开连接，避免并发修改
-                        // 注意：如果发送失败是因为 client 已被销毁，访问 client 会导致段错误
-                        // 但 send() 方法内部已经检查了 ws.upgraded，应该能避免访问已销毁的对象
                     };
                 } else {
                     // 用户已从房间中移除，跳过
+                    // 注意：user_id 是我们深拷贝的，所以可以安全地用于日志记录
                     std.log.debug("[服务器] 用户 {s} 已从房间中移除，跳过广播", .{user_id});
                 }
             }
