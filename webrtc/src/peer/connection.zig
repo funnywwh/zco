@@ -1531,27 +1531,24 @@ pub const PeerConnection = struct {
         const check_interval = 10 * std.time.ns_per_ms;
         var elapsed: u64 = 0;
 
+        // 简化等待逻辑：只等待固定时间，不检查协程状态
+        // 原因：协程对象可能已被调度器释放，访问状态会导致段错误
+        // 协程会在检测到 is_closing 标志后自动退出
         while (elapsed < max_wait_time) {
-            // 检查是否还有运行中的协程
-            var all_done = true;
-            for (self.coroutines.items) |co| {
-                if (co.state != .STOP) {
-                    all_done = false;
-                    break;
-                }
-            }
-
-            if (all_done) {
-                std.log.debug("PeerConnection.waitAllCoroutines: 所有协程已完成", .{});
-                break;
-            }
-
-            // 等待一小段时间后再次检查
+            // 等待一小段时间，让协程有机会检测到 is_closing 标志并退出
             current_co.Sleep(check_interval) catch |err| {
                 std.log.warn("PeerConnection.waitAllCoroutines: Sleep 失败: {}", .{err});
                 break;
             };
             elapsed += check_interval;
+            
+            // 简单检查：如果已经等待了足够长的时间，认为协程已经退出
+            // 不检查协程状态，因为协程对象可能已被释放
+            if (elapsed >= max_wait_time / 2) {
+                // 等待一半时间后，假设协程已经退出
+                std.log.debug("PeerConnection.waitAllCoroutines: 已等待足够时间，假设所有协程已退出", .{});
+                break;
+            }
         }
 
         if (elapsed >= max_wait_time) {
