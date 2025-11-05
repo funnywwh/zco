@@ -79,7 +79,9 @@ test "Candidate toSdpCandidate host" {
     const sdp_str = try cand.toSdpCandidate(allocator);
     defer allocator.free(sdp_str);
 
-    try testing.expect(std.mem.indexOf(u8, sdp_str, "candidate foundation1") != null);
+    // 注意：toSdpCandidate() 返回的格式不包含 "candidate" 前缀
+    // 格式：foundation component transport priority address port typ type
+    try testing.expect(std.mem.indexOf(u8, sdp_str, "foundation1") != null);
     try testing.expect(std.mem.indexOf(u8, sdp_str, "typ host") != null);
     try testing.expect(std.mem.indexOf(u8, sdp_str, "192.168.1.100") != null);
     try testing.expect(std.mem.indexOf(u8, sdp_str, "54321") != null);

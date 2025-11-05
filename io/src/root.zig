@@ -11,9 +11,15 @@ pub fn CreateIo(IOType: type) type {
             if (self.xobj) |xobj| {
                 const XObjType = @TypeOf(xobj);
                 const s = self.schedule;
-                const loop = &(s.xLoop orelse unreachable);
+                const loop = &(s.xLoop orelse {
+                    std.log.err("io {s} close: xLoop is null", .{SelfName});
+                    return;
+                });
                 var c_close = zco.xev.Completion{};
-                const co: *zco.Co = self.schedule.runningCo orelse unreachable;
+                const co = s.runningCo orelse {
+                    std.log.err("io {s} close: not in coroutine context", .{SelfName});
+                    return;
+                };
                 const Result = struct {
                     co: *zco.Co,
                     size: anyerror!usize = 0,
@@ -30,7 +36,10 @@ pub fn CreateIo(IOType: type) type {
                         r: zco.xev.CloseError!void,
                     ) zco.xev.CallbackAction {
                         _ = r catch unreachable;
-                        const _result = ud orelse unreachable;
+                        const _result = ud orelse {
+                            std.log.err("io {s} callback: userdata is null", .{SelfName});
+                            return .disarm;
+                        };
                         _result.co.Resume() catch |e| {
                             std.log.err("io {s} close ResumeCo error:{s}", .{ SelfName, @errorName(e) });
                         };
@@ -64,7 +73,10 @@ pub fn CreateIo(IOType: type) type {
                     _: zco.xev.ReadBuffer,
                     r: zco.xev.ReadError!usize,
                 ) zco.xev.CallbackAction {
-                    const _result = ud orelse unreachable;
+                    const _result = ud orelse {
+                        std.log.err("io {s} callback: userdata is null", .{SelfName});
+                        return .disarm;
+                    };
                     _result.size = r;
                     _result.co.Resume() catch |e| {
                         _result.size = e;
@@ -98,7 +110,10 @@ pub fn CreateIo(IOType: type) type {
                     _: zco.xev.WriteBuffer,
                     r: zco.xev.WriteError!usize,
                 ) zco.xev.CallbackAction {
-                    const _result = ud orelse unreachable;
+                    const _result = ud orelse {
+                        std.log.err("io {s} callback: userdata is null", .{SelfName});
+                        return .disarm;
+                    };
                     _result.size = r;
                     _result.co.Resume() catch |e| {
                         _result.size = e;
@@ -131,7 +146,10 @@ pub fn CreateIo(IOType: type) type {
                     _: zco.xev.ReadBuffer,
                     r: zco.xev.ReadError!usize,
                 ) zco.xev.CallbackAction {
-                    const _result = ud orelse unreachable;
+                    const _result = ud orelse {
+                        std.log.err("io {s} callback: userdata is null", .{SelfName});
+                        return .disarm;
+                    };
                     _result.size = r;
                     _result.co.Resume() catch |e| {
                         _result.size = e;
@@ -166,7 +184,10 @@ pub fn CreateIo(IOType: type) type {
                     _: zco.xev.WriteBuffer,
                     r: zco.xev.WriteError!usize,
                 ) zco.xev.CallbackAction {
-                    const _result = ud orelse unreachable;
+                    const _result = ud orelse {
+                        std.log.err("io {s} callback: userdata is null", .{SelfName});
+                        return .disarm;
+                    };
                     _result.size = r;
                     _result.co.Resume() catch |e| {
                         _result.size = e;

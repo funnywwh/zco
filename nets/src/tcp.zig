@@ -48,7 +48,10 @@ pub const Tcp = struct {
                 _: *zco.xev.Completion,
                 r: zco.xev.AcceptError!zco.xev.TCP,
             ) zco.xev.CallbackAction {
-                const _r = ud orelse unreachable;
+                const _r = ud orelse {
+                    std.log.err("nets tcp accept callback: userdata is null", .{});
+                    return .disarm;
+                };
                 _r.clientConn = r;
                 _r.co.Resume() catch |e| {
                     std.log.err("nets tcp accept ResumeCo error:{s}", .{@errorName(e)});
@@ -92,7 +95,7 @@ pub const Tcp = struct {
 
         // 创建新的 TCP socket
         const xobj = try zco.xev.TCP.init(address);
-        
+
         var c_connect = zco.xev.Completion{};
         const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
         const Result = struct {
@@ -113,7 +116,10 @@ pub const Tcp = struct {
                 _: zco.xev.TCP,
                 r: zco.xev.TCP.ConnectError!void,
             ) zco.xev.CallbackAction {
-                const _r = ud orelse unreachable;
+                const _r = ud orelse {
+                    std.log.err("nets tcp connect callback: userdata is null", .{});
+                    return .disarm;
+                };
                 _r.result = r;
                 _r.co.Resume() catch |e| {
                     std.log.err("nets tcp connect ResumeCo error:{s}", .{@errorName(e)});

@@ -122,8 +122,11 @@ pub const Candidate = struct {
             }
         }
 
+        // 注意：SDP 格式中，candidate 属性值不包含 "candidate" 前缀
+        // 格式：foundation component transport priority address port typ type-value [raddr] [rport]
+        // 浏览器期望的格式：candidate:<foundation> <component> <transport> <priority> <ip> <port> typ <type>
         try writer.print(
-            "candidate {s} {} {s} {} {s} {} typ {s}",
+            "{s} {} {s} {} {s} {} typ {s}",
             .{
                 self.foundation,
                 self.component_id,
@@ -184,11 +187,27 @@ pub const Candidate = struct {
 
     /// 从 SDP candidate 字符串解析
     pub fn fromSdpCandidate(allocator: std.mem.Allocator, candidate_str: []const u8) !Self {
-        // 解析格式：candidate foundation component transport priority address port typ [raddr] [rport]
+        // 解析格式：candidate: foundation component transport priority address port typ [raddr] [rport]
+        // 注意：浏览器发送的格式是 "candidate:..."（带冒号），需要处理
         var parts = std.mem.splitScalar(u8, candidate_str, ' ');
 
-        _ = parts.next(); // 跳过 "candidate"
-        const foundation_str = parts.next() orelse return error.InvalidCandidate;
+        // 跳过第一个字段（可能是 "candidate" 或 "candidate:"）
+        const first_part = parts.next() orelse return error.InvalidCandidate;
+        // 如果第一个字段是 "candidate:"（带冒号），需要提取冒号后的部分
+        const foundation_str: []const u8 = blk: {
+            if (std.mem.indexOfScalar(u8, first_part, ':')) |colon_pos| {
+                // 如果第一个字段包含冒号（candidate:3661879332），提取冒号后的部分作为 foundation
+                if (first_part.len > colon_pos + 1) {
+                    break :blk first_part[colon_pos + 1 ..];
+                } else {
+                    // 如果冒号后没有内容，尝试下一个字段
+                    break :blk parts.next() orelse return error.InvalidCandidate;
+                }
+            } else {
+                // 如果第一个字段是 "candidate"（不带冒号），获取下一个字段作为 foundation
+                break :blk parts.next() orelse return error.InvalidCandidate;
+            }
+        };
         const component_str = parts.next() orelse return error.InvalidCandidate;
         const transport_str = parts.next() orelse return error.InvalidCandidate;
         const priority_str = parts.next() orelse return error.InvalidCandidate;

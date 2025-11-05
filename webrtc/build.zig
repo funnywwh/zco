@@ -163,6 +163,28 @@ pub fn build(b: *std.Build) void {
     const run_udp_test_step = b.step("run-udp-test", "Run the UDP test");
     run_udp_test_step.dependOn(&run_udp_test_cmd.step);
 
+    // 浏览器兼容性测试服务器
+    const browser_compat_server = b.addExecutable(.{
+        .name = "browser_compat_server",
+        .root_source_file = b.path("examples/browser_compat_server.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    browser_compat_server.root_module.addImport("zco", zco);
+    browser_compat_server.root_module.addImport("nets", nets);
+    browser_compat_server.root_module.addImport("websocket", websocket);
+    browser_compat_server.root_module.addImport("webrtc", webrtc);
+    b.installArtifact(browser_compat_server);
+
+    const run_browser_compat_server_cmd = b.addRunArtifact(browser_compat_server);
+    run_browser_compat_server_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_browser_compat_server_cmd.addArgs(args);
+    }
+
+    const run_browser_compat_server_step = b.step("run-browser-compat-server", "Run the browser compatibility test server");
+    run_browser_compat_server_step.dependOn(&run_browser_compat_server_cmd.step);
+
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,

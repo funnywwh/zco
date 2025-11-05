@@ -213,7 +213,10 @@ pub const Udp = struct {
                     _: zco.xev.WriteBuffer,
                     r: zco.xev.WriteError!usize,
                 ) zco.xev.CallbackAction {
-                    const _r = ud orelse unreachable;
+                    const _r = ud orelse {
+                        std.log.err("nets udp sendTo callback: userdata is null", .{});
+                        return .disarm;
+                    };
                     _r.size = r;
                     _r.co.Resume() catch |e| {
                         std.log.err("nets udp sendTo ResumeCo error:{s}", .{@errorName(e)});
@@ -232,41 +235,50 @@ pub const Udp = struct {
     /// 关闭 UDP socket
     pub fn close(self: *Self) void {
         if (self.xobj) |xobj| {
-            const loop = &(self.schedule.xLoop orelse unreachable);
-            var c_close = zco.xev.Completion{};
-            const co: *zco.Co = self.schedule.runningCo orelse unreachable;
+            if (self.schedule.xLoop) |*loop| {
+                var c_close = zco.xev.Completion{};
+                const co = self.schedule.runningCo orelse {
+                    std.log.err("nets udp close: not in coroutine context", .{});
+                    return;
+                };
 
-            const Result = struct {
-                co: *zco.Co,
-                done: bool = false,
-            };
+                const Result = struct {
+                    co: *zco.Co,
+                    done: bool = false,
+                };
 
-            var result: Result = .{
-                .co = co,
-            };
+                var result: Result = .{
+                    .co = co,
+                };
 
-            xobj.close(loop, &c_close, Result, &result, struct {
-                fn callback(
-                    ud: ?*Result,
-                    _: *zco.xev.Loop,
-                    _: *zco.xev.Completion,
-                    _: zco.xev.UDP,
-                    _: zco.xev.CloseError!void,
-                ) zco.xev.CallbackAction {
-                    const _r = ud orelse unreachable;
-                    _r.done = true;
-                    _r.co.Resume() catch |e| {
-                        std.log.err("nets udp close ResumeCo error:{s}", .{@errorName(e)});
-                    };
-                    return .disarm;
-                }
-            }.callback);
+                xobj.close(loop, &c_close, Result, &result, struct {
+                    fn callback(
+                        ud: ?*Result,
+                        _: *zco.xev.Loop,
+                        _: *zco.xev.Completion,
+                        _: zco.xev.UDP,
+                        _: zco.xev.CloseError!void,
+                    ) zco.xev.CallbackAction {
+                        const _r = ud orelse {
+                            std.log.err("nets udp close callback: userdata is null", .{});
+                            return .disarm;
+                        };
+                        _r.done = true;
+                        _r.co.Resume() catch |e| {
+                            std.log.err("nets udp close ResumeCo error:{s}", .{@errorName(e)});
+                        };
+                        return .disarm;
+                    }
+                }.callback);
 
-            co.Suspend() catch |e| {
-                std.log.err("nets udp close Suspend error:{s}", .{@errorName(e)});
-            };
+                co.Suspend() catch |e| {
+                    std.log.err("nets udp close Suspend error:{s}", .{@errorName(e)});
+                };
 
-            self.xobj = null;
+                self.xobj = null;
+            } else {
+                std.log.err("nets udp close: xLoop is null", .{});
+            }
         }
     }
 };

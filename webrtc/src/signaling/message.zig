@@ -27,7 +27,6 @@ pub const MessageType = enum {
         };
         try json.encodeJsonString(str, .{}, out_stream);
     }
-
 };
 
 /// WebRTC 信令消息
@@ -44,6 +43,57 @@ pub const SignalingMessage = struct {
         candidate: []const u8,
         sdp_mid: ?[]const u8 = null,
         sdp_mline_index: ?u32 = null,
+
+        pub fn jsonParse(
+            allocator: std.mem.Allocator,
+            source: anytype,
+            options: json.ParseOptions,
+        ) !IceCandidate {
+            const value = try json.parseFromTokenSourceLeaky(json.Value, allocator, source, options);
+            return try jsonParseFromValue(allocator, value, options);
+        }
+
+        pub fn jsonParseFromValue(
+            allocator: std.mem.Allocator,
+            source: json.Value,
+            _: json.ParseOptions,
+        ) !IceCandidate {
+            const obj = source.object;
+            const candidate_val = obj.get("candidate") orelse return error.MissingField;
+            const candidate_str = switch (candidate_val) {
+                .string => |s| s,
+                else => return error.InvalidCharacter, // 使用标准 JSON 错误
+            };
+            const candidate = try allocator.dupe(u8, candidate_str);
+
+            var result = IceCandidate{
+                .candidate = candidate,
+                .sdp_mid = null,
+                .sdp_mline_index = null,
+            };
+
+            // 处理 sdpMid（浏览器发送的驼峰命名）
+            if (obj.get("sdpMid")) |mid_val| {
+                switch (mid_val) {
+                    .string => |s| {
+                        result.sdp_mid = try allocator.dupe(u8, s);
+                    },
+                    else => {},
+                }
+            }
+
+            // 处理 sdpMLineIndex（浏览器发送的驼峰命名）
+            if (obj.get("sdpMLineIndex")) |idx_val| {
+                switch (idx_val) {
+                    .integer => |i| {
+                        result.sdp_mline_index = @intCast(i);
+                    },
+                    else => {},
+                }
+            }
+
+            return result;
+        }
 
         pub fn jsonStringify(
             self: *const IceCandidate,

@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC DataChannel 浏览器兼容性测试</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 20px;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        button:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        button.danger {
+            background-color: #f44336;
+        }
+        button.danger:hover:not(:disabled) {
+            background-color: #da190b;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .status.info {
+            background-color: #e3f2fd;
+            color: #1976d2;
+        }
+        .status.success {
+            background-color: #e8f5e9;
+            color: #388e3c;
+        }
+        .status.error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .status.warning {
+            background-color: #fff3e0;
+            color: #f57c00;
+        }
+        .log-container {
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 4px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+        .log-entry.debug {
+            color: #888;
+        }
+        .log-entry.info {
+            color: #4CAF50;
+        }
+        .log-entry.warn {
+            color: #ff9800;
+        }
+        .log-entry.error {
+            color: #f44336;
+        }
+        .test-section {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+            border-left: 4px solid #4CAF50;
+        }
+        .test-item {
+            margin: 10px 0;
+            padding: 8px;
+            background-color: white;
+            border-radius: 4px;
+        }
+        .test-item.passed {
+            border-left: 4px solid #4CAF50;
+        }
+        .test-item.failed {
+            border-left: 4px solid #f44336;
+        }
+        .test-item.pending {
+            border-left: 4px solid #ff9800;
+        }
+        input[type="text"] {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            flex: 1;
+            min-width: 200px;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebRTC DataChannel 浏览器兼容性测试</h1>
+        <div id="status" class="status info">等待连接...</div>
+        
+        <div class="controls">
+            <button id="connectBtn" onclick="connect()">连接到服务器</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled class="danger">断开连接</button>
+            <button id="runTestsBtn" onclick="runAllTests()" disabled>运行所有测试</button>
+            <button id="clearLogBtn" onclick="clearLog()">清空日志</button>
+        </div>
+
+        <div class="input-group">
+            <input type="text" id="messageInput" placeholder="输入要发送的消息" disabled>
+            <button id="sendBtn" onclick="sendMessage()" disabled>发送消息</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>测试结果</h2>
+        <div id="testResults"></div>
+    </div>
+
+    <div class="container">
+        <h2>日志</h2>
+        <div id="logContainer" class="log-container"></div>
+    </div>
+
+    <script>
+        // 配置
+        const SIGNALING_SERVER = 'ws://localhost:8080';
+        const ROOM_ID = 'browser-test-room';
+        const USER_ID = 'browser-client';
+
+        // 全局状态
+        let pc = null;
+        let dc = null;
+        let ws = null;
+        let isConnected = false;
+        let testResults = {};
+        let receivedMessages = [];
+
+        // 日志函数
+        function log(level, message, ...args) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${level}`;
+            logEntry.textContent = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+            if (args.length > 0) {
+                logEntry.textContent += ' ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ');
+            }
+            document.getElementById('logContainer').appendChild(logEntry);
+            logEntry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            console[level](`[${timestamp}]`, message, ...args);
+        }
+
+        function updateStatus(message, type = 'info') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+
+        function clearLog() {
+            document.getElementById('logContainer').innerHTML = '';
+        }
+
+        // WebSocket 连接
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('warn', 'WebSocket 已经连接');
+                return;
+            }
+
+            log('info', '连接到信令服务器:', SIGNALING_SERVER);
+            updateStatus('正在连接信令服务器...', 'info');
+
+            ws = new WebSocket(SIGNALING_SERVER);
+
+            ws.onopen = () => {
+                log('info', 'WebSocket 连接已建立');
+                updateStatus('已连接到信令服务器', 'success');
+                
+                // 加入房间
+                const joinMsg = {
+                    type: 'join',
+                    room_id: ROOM_ID,
+                    user_id: USER_ID
+                };
+                ws.send(JSON.stringify(joinMsg));
+                log('info', '已发送加入房间消息:', joinMsg);
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    log('debug', '收到信令消息:', msg.type);
+                    handleSignalingMessage(msg);
+                } catch (e) {
+                    log('error', '解析信令消息失败:', e);
+                }
+            };
+
+            ws.onerror = (error) => {
+                log('error', 'WebSocket 错误:', error);
+                updateStatus('WebSocket 连接错误', 'error');
+            };
+
+            ws.onclose = () => {
+                log('warn', 'WebSocket 连接已关闭');
+                updateStatus('WebSocket 连接已关闭', 'warning');
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+                document.getElementById('runTestsBtn').disabled = true;
+            };
+        }
+
+        // 处理信令消息
+        function handleSignalingMessage(msg) {
+            switch (msg.type) {
+                case 'user_joined':
+                    log('info', '用户加入:', msg.user_id);
+                    if (msg.user_id === 'server') {
+                        // 服务器已加入，可以创建 PeerConnection
+                        createPeerConnection();
+                    }
+                    break;
+                case 'offer':
+                    log('info', '收到 offer');
+                    if (pc && pc.signalingState !== 'stable') {
+                        log('warn', '收到 offer 但状态不是 stable，当前状态:', pc.signalingState);
+                    }
+                    handleOffer(msg);
+                    break;
+                case 'answer':
+                    log('info', '收到 answer');
+                    handleAnswer(msg);
+                    break;
+                case 'ice_candidate':
+                    log('info', '收到 ICE candidate');
+                    handleIceCandidate(msg);
+                    break;
+                default:
+                    log('debug', '未处理的消息类型:', msg.type);
+            }
+        }
+
+        // 创建 PeerConnection
+        function createPeerConnection() {
+            log('info', '创建 RTCPeerConnection');
+            
+            const config = {
+                iceServers: []
+            };
+
+            pc = new RTCPeerConnection(config);
+
+            // ICE 候选回调
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    const candidateMsg = {
+                        type: 'ice_candidate',
+                        room_id: ROOM_ID,
+                        user_id: USER_ID,
+                        candidate: {
+                            candidate: event.candidate.candidate,
+                            sdpMid: event.candidate.sdpMid,
+                            sdpMLineIndex: event.candidate.sdpMLineIndex
+                        }
+                    };
+                    ws.send(JSON.stringify(candidateMsg));
+                    log('debug', '发送 ICE candidate:', event.candidate.candidate);
+                } else {
+                    log('info', 'ICE candidate 收集完成');
+                }
+            };
+
+            // ICE 连接状态变化
+            pc.oniceconnectionstatechange = () => {
+                log('info', 'ICE 连接状态:', pc.iceConnectionState);
+                updateStatus(`ICE: ${pc.iceConnectionState}`, 
+                    pc.iceConnectionState === 'connected' ? 'success' : 'info');
+            };
+
+            // ICE 收集状态变化
+            pc.onicegatheringstatechange = () => {
+                log('info', 'ICE 收集状态:', pc.iceGatheringState);
+            };
+
+            // 连接状态变化
+            pc.onconnectionstatechange = () => {
+                log('info', '连接状态:', pc.connectionState);
+                updateStatus(`连接: ${pc.connectionState}`, 
+                    pc.connectionState === 'connected' ? 'success' : 'info');
+                
+                if (pc.connectionState === 'connected') {
+                    isConnected = true;
+                    document.getElementById('runTestsBtn').disabled = false;
+                    document.getElementById('sendBtn').disabled = false;
+                    document.getElementById('messageInput').disabled = false;
+                } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                    isConnected = false;
+                    document.getElementById('runTestsBtn').disabled = true;
+                    document.getElementById('sendBtn').disabled = true;
+                    document.getElementById('messageInput').disabled = true;
+                }
+            };
+
+            // 信令状态变化
+            pc.onsignalingstatechange = () => {
+                log('info', '信令状态:', pc.signalingState);
+            };
+
+            // 创建 DataChannel
+            log('info', '创建 DataChannel');
+            dc = pc.createDataChannel('test-channel', {
+                ordered: true
+            });
+
+            dc.onopen = () => {
+                log('info', 'DataChannel 已打开');
+                updateStatus('DataChannel 已打开，可以发送消息', 'success');
+                addTestResult('datachannel_open', true, 'DataChannel 成功打开');
+            };
+
+            dc.onclose = () => {
+                log('info', 'DataChannel 已关闭');
+                updateStatus('DataChannel 已关闭', 'warning');
+                addTestResult('datachannel_close', true, 'DataChannel 正常关闭');
+            };
+
+            dc.onerror = (error) => {
+                log('error', 'DataChannel 错误:', error);
+                updateStatus('DataChannel 错误', 'error');
+                addTestResult('datachannel_error', false, 'DataChannel 发生错误: ' + error);
+            };
+
+            dc.onmessage = (event) => {
+                const data = event.data;
+                log('info', '收到消息:', typeof data === 'string' ? data : `[二进制 ${data.byteLength} 字节]`);
+                receivedMessages.push({
+                    timestamp: Date.now(),
+                    data: data,
+                    type: typeof data
+                });
+                addTestResult('message_receive', true, `收到消息: ${typeof data === 'string' ? data : data.byteLength + ' 字节'}`);
+            };
+
+            // 发送 offer
+            pc.createOffer()
+                .then(offer => {
+                    log('info', '创建 offer 成功');
+                    return pc.setLocalDescription(offer);
+                })
+                .then(() => {
+                    log('info', '设置本地描述成功');
+                    const offerMsg = {
+                        type: 'offer',
+                        room_id: ROOM_ID,
+                        user_id: USER_ID,
+                        sdp: pc.localDescription.sdp
+                    };
+                    ws.send(JSON.stringify(offerMsg));
+                    log('info', '已发送 offer');
+                })
+                .catch(error => {
+                    log('error', '创建或发送 offer 失败:', error);
+                    updateStatus('创建 offer 失败', 'error');
+                });
+        }
+
+        // 处理 answer
+        function handleAnswer(msg) {
+            if (!pc) {
+                log('error', '收到 answer 但 PeerConnection 不存在');
+                return;
+            }
+
+            const answer = new RTCSessionDescription({
+                type: 'answer',
+                sdp: msg.sdp
+            });
+
+            pc.setRemoteDescription(answer)
+                .then(() => {
+                    log('info', '设置远程 answer 成功');
+                })
+                .catch(error => {
+                    log('error', '设置远程 answer 失败:', error.message || error.name || error.toString() || JSON.stringify(error));
+                    console.error('设置远程 answer 详细错误:', error);
+                    updateStatus('设置远程 answer 失败', 'error');
+                });
+        }
+
+        // 处理 ICE candidate
+        function handleIceCandidate(msg) {
+            if (!pc || !msg.candidate) {
+                return;
+            }
+
+            const candidate = new RTCIceCandidate({
+                candidate: msg.candidate.candidate,
+                sdpMid: msg.candidate.sdpMid,
+                sdpMLineIndex: msg.candidate.sdpMLineIndex
+            });
+
+            pc.addIceCandidate(candidate)
+                .then(() => {
+                    log('debug', '添加远程 ICE candidate 成功');
+                })
+                .catch(error => {
+                    log('error', '添加远程 ICE candidate 失败:', error);
+                });
+        }
+
+        // 发送消息
+        function sendMessage() {
+            if (!dc || dc.readyState !== 'open') {
+                log('warn', 'DataChannel 未打开，无法发送消息');
+                updateStatus('DataChannel 未打开', 'warning');
+                return;
+            }
+
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            
+            if (!message) {
+                log('warn', '消息为空');
+                return;
+            }
+
+            try {
+                dc.send(message);
+                log('info', '已发送消息:', message);
+                input.value = '';
+                addTestResult('message_send', true, `发送消息: ${message}`);
+            } catch (error) {
+                log('error', '发送消息失败:', error);
+                addTestResult('message_send', false, `发送失败: ${error}`);
+            }
+        }
+
+        // 断开连接
+        function disconnect() {
+            log('info', '断开连接');
+            
+            if (dc) {
+                dc.close();
+                dc = null;
+            }
+
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+
+            isConnected = false;
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+            document.getElementById('runTestsBtn').disabled = true;
+            document.getElementById('sendBtn').disabled = true;
+            document.getElementById('messageInput').disabled = true;
+            updateStatus('已断开连接', 'info');
+        }
+
+        // 测试函数
+        function addTestResult(testName, passed, message) {
+            testResults[testName] = { passed, message, timestamp: Date.now() };
+            updateTestDisplay();
+        }
+
+        function updateTestDisplay() {
+            const container = document.getElementById('testResults');
+            container.innerHTML = '';
+
+            const tests = [
+                { name: 'datachannel_open', label: 'DataChannel 打开' },
+                { name: 'datachannel_close', label: 'DataChannel 关闭' },
+                { name: 'datachannel_error', label: 'DataChannel 错误处理' },
+                { name: 'message_send', label: '发送消息' },
+                { name: 'message_receive', label: '接收消息' },
+                { name: 'large_message', label: '大数据包传输' },
+                { name: 'multiple_messages', label: '多消息传输' },
+                { name: 'state_transitions', label: '状态转换' }
+            ];
+
+            tests.forEach(test => {
+                const result = testResults[test.name];
+                const item = document.createElement('div');
+                item.className = 'test-item';
+                
+                if (result) {
+                    item.className += result.passed ? ' passed' : ' failed';
+                    item.innerHTML = `
+                        <strong>${test.label}:</strong> 
+                        ${result.passed ? '✓ 通过' : '✗ 失败'} 
+                        - ${result.message}
+                    `;
+                } else {
+                    item.className += ' pending';
+                    item.innerHTML = `<strong>${test.label}:</strong> 待测试`;
+                }
+                
+                container.appendChild(item);
+            });
+        }
+
+        // 运行所有测试
+        async function runAllTests() {
+            log('info', '开始运行所有测试');
+            testResults = {};
+            receivedMessages = [];
+            updateTestDisplay();
+
+            if (!dc || dc.readyState !== 'open') {
+                log('error', 'DataChannel 未打开，无法运行测试');
+                updateStatus('DataChannel 未打开', 'error');
+                return;
+            }
+
+            // 测试1: 基础消息发送
+            log('info', '测试1: 基础消息发送');
+            try {
+                dc.send('test-message-1');
+                log('info', '测试1: 发送成功');
+                addTestResult('message_send', true, '基础消息发送成功');
+            } catch (error) {
+                log('error', '测试1: 发送失败', error);
+                addTestResult('message_send', false, '发送失败: ' + error);
+            }
+
+            // 等待一段时间让消息传输
+            await sleep(500);
+
+            // 测试2: 大数据包
+            log('info', '测试2: 大数据包传输');
+            try {
+                const largeMessage = 'x'.repeat(65536); // 64KB
+                dc.send(largeMessage);
+                log('info', '测试2: 大数据包发送成功');
+                addTestResult('large_message', true, '大数据包发送成功');
+            } catch (error) {
+                log('error', '测试2: 大数据包发送失败', error);
+                addTestResult('large_message', false, '发送失败: ' + error);
+            }
+
+            await sleep(500);
+
+            // 测试3: 多消息
+            log('info', '测试3: 多消息传输');
+            try {
+                for (let i = 0; i < 10; i++) {
+                    dc.send(`multi-message-${i}`);
+                }
+                log('info', '测试3: 多消息发送成功');
+                addTestResult('multiple_messages', true, '发送10条消息成功');
+            } catch (error) {
+                log('error', '测试3: 多消息发送失败', error);
+                addTestResult('multiple_messages', false, '发送失败: ' + error);
+            }
+
+            await sleep(1000);
+
+            // 测试4: 状态转换
+            log('info', '测试4: 状态转换');
+            const states = [];
+            states.push(dc.readyState);
+            log('info', '当前状态:', dc.readyState);
+            
+            // 注意：浏览器中不能直接设置状态，只能通过 open/close 操作
+            addTestResult('state_transitions', true, `状态: ${dc.readyState}`);
+
+            log('info', '所有测试完成');
+            updateStatus('测试完成', 'success');
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // 初始化
+        updateTestDisplay();
+        log('info', '页面加载完成，等待用户操作');
+    </script>
+</body>
+</html>
+

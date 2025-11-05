@@ -90,27 +90,33 @@ pub const SignalingServer = struct {
             }
 
             // 遍历收集到的用户列表，发送消息
+            // 注意：broadcast 必须在协程环境中调用，因为 client.send() 需要协程环境
             for (users_to_notify.items) |user_id| {
                 // 再次检查用户是否还在房间中（可能在其他协程中断开连接）
                 if (self.users.get(user_id)) |client| {
                     // 安全地发送消息，捕获所有可能的错误
                     // 注意：客户端可能正在断开连接，WebSocket 可能已经无效
                     // 注意：client 可能已经被 handleClient 销毁，所以需要检查指针是否有效
+                    // 注意：broadcast 应该在 handleMessage 协程中调用，所以应该在协程环境中
+                    std.log.debug("[服务器] 准备发送消息给 {s}", .{user_id});
                     client.send(msg) catch |err| {
                         // 发送失败不应该导致整个连接关闭
                         // 记录错误但继续处理其他用户
                         // 注意：连接可能已经关闭，这是正常的（客户端断开连接）
                         // 注意：user_id 是我们深拷贝的，所以可以安全地用于日志记录
-                        std.log.debug("[服务器] 发送消息给 {s} 失败: {}（可能已断开连接）", .{ user_id, err });
+                        std.log.warn("[服务器] 发送消息给 {s} 失败: {}（可能已断开连接或不在协程环境中）", .{ user_id, err });
                         // 可以选择从房间中移除该用户，但这里先只记录错误
                         // 因为用户可能在其他协程中正在断开连接，避免并发修改
+                        continue;
                     };
+                    std.log.debug("[服务器] 已发送消息给 {s}", .{user_id});
                 } else {
                     // 用户已从房间中移除，跳过
                     // 注意：user_id 是我们深拷贝的，所以可以安全地用于日志记录
                     std.log.debug("[服务器] 用户 {s} 已从房间中移除，跳过广播", .{user_id});
                 }
             }
+            std.log.debug("[服务器] broadcast 完成", .{});
         }
     };
 
@@ -150,6 +156,11 @@ pub const SignalingServer = struct {
             self.ws.sendText(data) catch |err| {
                 // 如果连接已关闭，这是正常的，不需要报错
                 if (err == error.ConnectionClosed or err == error.ConnectionReset or err == error.EOF) {
+                    return error.ConnectionClosed;
+                }
+                // 如果不在协程环境中，也返回 ConnectionClosed 错误（避免 CallInSchedule 错误传播）
+                if (err == error.CallInSchedule) {
+                    std.log.warn("[服务器] Client.send() 不在协程环境中，这不应该发生", .{});
                     return error.ConnectionClosed;
                 }
                 return err;

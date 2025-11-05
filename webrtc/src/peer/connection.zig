@@ -669,139 +669,259 @@ pub const PeerConnection = struct {
         };
         answer.connection = connection;
 
-        // 3. 遍历 remote offer 的媒体描述，为每个媒体生成 answer
+        // 3. 添加 ICE 属性（会话级别，在处理媒体之前设置）
+        // 注意：ICE 属性必须在所有媒体类型处理之前设置，因为浏览器要求会话级别必须有这些属性
+        if (self.ice_agent) |agent| {
+            const ice_ufrag = try Self.generateIceUfrag(allocator);
+            const ice_pwd = try Self.generateIcePwd(allocator);
+
+            answer.ice_ufrag = ice_ufrag;
+            answer.ice_pwd = ice_pwd;
+
+            // 如果还没有本地 candidates，自动创建 UDP socket（会触发 candidates 收集）
+            // setupUdpSocketInternal 会自动收集 candidates，所以这里只需要确保 socket 存在
+            if (agent.getLocalCandidates().len == 0) {
+                // 如果 UDP Socket 还未创建，自动创建（使用默认地址）
+                // setupUdpSocketInternal 会自动收集 candidates
+                if (agent.udp == null) {
+                    const default_addr = std.net.Address.parseIp4("0.0.0.0", 0) catch |err| {
+                        std.log.warn("Failed to parse default address in createAnswer: {}", .{err});
+                        return err;
+                    };
+                    _ = self.setupUdpSocketInternal(default_addr) catch |err| {
+                        std.log.warn("Failed to setup UDP socket in createAnswer: {}", .{err});
+                        // 不中断流程，继续尝试
+                    };
+                }
+            }
+        }
+
+        // 4. 添加 DTLS 指纹（会话级别，在处理媒体之前设置）
+        // 从证书计算真实指纹
+        const fingerprint_hash = try allocator.dupe(u8, "sha-256");
+        const fingerprint_formatted = if (self.dtls_certificate) |cert|
+            try cert.formatFingerprint(allocator)
+        else blk: {
+            // 如果没有证书，生成随机指纹（不应发生）
+            var random_fingerprint: [32]u8 = undefined;
+            crypto.random.bytes(&random_fingerprint);
+            break :blk try dtls.KeyDerivation.formatFingerprint(random_fingerprint, allocator);
+        };
+
+        answer.fingerprint = SessionDescription.Fingerprint{
+            .hash = fingerprint_hash,
+            .value = fingerprint_formatted,
+        };
+
+        // 5. 遍历 remote offer 的媒体描述，为每个媒体生成 answer
+        // 注意：answer 中的媒体行顺序必须与 offer 完全匹配
+        // 对于不支持的媒体类型，需要添加 m-line 但将端口设为 0 表示拒绝
         for (remote_desc.media_descriptions.items) |remote_media| {
-            // 生成对应的媒体描述（只接受支持的媒体类型）
-            if (!std.mem.eql(u8, remote_media.media_type, "audio")) {
-                // 暂时只支持音频，跳过其他媒体类型
+            const is_audio = std.mem.eql(u8, remote_media.media_type, "audio");
+            const is_application = std.mem.eql(u8, remote_media.media_type, "application");
+
+            // 只接受 audio 和 application（SCTP DataChannel）类型
+            if (!is_audio and !is_application) {
+                // 对于不支持的媒体类型，添加拒绝的 m-line（端口 0）
+                const rejected_media = SessionDescription.MediaDescription{
+                    .media_type = try allocator.dupe(u8, remote_media.media_type),
+                    .port = 0, // 端口 0 表示拒绝
+                    .proto = try allocator.dupe(u8, remote_media.proto),
+                    .formats = std.ArrayList([]const u8).init(allocator),
+                    .bandwidths = std.ArrayList(SessionDescription.Bandwidth).init(allocator),
+                    .attributes = std.ArrayList(SessionDescription.Attribute).init(allocator),
+                };
+                try answer.media_descriptions.append(rejected_media);
                 continue;
             }
 
-            // 创建音频媒体描述（复用相同的格式）
-            var audio_formats = std.ArrayList([]const u8).init(allocator);
-            // 从 remote offer 中选择支持的格式，或使用默认值
-            // 简化：使用与 offer 相同的格式（实际应该协商）
-            if (remote_media.formats.items.len > 0) {
-                // 接受第一个格式作为示例（实际应协商）
-                for (remote_media.formats.items) |fmt| {
-                    // 只接受已知的音频格式（0=PCMU, 8=PCMA）
-                    if (std.mem.eql(u8, fmt, "0") or std.mem.eql(u8, fmt, "8")) {
-                        try audio_formats.append(try allocator.dupe(u8, fmt));
+            // 处理 audio 类型
+            if (is_audio) {
+                // 创建音频媒体描述（复用相同的格式）
+                var audio_formats = std.ArrayList([]const u8).init(allocator);
+                // 从 remote offer 中选择支持的格式，或使用默认值
+                // 简化：使用与 offer 相同的格式（实际应该协商）
+                if (remote_media.formats.items.len > 0) {
+                    // 接受第一个格式作为示例（实际应协商）
+                    for (remote_media.formats.items) |fmt| {
+                        // 只接受已知的音频格式（0=PCMU, 8=PCMA）
+                        if (std.mem.eql(u8, fmt, "0") or std.mem.eql(u8, fmt, "8")) {
+                            try audio_formats.append(try allocator.dupe(u8, fmt));
+                        }
                     }
+                } else {
+                    // 如果没有格式，使用默认值
+                    try audio_formats.append(try allocator.dupe(u8, "0")); // PCMU
                 }
-            } else {
-                // 如果没有格式，使用默认值
-                try audio_formats.append(try allocator.dupe(u8, "0")); // PCMU
-            }
 
-            const audio_media = SessionDescription.MediaDescription{
-                .media_type = try allocator.dupe(u8, "audio"),
-                .port = remote_media.port, // 使用相同的端口（或 9 表示禁用）
-                .proto = try allocator.dupe(u8, "UDP/TLS/RTP/SAVPF"), // 必须与 offer 匹配
-                .formats = audio_formats,
-                .bandwidths = std.ArrayList(SessionDescription.Bandwidth).init(allocator),
-                .attributes = std.ArrayList(SessionDescription.Attribute).init(allocator),
-            };
-            try answer.media_descriptions.append(audio_media);
+                const audio_media = SessionDescription.MediaDescription{
+                    .media_type = try allocator.dupe(u8, "audio"),
+                    .port = remote_media.port, // 使用相同的端口（或 9 表示禁用）
+                    .proto = try allocator.dupe(u8, "UDP/TLS/RTP/SAVPF"), // 必须与 offer 匹配
+                    .formats = audio_formats,
+                    .bandwidths = std.ArrayList(SessionDescription.Bandwidth).init(allocator),
+                    .attributes = std.ArrayList(SessionDescription.Attribute).init(allocator),
+                };
+                try answer.media_descriptions.append(audio_media);
 
-            // 获取媒体描述引用
-            const audio_media_desc = &answer.media_descriptions.items[answer.media_descriptions.items.len - 1];
+                // 获取媒体描述引用
+                const audio_media_desc = &answer.media_descriptions.items[answer.media_descriptions.items.len - 1];
 
-            // 4. 添加 ICE 属性（生成新的随机值）
-            if (self.ice_agent) |agent| {
-                const ice_ufrag = try Self.generateIceUfrag(allocator);
-                const ice_pwd = try Self.generateIcePwd(allocator);
+                // 6. 添加 ICE 属性到音频媒体描述
+                // 注意：ICE 属性已经在会话级别设置，这里只需要添加到媒体级别
+                if (self.ice_agent) |agent| {
+                    // 添加 ICE 属性到媒体描述
+                    if (answer.ice_ufrag) |ufrag| {
+                        try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                            .name = try allocator.dupe(u8, "ice-ufrag"),
+                            .value = try allocator.dupe(u8, ufrag),
+                        });
+                    }
+                    if (answer.ice_pwd) |pwd| {
+                        try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                            .name = try allocator.dupe(u8, "ice-pwd"),
+                            .value = try allocator.dupe(u8, pwd),
+                        });
+                    }
 
-                answer.ice_ufrag = ice_ufrag;
-                answer.ice_pwd = ice_pwd;
+                    // 添加已收集的本地 candidates 到 SDP
+                    const local_candidates = agent.getLocalCandidates();
+                    for (local_candidates) |c| {
+                        const candidate_str = try c.toSdpCandidate(allocator);
+                        defer allocator.free(candidate_str);
 
-                // 添加 ICE 属性到媒体描述
-                try audio_media_desc.attributes.append(SessionDescription.Attribute{
-                    .name = try allocator.dupe(u8, "ice-ufrag"),
-                    .value = try allocator.dupe(u8, ice_ufrag),
-                });
-                try audio_media_desc.attributes.append(SessionDescription.Attribute{
-                    .name = try allocator.dupe(u8, "ice-pwd"),
-                    .value = try allocator.dupe(u8, ice_pwd),
-                });
-
-                // 如果还没有本地 candidates，自动创建 UDP socket（会触发 candidates 收集）
-                // setupUdpSocketInternal 会自动收集 candidates，所以这里只需要确保 socket 存在
-                if (agent.getLocalCandidates().len == 0) {
-                    // 如果 UDP Socket 还未创建，自动创建（使用默认地址）
-                    // setupUdpSocketInternal 会自动收集 candidates
-                    if (agent.udp == null) {
-                        const default_addr = std.net.Address.parseIp4("0.0.0.0", 0) catch |err| {
-                            std.log.warn("Failed to parse default address in createAnswer: {}", .{err});
-                            return err;
-                        };
-                        _ = self.setupUdpSocketInternal(default_addr) catch |err| {
-                            std.log.warn("Failed to setup UDP socket in createAnswer: {}", .{err});
-                            // 不中断流程，继续尝试
-                        };
+                        try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                            .name = try allocator.dupe(u8, "candidate"),
+                            .value = try allocator.dupe(u8, candidate_str),
+                        });
                     }
                 }
 
-                // 添加已收集的本地 candidates 到 SDP
-                const local_candidates = agent.getLocalCandidates();
-                for (local_candidates) |c| {
-                    const candidate_str = try c.toSdpCandidate(allocator);
-                    defer allocator.free(candidate_str);
+                // 7. 添加 DTLS 指纹到音频媒体描述
+                // 注意：fingerprint 已经在会话级别设置，这里只需要添加到媒体级别
+                const fingerprint_attr_value = try std.fmt.allocPrint(allocator, "{s} {s}", .{ fingerprint_hash, fingerprint_formatted });
+                try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                    .name = try allocator.dupe(u8, "fingerprint"),
+                    .value = fingerprint_attr_value,
+                });
 
+                // 8. 添加 RTCP 属性
+                // setup 属性：如果 offer 是 actpass，answer 应该是 active 或 passive
+                // 简化：设置为 active
+                try audio_media_desc.attributes.append(SessionDescription.Attribute{
+                    .name = try allocator.dupe(u8, "setup"),
+                    .value = try allocator.dupe(u8, "active"), // answer 通常是 active
+                });
+
+                // rtcp-mux（如果 offer 中有，answer 中也要有）
+                var has_rtcp_mux = false;
+                for (remote_media.attributes.items) |attr| {
+                    if (std.mem.eql(u8, attr.name, "rtcp-mux")) {
+                        has_rtcp_mux = true;
+                        break;
+                    }
+                }
+                if (has_rtcp_mux) {
                     try audio_media_desc.attributes.append(SessionDescription.Attribute{
-                        .name = try allocator.dupe(u8, "candidate"),
-                        .value = try allocator.dupe(u8, candidate_str),
+                        .name = try allocator.dupe(u8, "rtcp-mux"),
+                        .value = null,
                     });
                 }
-            }
+            } // 结束 if (is_audio)
 
-            // 5. 添加 DTLS 指纹
-            // 从证书计算真实指纹
-            const fingerprint_hash = try allocator.dupe(u8, "sha-256");
-            const fingerprint_formatted = if (self.dtls_certificate) |cert|
-                try cert.formatFingerprint(allocator)
-            else blk: {
-                // 如果没有证书，生成随机指纹（不应发生）
-                var random_fingerprint: [32]u8 = undefined;
-                crypto.random.bytes(&random_fingerprint);
-                break :blk try dtls.KeyDerivation.formatFingerprint(random_fingerprint, allocator);
-            };
-
-            answer.fingerprint = SessionDescription.Fingerprint{
-                .hash = fingerprint_hash,
-                .value = fingerprint_formatted,
-            };
-
-            // 添加 fingerprint 属性到媒体描述
-            const fingerprint_attr_value = try std.fmt.allocPrint(allocator, "{s} {s}", .{ fingerprint_hash, fingerprint_formatted });
-            try audio_media_desc.attributes.append(SessionDescription.Attribute{
-                .name = try allocator.dupe(u8, "fingerprint"),
-                .value = fingerprint_attr_value,
-            });
-
-            // 6. 添加 RTCP 属性
-            // setup 属性：如果 offer 是 actpass，answer 应该是 active 或 passive
-            // 简化：设置为 active
-            try audio_media_desc.attributes.append(SessionDescription.Attribute{
-                .name = try allocator.dupe(u8, "setup"),
-                .value = try allocator.dupe(u8, "active"), // answer 通常是 active
-            });
-
-            // rtcp-mux（如果 offer 中有，answer 中也要有）
-            var has_rtcp_mux = false;
-            for (remote_media.attributes.items) |attr| {
-                if (std.mem.eql(u8, attr.name, "rtcp-mux")) {
-                    has_rtcp_mux = true;
-                    break;
+            // 处理 application 类型（SCTP DataChannel）
+            if (is_application) {
+                // 创建 application 媒体描述（SCTP DataChannel）
+                var app_formats = std.ArrayList([]const u8).init(allocator);
+                // SCTP 使用 DTLS/SCTP，通常格式为 "webrtc-datachannel" 或 "5000"
+                // 从 remote offer 中获取格式
+                if (remote_media.formats.items.len > 0) {
+                    for (remote_media.formats.items) |fmt| {
+                        try app_formats.append(try allocator.dupe(u8, fmt));
+                    }
+                } else {
+                    // 默认使用 5000（SCTP 端口）
+                    try app_formats.append(try allocator.dupe(u8, "5000"));
                 }
-            }
-            if (has_rtcp_mux) {
-                try audio_media_desc.attributes.append(SessionDescription.Attribute{
-                    .name = try allocator.dupe(u8, "rtcp-mux"),
-                    .value = null,
+
+                const app_media = SessionDescription.MediaDescription{
+                    .media_type = try allocator.dupe(u8, "application"),
+                    .port = remote_media.port,
+                    .proto = try allocator.dupe(u8, "UDP/DTLS/SCTP"), // SCTP 使用 UDP/DTLS/SCTP
+                    .formats = app_formats,
+                    .bandwidths = std.ArrayList(SessionDescription.Bandwidth).init(allocator),
+                    .attributes = std.ArrayList(SessionDescription.Attribute).init(allocator),
+                };
+                try answer.media_descriptions.append(app_media);
+
+                const app_media_desc = &answer.media_descriptions.items[answer.media_descriptions.items.len - 1];
+
+                // 添加 SCTP 相关属性
+                // 添加 sctp-port 属性（如果 offer 中有）
+                for (remote_media.attributes.items) |attr| {
+                    if (std.mem.eql(u8, attr.name, "sctp-port")) {
+                        if (attr.value) |value| {
+                            try app_media_desc.attributes.append(SessionDescription.Attribute{
+                                .name = try allocator.dupe(u8, "sctp-port"),
+                                .value = try allocator.dupe(u8, value),
+                            });
+                        }
+                    } else if (std.mem.eql(u8, attr.name, "max-message-size")) {
+                        // 复制 max-message-size 属性
+                        if (attr.value) |value| {
+                            try app_media_desc.attributes.append(SessionDescription.Attribute{
+                                .name = try allocator.dupe(u8, "max-message-size"),
+                                .value = try allocator.dupe(u8, value),
+                            });
+                        }
+                    }
+                }
+
+                // 添加 ICE 属性（如果 ICE Agent 可用）
+                if (self.ice_agent) |agent| {
+                    // 复用会话级别的 ICE 凭证
+                    if (answer.ice_ufrag) |ufrag| {
+                        try app_media_desc.attributes.append(SessionDescription.Attribute{
+                            .name = try allocator.dupe(u8, "ice-ufrag"),
+                            .value = try allocator.dupe(u8, ufrag),
+                        });
+                    }
+                    if (answer.ice_pwd) |pwd| {
+                        try app_media_desc.attributes.append(SessionDescription.Attribute{
+                            .name = try allocator.dupe(u8, "ice-pwd"),
+                            .value = try allocator.dupe(u8, pwd),
+                        });
+                    }
+
+                    // 添加 candidates（复用 audio 的 candidates）
+                    const local_candidates = agent.getLocalCandidates();
+                    for (local_candidates) |c| {
+                        const candidate_str = try c.toSdpCandidate(allocator);
+                        defer allocator.free(candidate_str);
+
+                        try app_media_desc.attributes.append(SessionDescription.Attribute{
+                            .name = try allocator.dupe(u8, "candidate"),
+                            .value = try allocator.dupe(u8, candidate_str),
+                        });
+                    }
+                }
+
+                // 添加 DTLS 指纹（复用会话级别的）
+                if (answer.fingerprint) |fp| {
+                    const fingerprint_attr_value = try std.fmt.allocPrint(allocator, "{s} {s}", .{ fp.hash, fp.value });
+                    try app_media_desc.attributes.append(SessionDescription.Attribute{
+                        .name = try allocator.dupe(u8, "fingerprint"),
+                        .value = fingerprint_attr_value,
+                    });
+                }
+
+                // 添加 setup 属性
+                try app_media_desc.attributes.append(SessionDescription.Attribute{
+                    .name = try allocator.dupe(u8, "setup"),
+                    .value = try allocator.dupe(u8, "active"),
                 });
-            }
-        }
+            } // 结束 if (is_application)
+        } // 结束 for remote_desc.media_descriptions
 
         // 创建堆分配的对象
         const answer_ptr = try allocator.create(SessionDescription);
@@ -905,29 +1025,38 @@ pub const PeerConnection = struct {
                 }
 
                 // 更新 ICE 连接状态
+                // 注意：只有在有 candidate pairs 时才启动 connectivity checks
+                // 如果没有 pairs（可能远程 candidates 还没收到），等待通过 addIceCandidate 自动启动
                 if (self.ice_connection_state == .new) {
-                    std.log.info("setLocalDescription: 开始启动 Connectivity Checks (ICE 状态: {})", .{self.ice_connection_state});
-                    const old_ice_state = self.ice_connection_state;
-                    self.ice_connection_state = .checking;
+                    if (agent.candidate_pairs.items.len > 0) {
+                        std.log.info("setLocalDescription: 有 candidate pairs，开始启动 Connectivity Checks (ICE 状态: {}, Pairs: {})", .{ self.ice_connection_state, agent.candidate_pairs.items.len });
+                        const old_ice_state = self.ice_connection_state;
+                        self.ice_connection_state = .checking;
 
-                    // 触发 ICE 连接状态变化事件
-                    if (old_ice_state != self.ice_connection_state) {
-                        if (self.oniceconnectionstatechange) |callback| {
-                            callback(self);
+                        // 触发 ICE 连接状态变化事件
+                        if (old_ice_state != self.ice_connection_state) {
+                            if (self.oniceconnectionstatechange) |callback| {
+                                callback(self);
+                            }
                         }
-                    }
 
-                    // 开始连接检查
-                    if (agent.startConnectivityChecks()) {
-                        std.log.info("setLocalDescription: Connectivity Checks 已启动", .{});
-                    } else |err| {
-                        std.log.warn("Failed to start connectivity checks in setLocalDescription: {}", .{err});
-                        self.updateIceConnectionState(.failed);
+                        // 开始连接检查
+                        if (agent.startConnectivityChecks()) {
+                            std.log.info("setLocalDescription: Connectivity Checks 已启动", .{});
+                        } else |err| {
+                            std.log.warn("Failed to start connectivity checks in setLocalDescription: {}", .{err});
+                            self.updateIceConnectionState(.failed);
+                        }
+                    } else {
+                        std.log.debug("setLocalDescription: 暂无 candidate pairs (本地: {}, 远程: {})，等待远程 candidates 通过 addIceCandidate 添加", .{ agent.local_candidates.items.len, agent.remote_candidates.items.len });
+                        // 不设置状态为 checking，等待收到远程 candidates 后通过 addIceCandidate 自动启动
+                        // 也不需要启动 monitorIceConnection，因为还没开始 connectivity checks
                     }
 
                     // 启动协程定期检查 ICE 状态（直到连接建立）
+                    // 只有在已经开始 connectivity checks（状态为 checking）时才启动监控协程
                     // 防止重复启动 monitorIceConnection
-                    if (self.ice_connection_state != .connected and self.ice_connection_state != .completed) {
+                    if (self.ice_connection_state == .checking) {
                         const current = self.monitor_ice_running.load(.acquire);
                         if (!current) {
                             self.monitor_ice_running.store(true, .release);
