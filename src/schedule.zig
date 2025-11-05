@@ -553,17 +553,16 @@ pub const Schedule = struct {
     }
     pub fn getCurrentCo(self: *Schedule) !*Co {
         // === 关键区开始：屏蔽信号 ===
-        var oldset: c.sigset_t = undefined;
-        blockPreemptSignals(&oldset);
+        blockPreemptSignals();
 
         const _co = self.runningCo orelse {
             // 恢复信号屏蔽
-            restoreSignals(&oldset);
+            restoreSignals();
             return error.NotInCo;
         };
 
         // === 关键区结束：恢复信号屏蔽 ===
-        restoreSignals(&oldset);
+        restoreSignals();
         return _co;
     }
     pub fn go(self: *Schedule, comptime func: anytype, args: anytype) !*Co {
@@ -610,13 +609,12 @@ pub const Schedule = struct {
         Co.nextId +%= 1;
 
         // === 关键区开始：屏蔽信号 ===
-        var oldset: c.sigset_t = undefined;
-        blockPreemptSignals(&oldset);
+        blockPreemptSignals();
 
         try self.allCoMap.put(co.id, co);
 
         // === 关键区结束：恢复信号屏蔽 ===
-        restoreSignals(&oldset);
+        restoreSignals();
 
         try self.ResumeCo(co);
         return co;
@@ -668,13 +666,12 @@ pub const Schedule = struct {
         Co.nextId +%= 1;
 
         // === 关键区开始：屏蔽信号 ===
-        var oldset: c.sigset_t = undefined;
-        blockPreemptSignals(&oldset);
+        blockPreemptSignals();
 
         try self.allCoMap.put(co.id, co);
 
         // === 关键区结束：恢复信号屏蔽 ===
-        restoreSignals(&oldset);
+        restoreSignals();
 
         try self.ResumeCo(co);
         return co;
@@ -687,26 +684,24 @@ pub const Schedule = struct {
     // 抢占缓冲区操作 - 使用关中断方式
     fn sleepCo(self: *Schedule, co: *Co) !void {
         // === 关键区开始：屏蔽信号 ===
-        var oldset: c.sigset_t = undefined;
-        blockPreemptSignals(&oldset);
+        blockPreemptSignals();
 
         try self.sleepQueue.add(co);
 
         // === 关键区结束：恢复信号屏蔽 ===
-        restoreSignals(&oldset);
+        restoreSignals();
     }
     pub fn ResumeCo(self: *Schedule, co: *Co) !void {
 
         // === 关键区开始：屏蔽信号 ===
-        var oldset: c.sigset_t = undefined;
-        blockPreemptSignals(&oldset);
+        blockPreemptSignals();
 
         // 检查就绪队列大小，防止内存爆炸
         const currentCount = self.readyQueue.count();
         if (currentCount >= MAX_READY_COUNT) {
             std.log.warn("Ready queue full ({}), dropping coroutine {}", .{ currentCount, co.id });
             // 恢复信号屏蔽
-            restoreSignals(&oldset);
+            restoreSignals();
             return;
         }
 
@@ -718,13 +713,12 @@ pub const Schedule = struct {
         try self.readyQueue.add(co);
 
         // === 关键区结束：恢复信号屏蔽 ===
-        restoreSignals(&oldset);
+        restoreSignals();
     }
     pub fn freeCo(self: *Schedule, co: *Co) void {
 
         // === 关键区开始：屏蔽信号 ===
-        var oldset: c.sigset_t = undefined;
-        blockPreemptSignals(&oldset);
+        blockPreemptSignals();
 
         // 优化：使用更高效的查找方式
         // 从睡眠队列中移除
@@ -757,7 +751,7 @@ pub const Schedule = struct {
         }
 
         // === 关键区结束：恢复信号屏蔽 ===
-        restoreSignals(&oldset);
+        restoreSignals();
     }
     pub fn startTimer(self: *Schedule) !void {
         const timerid = self.timer_id orelse return error.NoTimer;
@@ -853,8 +847,7 @@ pub const Schedule = struct {
 
     inline fn checkNextCo(self: *Schedule) !void {
         // === 关键区开始：屏蔽信号 ===
-        var oldset: c.sigset_t = undefined;
-        blockPreemptSignals(&oldset);
+        blockPreemptSignals();
 
         // 定时器现在完全由协程 Resume/Suspend 控制
         // 不再需要在这里管理定时器状态
@@ -870,7 +863,7 @@ pub const Schedule = struct {
             const processCount = @min(count, batch_size);
 
             // 批量处理：只在开始时恢复信号屏蔽，结束时重新屏蔽
-            restoreSignals(&oldset); // 恢复信号屏蔽
+            restoreSignals(); // 恢复信号屏蔽
 
             for (0..processCount) |_| {
                 const nextCo = self.readyQueue.remove();
@@ -881,10 +874,10 @@ pub const Schedule = struct {
                 }
             }
 
-            blockPreemptSignals(&oldset); // 重新屏蔽信号
+            blockPreemptSignals(); // 重新屏蔽信号
         } else {
             // 恢复信号屏蔽
-            restoreSignals(&oldset);
+            restoreSignals();
 
             if (self.xLoop) |*xLoop| {
                 try xLoop.run(.once);
@@ -895,21 +888,18 @@ pub const Schedule = struct {
         }
 
         // === 关键区结束：恢复信号屏蔽 ===
-        restoreSignals(&oldset);
+        restoreSignals();
     }
 };
 
 // 临界区保护函数（使用原子标志，信号处理器检查此标志）
-// 注意：oldset 参数保留以保持 API 兼容，但不再使用
-pub inline fn blockPreemptSignals(oldset: *c.sigset_t) void {
-    _ = oldset; // 保留参数以保持兼容，但不再使用
+pub inline fn blockPreemptSignals() void {
     const schedule = Schedule.localSchedule orelse return;
     // 设置临界区标志（原子操作，release 语义确保之前的操作可见）
     schedule.in_critical.store(true, .release);
 }
 
-pub inline fn restoreSignals(oldset: *const c.sigset_t) void {
-    _ = oldset; // 保留参数以保持兼容，但不再使用
+pub inline fn restoreSignals() void {
     const schedule = Schedule.localSchedule orelse return;
     // 清除临界区标志（原子操作，release 语义确保临界区操作完成）
     schedule.in_critical.store(false, .release);

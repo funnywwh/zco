@@ -60,8 +60,7 @@ pub const Chan = struct {
         const schedule = self.schedule;
 
         // === 临界区：关闭通道并唤醒所有等待者 ===
-        var oldset: c.sigset_t = undefined;
-        schedule_mod.blockPreemptSignals(&oldset);
+        schedule_mod.blockPreemptSignals();
 
         self.closed = true;
         //唤醒所有sender和recver
@@ -78,7 +77,7 @@ pub const Chan = struct {
         }
         self.recvingQueue.clearAndFree();
 
-        schedule_mod.restoreSignals(&oldset);
+        schedule_mod.restoreSignals();
         // === 临界区结束 ===
     }
     pub fn deinit(self: *Self) void {
@@ -104,10 +103,9 @@ pub const Chan = struct {
         while (self.valueQueue.items.len >= self.bufferCap) {
             //缓冲区满等待空位
             // === 临界区：追加到队列 ===
-            var oldset: c.sigset_t = undefined;
-            schedule_mod.blockPreemptSignals(&oldset);
+            schedule_mod.blockPreemptSignals();
             try self.sendingQueue.append(sendCo);
-            schedule_mod.restoreSignals(&oldset);
+            schedule_mod.restoreSignals();
             // === 临界区结束 ===
 
             try sendCo.Suspend();
@@ -117,8 +115,7 @@ pub const Chan = struct {
         }
 
         // === 临界区：添加值到队列并唤醒接收者 ===
-        var oldset: c.sigset_t = undefined;
-        schedule_mod.blockPreemptSignals(&oldset);
+        schedule_mod.blockPreemptSignals();
 
         try self.valueQueue.append(.{
             .value = data,
@@ -130,7 +127,7 @@ pub const Chan = struct {
             try schedule.ResumeCo(recvCo);
         }
 
-        schedule_mod.restoreSignals(&oldset);
+        schedule_mod.restoreSignals();
         // === 临界区结束 ===
 
         //等待recver读完成
@@ -143,10 +140,9 @@ pub const Chan = struct {
         while (self.valueQueue.items.len <= 0) {
             //没有数据可读
             // === 临界区：追加到接收队列 ===
-            var oldset: c.sigset_t = undefined;
-            schedule_mod.blockPreemptSignals(&oldset);
+            schedule_mod.blockPreemptSignals();
             try self.recvingQueue.append(recvCo);
-            schedule_mod.restoreSignals(&oldset);
+            schedule_mod.restoreSignals();
             // === 临界区结束 ===
 
             try recvCo.Suspend();
@@ -158,8 +154,7 @@ pub const Chan = struct {
         }
 
         // === 临界区：从队列移除值并唤醒发送者 ===
-        var oldset: c.sigset_t = undefined;
-        schedule_mod.blockPreemptSignals(&oldset);
+        schedule_mod.blockPreemptSignals();
 
         if (self.valueQueue.items.len > 0) {
             const val = self.valueQueue.orderedRemove(0);
@@ -169,13 +164,13 @@ pub const Chan = struct {
                 try schedule.ResumeCo(sendCo);
             }
 
-            schedule_mod.restoreSignals(&oldset);
+            schedule_mod.restoreSignals();
             // === 临界区结束 ===
 
             return val.value;
         }
 
-        schedule_mod.restoreSignals(&oldset);
+        schedule_mod.restoreSignals();
         // === 临界区结束 ===
 
         return error.recvClosed;

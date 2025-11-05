@@ -61,6 +61,7 @@ pub const IceAgent = struct {
 
     // 等待响应的 pending requests（transaction_id -> pair）
     // 使用 [16]u8 以获得更好的对齐性能，实际 transaction_id 是 12 字节，存储在 key 的前 12 字节
+    // 注意：所有对 pending_requests 的访问必须通过安全的辅助函数进行，以避免并发访问导致的内存损坏
     pending_requests: std.HashMap([16]u8, *CandidatePair, ArrayHashContext, std.hash_map.default_max_load_percentage),
 
     // 组件 ID（RTP 通常为 1，RTCP 为 2）
@@ -680,6 +681,31 @@ pub const IceAgent = struct {
         _ = try self.schedule.go(handleIncomingStunMessages, .{self});
     }
 
+    /// 安全地访问 pending_requests（使用临界区保护）
+    /// 使用 zco 的临界区保护来避免并发访问 HashMap
+    fn safePutPendingRequest(self: *Self, trans_key: [16]u8, pair: *CandidatePair) !void {
+        zco.blockPreemptSignals();
+        defer zco.restoreSignals();
+        try self.pending_requests.put(trans_key, pair);
+    }
+
+    /// 安全地从 pending_requests 移除条目（使用临界区保护）
+    fn safeRemovePendingRequest(self: *Self, trans_key: [16]u8) ?*CandidatePair {
+        zco.blockPreemptSignals();
+        defer zco.restoreSignals();
+        if (self.pending_requests.fetchRemove(trans_key)) |entry| {
+            return entry.value;
+        }
+        return null;
+    }
+
+    /// 安全地从 pending_requests 获取条目（使用临界区保护）
+    fn safeGetPendingRequest(self: *Self, trans_key: [16]u8) ?*CandidatePair {
+        zco.blockPreemptSignals();
+        defer zco.restoreSignals();
+        return self.pending_requests.get(trans_key);
+    }
+
     /// 执行 Connectivity Check（协程函数）
     fn performCheck(self: *Self, pair: *CandidatePair) !void {
         const stun = self.stun orelse return error.StunNotInitialized;
@@ -706,10 +732,10 @@ pub const IceAgent = struct {
 
         // 记录 pending request（转换为 16 字节 key 以获得更好的对齐）
         const trans_key = transactionIdToKey(transaction_id);
-        try self.pending_requests.put(trans_key, pair);
+        try self.safePutPendingRequest(trans_key, pair);
         // 确保在错误时也能清理
         errdefer {
-            _ = self.pending_requests.remove(trans_key);
+            _ = self.safeRemovePendingRequest(trans_key);
         }
 
         // 发送请求
@@ -766,7 +792,7 @@ pub const IceAgent = struct {
             std.log.warn("ICE.performCheck: 等待响应超时", .{});
             pair.state = .failed;
             // 超时情况下，清理 pending request（使用已存在的 trans_key）
-            _ = self.pending_requests.remove(trans_key);
+            _ = self.safeRemovePendingRequest(trans_key);
         }
 
         // 检查是否所有检查都完成（只有在状态还不是终态时才检查）
@@ -853,7 +879,7 @@ pub const IceAgent = struct {
                 // 收到 Binding Response，查找对应的 pending request
                 // 转换为 16 字节 key 以获得更好的对齐
                 const trans_key = transactionIdToKey(stun_msg.header.transaction_id);
-                if (self.pending_requests.get(trans_key)) |pair| {
+                if (self.safeGetPendingRequest(trans_key)) |pair| {
                     std.log.info("ICE.handleIncomingStunMessages: 收到 STUN Binding Response，匹配到 pending request", .{});
                     pair.state = .succeeded;
 
@@ -868,7 +894,7 @@ pub const IceAgent = struct {
                     self.checkConnectionState();
 
                     // 移除条目
-                    _ = self.pending_requests.remove(trans_key);
+                    _ = self.safeRemovePendingRequest(trans_key);
                 } else {
                     std.log.debug("ICE.handleIncomingStunMessages: 收到 Binding Response，但没有匹配的 pending request", .{});
                 }

@@ -32,8 +32,7 @@ pub fn Resume(self: *Co) !void {
             c.makecontext(&self.ctx, @ptrCast(&Co.contextEntry), 1, self);
 
             // === 关键区开始：屏蔽信号 ===
-            var oldset: c.sigset_t = undefined;
-            schedule_mod.blockPreemptSignals(&oldset);
+            schedule_mod.blockPreemptSignals();
 
             // 在关中断状态下安全地设置协程状态和runningCo
             self.state = .RUNNING;
@@ -42,7 +41,7 @@ pub fn Resume(self: *Co) !void {
             // 增加切换计数（在关中断状态下安全）
             schedule.total_switches.raw += 1;
             // 恢复信号
-            schedule_mod.restoreSignals(&oldset);
+            schedule_mod.restoreSignals();
             // === 关键区结束 ===
 
             // 启动定时器（在协程开始运行前，重置计时）
@@ -64,8 +63,7 @@ pub fn Resume(self: *Co) !void {
         .SUSPEND, .READY => {
 
             // === 关键区开始：屏蔽信号 ===
-            var oldset: c.sigset_t = undefined;
-            schedule_mod.blockPreemptSignals(&oldset);
+            schedule_mod.blockPreemptSignals();
 
             // 在关中断状态下安全地设置协程状态和runningCo
             self.state = .RUNNING;
@@ -74,7 +72,7 @@ pub fn Resume(self: *Co) !void {
             // 增加切换计数（在关中断状态下安全）
             schedule.total_switches.raw += 1;
             // 恢复信号
-            schedule_mod.restoreSignals(&oldset);
+            schedule_mod.restoreSignals();
             // === 关键区结束 ===
 
             // 启动定时器（在协程开始运行前，重置计时）
@@ -155,8 +153,7 @@ pub const Co = struct {
             }
 
             // === 关键区开始：屏蔽信号 ===
-            var oldset: c.sigset_t = undefined;
-            schedule_mod.blockPreemptSignals(&oldset);
+            schedule_mod.blockPreemptSignals();
 
             // 在关中断状态下安全地设置协程状态和runningCo
             co.state = .SUSPEND;
@@ -164,7 +161,7 @@ pub const Co = struct {
             self.schedule.stopTimer();
             self.schedule.runningCo = null;
             // 恢复信号
-            schedule_mod.restoreSignals(&oldset);
+            schedule_mod.restoreSignals();
             // === 关键区结束 ===
 
             const swap_result = c.swapcontext(&co.ctx, &schedule.ctx);
@@ -231,8 +228,7 @@ pub const Co = struct {
         };
 
         // === 关键区开始：屏蔽信号 ===
-        var oldset: c.sigset_t = undefined;
-        schedule_mod.blockPreemptSignals(&oldset);
+        schedule_mod.blockPreemptSignals();
 
         // 在关中断状态下安全地设置协程状态和runningCo
         // 协程结束时，定时器由调度器管理，不需要在这里停止
@@ -240,6 +236,6 @@ pub const Co = struct {
         self.state = .STOP;
 
         // === 关键区结束：恢复信号屏蔽 ===
-        schedule_mod.restoreSignals(&oldset);
+        schedule_mod.restoreSignals();
     }
 };
