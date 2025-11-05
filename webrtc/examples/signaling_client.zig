@@ -327,7 +327,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
             .answer => {
                 if (msg.sdp) |sdp| {
                     std.log.info("[Alice] 收到 answer，开始解析...", .{});
-                    var remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
+                    const remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
                     const remote_sdp_ptr = try schedule.allocator.create(webrtc.signaling.sdp.Sdp);
