@@ -210,6 +210,7 @@ pub const PeerConnection = struct {
     // 协程管理
     coroutines: std.ArrayList(*zco.Co), // 跟踪所有内部协程
     is_closing: std.atomic.Value(bool), // 关闭标志（原子操作）
+    coroutines_wg: ?zco.WaitGroup = null, // 等待所有协程完成的 WaitGroup
 
     /// 初始化 RTCPeerConnection
     pub fn init(
@@ -229,7 +230,11 @@ pub const PeerConnection = struct {
             .data_channels = std.ArrayList(*sctp.DataChannel).init(allocator),
             .coroutines = std.ArrayList(*zco.Co).init(allocator),
             .is_closing = std.atomic.Value(bool).init(false),
+            .coroutines_wg = null,
         };
+        
+        // 初始化 WaitGroup
+        self.coroutines_wg = try zco.WaitGroup.init(schedule);
 
         // 初始化 ICE Agent（组件 ID 1 表示 RTP）
         self.ice_agent = try ice.agent.IceAgent.init(allocator, schedule, 1);
@@ -327,6 +332,12 @@ pub const PeerConnection = struct {
 
         // 清理协程列表
         self.coroutines.deinit();
+        
+        // 清理 WaitGroup
+        if (self.coroutines_wg) |*wg| {
+            wg.deinit();
+            self.coroutines_wg = null;
+        }
 
         if (self.srtp_receiver) |transform_ptr| {
             transform_ptr.ctx.deinit();
@@ -1499,7 +1510,16 @@ pub const PeerConnection = struct {
     /// 启动内部协程（辅助方法）
     /// 记录协程以便后续管理
     fn startCoroutine(self: *Self, comptime func: anytype, args: anytype) !void {
+        // 在 WaitGroup 中添加计数
+        if (self.coroutines_wg) |*wg| {
+            try wg.add(1);
+        }
+        
         const co = self.schedule.go(func, args) catch |err| {
+            // 如果启动失败，需要减少计数
+            if (self.coroutines_wg) |*wg| {
+                wg.done();
+            }
             std.log.warn("Failed to start coroutine: {}", .{err});
             return err;
         };
@@ -1518,41 +1538,13 @@ pub const PeerConnection = struct {
         // 设置关闭标志
         self.is_closing.store(true, .release);
 
-        // 等待所有协程完成
-        // 注意：需要在协程环境中调用，以便可以使用 Sleep
-        const current_co = self.schedule.getCurrentCo() catch {
-            // 如果不在协程环境中，直接返回（协程会在调度器运行时自动退出）
-            std.log.debug("PeerConnection.waitAllCoroutines: 不在协程环境中，跳过等待", .{});
-            return;
-        };
-
-        // 等待所有协程完成（最多等待 5 秒）
-        const max_wait_time = 5 * std.time.ns_per_s;
-        const check_interval = 10 * std.time.ns_per_ms;
-        var elapsed: u64 = 0;
-
-        // 简化等待逻辑：只等待固定时间，不检查协程状态
-        // 原因：协程对象可能已被调度器释放，访问状态会导致段错误
-        // 协程会在检测到 is_closing 标志后自动退出
-        while (elapsed < max_wait_time) {
-            // 等待一小段时间，让协程有机会检测到 is_closing 标志并退出
-            current_co.Sleep(check_interval) catch |err| {
-                std.log.warn("PeerConnection.waitAllCoroutines: Sleep 失败: {}", .{err});
-                break;
-            };
-            elapsed += check_interval;
-            
-            // 简单检查：如果已经等待了足够长的时间，认为协程已经退出
-            // 不检查协程状态，因为协程对象可能已被释放
-            if (elapsed >= max_wait_time / 2) {
-                // 等待一半时间后，假设协程已经退出
-                std.log.debug("PeerConnection.waitAllCoroutines: 已等待足够时间，假设所有协程已退出", .{});
-                break;
-            }
-        }
-
-        if (elapsed >= max_wait_time) {
-            std.log.warn("PeerConnection.waitAllCoroutines: 等待协程完成超时", .{});
+        // 使用 WaitGroup 等待所有协程完成
+        if (self.coroutines_wg) |*wg| {
+            std.log.debug("PeerConnection.waitAllCoroutines: 等待所有协程完成", .{});
+            wg.wait();
+            std.log.debug("PeerConnection.waitAllCoroutines: 所有协程已完成", .{});
+        } else {
+            std.log.debug("PeerConnection.waitAllCoroutines: WaitGroup 未初始化，跳过等待", .{});
         }
     }
 
@@ -1643,6 +1635,10 @@ pub const PeerConnection = struct {
             // 检查是否正在关闭
             if (self.isClosing()) {
                 std.log.info("PeerConnection.handleClientHandshake: 检测到关闭标志，退出", .{});
+                // 通知 WaitGroup 协程已完成
+                if (self.coroutines_wg) |*wg| {
+                    wg.done();
+                }
                 return;
             }
 
@@ -1727,6 +1723,10 @@ pub const PeerConnection = struct {
 
         if (!server_hello_done_received) {
             std.log.warn("PeerConnection.handleClientHandshake: 等待 ServerHelloDone 超时", .{});
+            // 通知 WaitGroup 协程已完成
+            if (self.coroutines_wg) |*wg| {
+                wg.done();
+            }
             return;
         }
 
@@ -1740,6 +1740,11 @@ pub const PeerConnection = struct {
         // 触发 DTLS 握手完成回调
         if (self.ondtlshandshakecomplete) |callback| {
             callback(self);
+        }
+        
+        // 通知 WaitGroup 协程已完成
+        if (self.coroutines_wg) |*wg| {
+            wg.done();
         }
     }
 
@@ -1767,6 +1772,10 @@ pub const PeerConnection = struct {
             // 检查是否正在关闭
             if (self.isClosing()) {
                 std.log.info("PeerConnection.handleServerHandshake: 检测到关闭标志，退出", .{});
+                // 通知 WaitGroup 协程已完成
+                if (self.coroutines_wg) |*wg| {
+                    wg.done();
+                }
                 return;
             }
 
@@ -1864,6 +1873,11 @@ pub const PeerConnection = struct {
         } else {
             std.log.warn("PeerConnection.handleServerHandshake: 服务器端握手未完成 (状态: {})", .{handshake.state});
         }
+        
+        // 通知 WaitGroup 协程已完成
+        if (self.coroutines_wg) |*wg| {
+            wg.done();
+        }
     }
 
     /// 监控 ICE 连接状态（协程函数）
@@ -1884,6 +1898,10 @@ pub const PeerConnection = struct {
             // 检查是否正在关闭
             if (self.isClosing()) {
                 std.log.info("PeerConnection.monitorIceConnection: 检测到关闭标志，退出", .{});
+                // 通知 WaitGroup 协程已完成
+                if (self.coroutines_wg) |*wg| {
+                    wg.done();
+                }
                 return;
             }
 
@@ -1896,6 +1914,11 @@ pub const PeerConnection = struct {
         }
 
         std.log.info("PeerConnection.monitorIceConnection: ICE 状态已变为终态: {}", .{self.ice_connection_state});
+        
+        // 通知 WaitGroup 协程已完成
+        if (self.coroutines_wg) |*wg| {
+            wg.done();
+        }
     }
 
     /// 更新 ICE 连接状态（内部方法，由事件回调调用）
