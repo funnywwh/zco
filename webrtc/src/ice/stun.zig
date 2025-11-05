@@ -563,12 +563,20 @@ pub const Stun = struct {
             .transaction_id = request.header.transaction_id,
         };
         const xor_attr = try xor_mapped.encode(self.allocator);
-        errdefer self.allocator.free(xor_attr.value);
+        // 注意：如果 addAttribute 失败，需要释放 xor_attr.value
+        // 如果成功，所有权转移给 response，会在 response.deinit() 中释放
         try response.addAttribute(xor_attr);
+        errdefer {
+            // 如果后续操作失败，清理 response 的 attributes（包括 xor_attr.value）
+            response.deinit();
+        }
 
         // 编码响应
         const response_data = try response.encode(self.allocator);
         defer self.allocator.free(response_data);
+        
+        // 清理 response 的 attributes（在发送后）
+        defer response.deinit();
 
         // 发送响应（使用请求的源地址）
         _ = try self.udp.?.sendTo(response_data, client_address);

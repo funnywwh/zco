@@ -325,12 +325,20 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
             .answer => {
                 if (msg.sdp) |sdp| {
                     std.log.info("[Alice] 收到 answer，开始解析...", .{});
-                    const remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
+                    var remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
+                    errdefer remote_sdp.deinit();
+                    
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
                     const remote_sdp_ptr = try schedule.allocator.create(webrtc.signaling.sdp.Sdp);
+                    errdefer schedule.allocator.destroy(remote_sdp_ptr);
                     remote_sdp_ptr.* = remote_sdp;
+                    // 注意：remote_sdp 的值已移动到 remote_sdp_ptr
+                    // 如果 setRemoteDescription 失败，需要清理 remote_sdp_ptr（包括内部的字段）
                     try pc.setRemoteDescription(remote_sdp_ptr);
+                    // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
+                    // errdefer remote_sdp.deinit() 不会被执行，因为值已移动
+                    // 但为了安全，我们仍然保留它（虽然它不会被执行，因为值已移动）
                     std.log.info("[Alice] 已设置远程 answer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
                     received_answer = true;
                     std.log.info("[Alice] 已收到 answer，退出等待循环", .{});
@@ -603,6 +611,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
 
     // 2. 关闭 TCP 连接（如果还没有关闭）
     tcp.close();
+    tcp.deinit();
 
     // 3. 关闭 UDP socket（如果存在）
     if (created_udp) |udp| {
@@ -763,20 +772,32 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
                         std.log.err("[Bob] 解析 SDP 失败: {}", .{err});
                         continue;
                     };
+                    // 注意：如果后续操作失败，需要清理 remote_sdp
+                    // 但如果在创建 remote_sdp_ptr 前就失败，需要在 continue 前清理
                     errdefer remote_sdp.deinit();
 
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
                     const remote_sdp_ptr = schedule.allocator.create(webrtc.signaling.sdp.Sdp) catch |err| {
                         std.log.err("[Bob] 分配 SDP 内存失败: {}", .{err});
+                        // 在 continue 前清理 remote_sdp
+                        remote_sdp.deinit();
                         continue;
                     };
+                    errdefer schedule.allocator.destroy(remote_sdp_ptr);
                     remote_sdp_ptr.* = remote_sdp;
+                    // 注意：remote_sdp 的值已移动到 remote_sdp_ptr
+                    // 如果 setRemoteDescription 失败，需要清理 remote_sdp_ptr（包括内部的字段）
                     pc.setRemoteDescription(remote_sdp_ptr) catch |err| {
                         std.log.err("[Bob] 设置远程 offer 失败: {}", .{err});
+                        // 清理 remote_sdp_ptr 中的字段（通过 deinit）
+                        remote_sdp_ptr.deinit();
                         schedule.allocator.destroy(remote_sdp_ptr);
                         continue;
                     };
+                    // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
+                    // errdefer remote_sdp.deinit() 不会被执行，因为值已移动
+                    // 但为了安全，我们仍然保留它（虽然它不会被执行，因为值已移动）
                     std.log.info("[Bob] 已设置远程 offer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
 
                     // 创建 answer
@@ -1095,6 +1116,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
 
     // 2. 关闭 TCP 连接（如果还没有关闭）
     tcp.close();
+    tcp.deinit();
 
     // 3. 关闭 UDP socket（如果存在）
     if (created_udp) |udp| {
