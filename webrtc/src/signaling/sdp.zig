@@ -144,6 +144,9 @@ pub const Sdp = struct {
         }
         self.bandwidths.deinit();
 
+        // 清理 times ArrayList
+        self.times.deinit();
+
         for (self.media_descriptions.items) |*md| {
             self.allocator.free(md.media_type);
             self.allocator.free(md.proto);
