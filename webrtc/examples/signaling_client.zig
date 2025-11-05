@@ -327,7 +327,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
             .answer => {
                 if (msg.sdp) |sdp| {
                     std.log.info("[Alice] 收到 answer，开始解析...", .{});
-                    const remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
+                    var remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
                     const remote_sdp_ptr = try schedule.allocator.create(webrtc.signaling.sdp.Sdp);
@@ -343,7 +343,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
                     // 所以问题可能是：在 continue 之后，remote_sdp 仍然在作用域中，但它的字段已经被转移
                     // 解决方案：在成功转移后，我们不需要做任何事情，因为 errdefer 不会执行
                     // 但为了安全，我们仍然可以清空字段引用（虽然这不是必需的）
-                    
+
                     // 如果 setRemoteDescription 失败，需要清理 remote_sdp_ptr（包括内部的字段）
                     try pc.setRemoteDescription(remote_sdp_ptr);
                     // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
@@ -807,7 +807,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
                     // 所以问题可能是：在 continue 之后，remote_sdp 仍然在作用域中，但它的字段已经被转移
                     // 解决方案：在成功转移后，我们不需要做任何事情，因为 errdefer 不会执行
                     // 但为了安全，我们仍然可以清空字段引用（虽然这不是必需的）
-                    
+
                     // 如果 setRemoteDescription 失败，需要清理 remote_sdp_ptr（包括内部的字段）
                     pc.setRemoteDescription(remote_sdp_ptr) catch |err| {
                         std.log.err("[Bob] 设置远程 offer 失败: {}", .{err});
