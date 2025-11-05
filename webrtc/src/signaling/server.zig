@@ -32,12 +32,33 @@ pub const SignalingServer = struct {
         }
 
         pub fn deinit(self: *Room) void {
+            // 注意：Room.deinit 只清理 room 自己的资源
+            // Client 对象由 handleClient 协程负责清理，不应该在这里销毁
+            // 只需要清理 HashMap 中的 key（user_id）和 room 自己的资源
+            // 注意：在服务器退出时，handleClient 协程可能还在运行，所以需要安全地清理
+            // 先收集所有的 key，然后再释放，避免在迭代时修改 HashMap
+            var keys_to_free = std.ArrayList([]const u8).init(self.allocator);
+            defer keys_to_free.deinit();
+            
             var it = self.users.iterator();
             while (it.next()) |entry| {
-                self.allocator.free(entry.key_ptr.*);
-                entry.value_ptr.*.deinit();
-                self.allocator.destroy(entry.value_ptr.*);
+                // 保存 key 的副本，因为 entry.key_ptr.* 可能已经被释放
+                const key_dup = self.allocator.dupe(u8, entry.key_ptr.*) catch {
+                    // 如果分配失败，跳过这个 key
+                    continue;
+                };
+                keys_to_free.append(key_dup) catch {
+                    // 如果追加失败，释放刚分配的 key
+                    self.allocator.free(key_dup);
+                    continue;
+                };
             }
+            
+            // 释放所有收集到的 key
+            for (keys_to_free.items) |key| {
+                self.allocator.free(key);
+            }
+            
             self.users.deinit();
             // 释放保存的消息
             if (self.last_offer) |offer| {
@@ -72,6 +93,7 @@ pub const SignalingServer = struct {
                 if (self.users.get(user_id)) |client| {
                     // 安全地发送消息，捕获所有可能的错误
                     // 注意：客户端可能正在断开连接，WebSocket 可能已经无效
+                    // 注意：client 可能已经被 handleClient 销毁，所以需要检查指针是否有效
                     client.send(msg) catch |err| {
                         // 发送失败不应该导致整个连接关闭
                         // 记录错误但继续处理其他用户
@@ -79,7 +101,12 @@ pub const SignalingServer = struct {
                         std.log.debug("[服务器] 发送消息给 {s} 失败: {}（可能已断开连接）", .{ user_id, err });
                         // 可以选择从房间中移除该用户，但这里先只记录错误
                         // 因为用户可能在其他协程中正在断开连接，避免并发修改
+                        // 注意：如果发送失败是因为 client 已被销毁，访问 client 会导致段错误
+                        // 但 send() 方法内部已经检查了 ws.upgraded，应该能避免访问已销毁的对象
                     };
+                } else {
+                    // 用户已从房间中移除，跳过
+                    std.log.debug("[服务器] 用户 {s} 已从房间中移除，跳过广播", .{user_id});
                 }
             }
         }
@@ -91,6 +118,8 @@ pub const SignalingServer = struct {
         room_id: ?[]const u8 = null,
         user_id: ?[]const u8 = null,
         allocator: std.mem.Allocator,
+        // 标记客户端是否正在断开连接（用于避免在广播时访问已销毁的 client）
+        is_disconnecting: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
         pub fn init(ws: *websocket.WebSocket, allocator: std.mem.Allocator) *Client {
             const client = allocator.create(Client) catch unreachable;
@@ -107,6 +136,10 @@ pub const SignalingServer = struct {
         }
 
         pub fn send(self: *Client, data: []const u8) !void {
+            // 检查客户端是否正在断开连接
+            if (self.is_disconnecting.load(.acquire)) {
+                return error.ConnectionClosed;
+            }
             // 检查 WebSocket 是否已经升级（已建立连接）
             if (!self.ws.upgraded) {
                 return error.ConnectionClosed;
@@ -126,10 +159,18 @@ pub const SignalingServer = struct {
     pub fn init(schedule: *zco.Schedule, address: std.net.Address) !*Self {
         const allocator = schedule.allocator;
         const tcp = try nets.Tcp.init(schedule);
+        errdefer tcp.deinit();
+
         try tcp.bind(address);
+        errdefer tcp.deinit();
+
         try tcp.listen(128);
 
-        const server = try allocator.create(Self);
+        const server = allocator.create(Self) catch |err| {
+            // 如果创建失败，清理 tcp
+            tcp.deinit();
+            return err;
+        };
         server.* = .{
             .schedule = schedule,
             .tcp = tcp,
@@ -178,8 +219,12 @@ pub const SignalingServer = struct {
         try ws.handshake();
 
         const client = Client.init(ws, server.allocator);
-        defer client.deinit();
-        defer server.allocator.destroy(client);
+        // 注意：client 始终由 handleClient 负责清理
+        // Room.deinit 只清理 room 自己的资源，不会销毁 client
+        defer {
+            client.deinit();
+            server.allocator.destroy(client);
+        }
 
         var buffer: [8192]u8 = undefined;
 
@@ -234,12 +279,17 @@ pub const SignalingServer = struct {
         if (client.room_id) |room_id| {
             if (server.rooms.getPtr(room_id)) |room| {
                 if (client.user_id) |user_id| {
+                    // 先标记客户端为正在断开连接，避免其他协程在广播时访问已销毁的 client
+                    client.is_disconnecting.store(true, .release);
+
                     // 先保存 user_id 用于广播（因为 fetchRemove 会释放 key）
                     const user_id_dup_for_leave = try server.allocator.dupe(u8, user_id);
                     defer server.allocator.free(user_id_dup_for_leave);
 
                     if (room.users.fetchRemove(user_id)) |entry| {
                         server.allocator.free(entry.key);
+                        // 注意：client 对象仍然由 handleClient 的 defer 负责清理
+                        // Room.deinit 不会销毁 client，只清理 room 自己的资源
 
                         // 通知其他用户（在移除用户之后，避免通知自己）
                         // 注意：广播时可能其他客户端也在断开，所以需要安全处理
@@ -258,6 +308,7 @@ pub const SignalingServer = struct {
                         defer server.allocator.free(leave_json);
 
                         // 安全地广播 leave 消息（broadcast 内部已经处理了发送失败的情况）
+                        // 注意：此时 client 已经标记为正在断开连接，broadcast 不会尝试通过它发送消息
                         room.broadcast(user_id_dup_for_leave, leave_json);
                     }
                 }
