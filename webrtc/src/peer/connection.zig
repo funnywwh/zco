@@ -211,6 +211,7 @@ pub const PeerConnection = struct {
     coroutines: std.ArrayList(*zco.Co), // 跟踪所有内部协程
     is_closing: std.atomic.Value(bool), // 关闭标志（原子操作）
     coroutines_wg: ?zco.WaitGroup = null, // 等待所有协程完成的 WaitGroup
+    monitor_ice_running: std.atomic.Value(bool), // monitorIceConnection 协程是否正在运行
 
     /// 初始化 RTCPeerConnection
     pub fn init(
@@ -231,6 +232,7 @@ pub const PeerConnection = struct {
             .coroutines = std.ArrayList(*zco.Co).init(allocator),
             .is_closing = std.atomic.Value(bool).init(false),
             .coroutines_wg = null,
+            .monitor_ice_running = std.atomic.Value(bool).init(false),
         };
 
         // 初始化 WaitGroup
@@ -912,10 +914,19 @@ pub const PeerConnection = struct {
                     }
 
                     // 启动协程定期检查 ICE 状态（直到连接建立）
+                    // 防止重复启动 monitorIceConnection
                     if (self.ice_connection_state != .connected and self.ice_connection_state != .completed) {
-                        self.startCoroutine(monitorIceConnection, .{self}) catch |err| {
-                            std.log.warn("Failed to start ICE monitor in setLocalDescription: {}", .{err});
-                        };
+                        const current = self.monitor_ice_running.load(.acquire);
+                        if (!current) {
+                            self.monitor_ice_running.store(true, .release);
+                            self.startCoroutine(monitorIceConnection, .{self}) catch |err| {
+                                self.monitor_ice_running.store(false, .release);
+                                std.log.warn("Failed to start ICE monitor in setLocalDescription: {}", .{err});
+                            };
+                        } else {
+                            // 已经有协程在运行，跳过
+                            std.log.debug("setLocalDescription: monitorIceConnection 已在运行，跳过启动", .{});
+                        }
                     }
                 } else {
                     std.log.debug("setLocalDescription: ICE 状态不是 .new，跳过启动 Connectivity Checks (当前状态: {})", .{self.ice_connection_state});
@@ -1076,10 +1087,19 @@ pub const PeerConnection = struct {
                         };
 
                         // 启动协程定期检查 ICE 状态（直到连接建立）
+                        // 防止重复启动 monitorIceConnection
                         if (self.ice_connection_state != .connected and self.ice_connection_state != .completed) {
-                            self.startCoroutine(monitorIceConnection, .{self}) catch |err| {
-                                std.log.warn("Failed to start ICE monitor in setRemoteDescription: {}", .{err});
-                            };
+                            const current = self.monitor_ice_running.load(.acquire);
+                            if (!current) {
+                                self.monitor_ice_running.store(true, .release);
+                                self.startCoroutine(monitorIceConnection, .{self}) catch |err| {
+                                    self.monitor_ice_running.store(false, .release);
+                                    std.log.warn("Failed to start ICE monitor in setRemoteDescription: {}", .{err});
+                                };
+                            } else {
+                                // 已经有协程在运行，跳过
+                                std.log.debug("setRemoteDescription: monitorIceConnection 已在运行，跳过启动", .{});
+                            }
                         }
                     } else {
                         // 没有 candidate pairs，等待通过 addIceCandidate 添加 candidates
@@ -1391,10 +1411,19 @@ pub const PeerConnection = struct {
                     };
 
                     // 启动协程定期检查 ICE 状态（直到连接建立）
+                    // 防止重复启动 monitorIceConnection
                     if (self.ice_connection_state != .connected and self.ice_connection_state != .completed) {
-                        self.startCoroutine(monitorIceConnection, .{self}) catch |err| {
-                            std.log.warn("Failed to start ICE monitor in addIceCandidate: {}", .{err});
-                        };
+                        const current = self.monitor_ice_running.load(.acquire);
+                        if (!current) {
+                            self.monitor_ice_running.store(true, .release);
+                            self.startCoroutine(monitorIceConnection, .{self}) catch |err| {
+                                self.monitor_ice_running.store(false, .release);
+                                std.log.warn("Failed to start ICE monitor in addIceCandidate: {}", .{err});
+                            };
+                        } else {
+                            // 已经有协程在运行，跳过
+                            std.log.debug("addIceCandidate: monitorIceConnection 已在运行，跳过启动", .{});
+                        }
                     }
                 }
             }
@@ -1516,12 +1545,14 @@ pub const PeerConnection = struct {
 
     /// 启动内部协程（辅助方法）
     /// 记录协程以便后续管理
+    /// 注意：协程函数必须在其开头使用 defer 调用 wg.done()
     fn startCoroutine(self: *Self, comptime func: anytype, args: anytype) !void {
         // 在 WaitGroup 中添加计数
         if (self.coroutines_wg) |*wg| {
             try wg.add(1);
         }
 
+        // 直接启动协程（协程函数内部会调用 wg.done()）
         const co = self.schedule.go(func, args) catch |err| {
             // 如果启动失败，需要减少计数
             if (self.coroutines_wg) |*wg| {
@@ -1548,20 +1579,21 @@ pub const PeerConnection = struct {
         // 使用 WaitGroup 等待所有协程完成
         // 注意：必须在调度器还在运行时调用，否则 wait() 会失败
         if (self.coroutines_wg) |*wg| {
-            std.log.debug("PeerConnection.waitAllCoroutines: 等待所有协程完成", .{});
+            std.log.info("PeerConnection.waitAllCoroutines: 等待所有协程完成 (当前协程数: {})", .{self.coroutines.items.len});
             // 检查是否在协程环境中（调度器必须还在运行）
             const current_co = self.schedule.getCurrentCo() catch {
                 // 如果不在协程环境中（调度器可能已停止），跳过等待
-                std.log.debug("PeerConnection.waitAllCoroutines: 不在协程环境中，跳过等待（调度器可能已停止）", .{});
+                std.log.info("PeerConnection.waitAllCoroutines: 不在协程环境中，跳过等待（调度器可能已停止）", .{});
                 return;
             };
             _ = current_co; // 确保在协程环境中
 
             // 调用 wait()，它会阻塞直到所有协程完成
+            std.log.info("PeerConnection.waitAllCoroutines: 开始等待 WaitGroup...", .{});
             wg.wait();
-            std.log.debug("PeerConnection.waitAllCoroutines: 所有协程已完成", .{});
+            std.log.info("PeerConnection.waitAllCoroutines: 所有协程已完成", .{});
         } else {
-            std.log.debug("PeerConnection.waitAllCoroutines: WaitGroup 未初始化，跳过等待", .{});
+            std.log.info("PeerConnection.waitAllCoroutines: WaitGroup 未初始化，跳过等待", .{});
         }
     }
 
@@ -1633,6 +1665,12 @@ pub const PeerConnection = struct {
 
     /// 处理客户端 DTLS 握手（协程函数）
     fn handleClientHandshake(self: *Self) !void {
+        // 确保在函数退出时调用 wg.done()
+        defer {
+            if (self.coroutines_wg) |*wg| {
+                wg.done();
+            }
+        }
         const handshake = self.dtls_handshake orelse return error.NoDtlsHandshake;
         const record = self.dtls_record orelse return error.NoDtlsRecord;
 
@@ -1740,10 +1778,6 @@ pub const PeerConnection = struct {
 
         if (!server_hello_done_received) {
             std.log.warn("PeerConnection.handleClientHandshake: 等待 ServerHelloDone 超时", .{});
-            // 通知 WaitGroup 协程已完成
-            if (self.coroutines_wg) |*wg| {
-                wg.done();
-            }
             return;
         }
 
@@ -1758,15 +1792,16 @@ pub const PeerConnection = struct {
         if (self.ondtlshandshakecomplete) |callback| {
             callback(self);
         }
-
-        // 通知 WaitGroup 协程已完成
-        if (self.coroutines_wg) |*wg| {
-            wg.done();
-        }
     }
 
     /// 处理服务器端 DTLS 握手（协程函数）
     fn handleServerHandshake(self: *Self, remote_address: std.net.Address) !void {
+        // 确保在函数退出时调用 wg.done()
+        defer {
+            if (self.coroutines_wg) |*wg| {
+                wg.done();
+            }
+        }
         const handshake = self.dtls_handshake orelse return error.NoDtlsHandshake;
         const record = self.dtls_record orelse return error.NoDtlsRecord;
 
@@ -1789,10 +1824,6 @@ pub const PeerConnection = struct {
             // 检查是否正在关闭
             if (self.isClosing()) {
                 std.log.info("PeerConnection.handleServerHandshake: 检测到关闭标志，退出", .{});
-                // 通知 WaitGroup 协程已完成
-                if (self.coroutines_wg) |*wg| {
-                    wg.done();
-                }
                 return;
             }
 
@@ -1890,40 +1921,65 @@ pub const PeerConnection = struct {
         } else {
             std.log.warn("PeerConnection.handleServerHandshake: 服务器端握手未完成 (状态: {})", .{handshake.state});
         }
-
-        // 通知 WaitGroup 协程已完成
-        if (self.coroutines_wg) |*wg| {
-            wg.done();
-        }
     }
 
     /// 监控 ICE 连接状态（协程函数）
     /// 注意：现在使用事件驱动（通过 ICE Agent 的回调），此函数主要用于等待状态变化
     /// 如果 ICE Agent 状态变化回调已设置，此函数可以简化或移除
     fn monitorIceConnection(self: *Self) !void {
+        // 确保在退出时重置标志并调用 wg.done()
+        defer {
+            self.monitor_ice_running.store(false, .release);
+            if (self.coroutines_wg) |*wg| {
+                wg.done();
+            }
+        }
+
+        std.log.info("PeerConnection.monitorIceConnection: 启动 (ICE 状态: {})", .{self.ice_connection_state});
+
         // 事件驱动：ICE Agent 的状态变化会通过回调机制自动更新 PeerConnection 状态
         // 这里只需要等待直到状态变为终态（connected, completed, failed, closed）
         // 由于状态变化是异步的，我们使用轻量级轮询来检查状态
         const current_co = try self.schedule.getCurrentCo();
         const check_interval: u64 = 100 * std.time.ns_per_ms;
 
+        // 如果启动时已经是终态，立即退出
+        if (self.ice_connection_state == .connected or
+            self.ice_connection_state == .completed or
+            self.ice_connection_state == .failed or
+            self.ice_connection_state == .closed)
+        {
+            std.log.info("PeerConnection.monitorIceConnection: 启动时已是终态，立即退出: {}", .{self.ice_connection_state});
+            return;
+        }
+
         while (self.ice_connection_state != .connected and
             self.ice_connection_state != .completed and
             self.ice_connection_state != .failed and
             self.ice_connection_state != .closed)
         {
-            // 检查是否正在关闭
+            // 检查是否正在关闭（在 Sleep 之前检查）
             if (self.isClosing()) {
                 std.log.info("PeerConnection.monitorIceConnection: 检测到关闭标志，退出", .{});
-                // 通知 WaitGroup 协程已完成
-                if (self.coroutines_wg) |*wg| {
-                    wg.done();
-                }
                 return;
             }
 
             // 等待状态变化（事件驱动：状态变化会通过回调触发）
-            try current_co.Sleep(check_interval);
+            // 使用较短的间隔，以便更频繁地检查 isClosing 标志
+            current_co.Sleep(check_interval) catch |err| {
+                // 如果调度器已退出，立即退出
+                if (err == error.ScheduleExited) {
+                    std.log.debug("PeerConnection.monitorIceConnection: 调度器已退出，退出", .{});
+                    return;
+                }
+                return err;
+            };
+
+            // 再次检查是否正在关闭（在 Sleep 之后检查）
+            if (self.isClosing()) {
+                std.log.info("PeerConnection.monitorIceConnection: Sleep 后检测到关闭标志，退出", .{});
+                return;
+            }
 
             // 检查状态是否已变化（通过回调）
             // 如果状态已变化，循环会自动退出
@@ -1931,11 +1987,6 @@ pub const PeerConnection = struct {
         }
 
         std.log.info("PeerConnection.monitorIceConnection: ICE 状态已变为终态: {}", .{self.ice_connection_state});
-
-        // 通知 WaitGroup 协程已完成
-        if (self.coroutines_wg) |*wg| {
-            wg.done();
-        }
     }
 
     /// 更新 ICE 连接状态（内部方法，由事件回调调用）
@@ -2489,7 +2540,7 @@ pub const PeerConnection = struct {
                 std.log.debug("PeerConnection.recvSctpData: 在接收过程中检测到关闭标志", .{});
                 return error.ConnectionClosed;
             }
-            
+
             // 如果没有数据可接收，返回（非阻塞）
             // 注意：DTLS Record 的 recv 可能返回其他错误，这里简化处理
             std.log.debug("PeerConnection.recvSctpData: 接收失败: {}", .{err});
