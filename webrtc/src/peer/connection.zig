@@ -1556,7 +1556,7 @@ pub const PeerConnection = struct {
                 return;
             };
             _ = current_co; // 确保在协程环境中
-            
+
             // 调用 wait()，它会阻塞直到所有协程完成
             wg.wait();
             std.log.debug("PeerConnection.waitAllCoroutines: 所有协程已完成", .{});
@@ -2476,8 +2476,20 @@ pub const PeerConnection = struct {
             return error.NoUdpSocket;
         }
 
+        // 检查是否正在关闭（在阻塞接收之前）
+        if (self.isClosing()) {
+            std.log.debug("PeerConnection.recvSctpData: 检测到关闭标志，返回错误", .{});
+            return error.ConnectionClosed;
+        }
+
         std.log.debug("PeerConnection.recvSctpData: 等待接收 DTLS 数据 (UDP socket: {})", .{record.udp != null});
         const result = record.recv(&buffer) catch |err| {
+            // 检查是否在接收过程中被关闭
+            if (self.isClosing()) {
+                std.log.debug("PeerConnection.recvSctpData: 在接收过程中检测到关闭标志", .{});
+                return error.ConnectionClosed;
+            }
+            
             // 如果没有数据可接收，返回（非阻塞）
             // 注意：DTLS Record 的 recv 可能返回其他错误，这里简化处理
             std.log.debug("PeerConnection.recvSctpData: 接收失败: {}", .{err});
@@ -2610,6 +2622,7 @@ pub const PeerConnection = struct {
         InvalidState,
         NoSelectedPair,
         ChannelClosed,
+        ConnectionClosed,
         NoDtlsRecord,
         NoUdpSocket,
         DtlsHandshakeNotComplete,

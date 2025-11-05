@@ -571,7 +571,7 @@ pub const Stun = struct {
         // 编码响应
         const response_data = try response.encode(self.allocator);
         defer self.allocator.free(response_data);
-        
+
         // 清理 response 的 attributes（在发送后）
         defer response.deinit();
 

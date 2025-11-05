@@ -1178,6 +1178,15 @@ fn receiveDataChannelMessages(pc: *PeerConnection, wg: *zco.WaitGroup) !void {
     // 事件驱动：recvSctpData 会挂起协程直到数据到达
     // 持续接收，直到调度器退出、channel 关闭或连续错误太多
     while (true) {
+        // 检查 PeerConnection 是否正在关闭（通过检查 is_closing 标志）
+        // 注意：由于 is_closing 是私有字段，我们通过检查状态来间接判断
+        // 如果连接状态是 closed，说明正在关闭
+        if (pc.getConnectionState() == .closed) {
+            std.log.info("PeerConnection 已关闭，数据通道消息接收协程退出", .{});
+            wg.done();
+            return;
+        }
+        
         pc.recvSctpData() catch |err| {
             // 如果调度器已退出，立即退出协程
             if (err == error.ScheduleExited) {
@@ -1189,6 +1198,13 @@ fn receiveDataChannelMessages(pc: *PeerConnection, wg: *zco.WaitGroup) !void {
             // 如果 channel 已关闭，退出协程
             if (err == error.ChannelClosed) {
                 std.log.info("数据通道已关闭，数据通道消息接收协程退出", .{});
+                wg.done(); // 在退出前主动调用 done()
+                return;
+            }
+
+            // 如果连接已关闭，退出协程
+            if (err == error.ConnectionClosed) {
+                std.log.info("PeerConnection 已关闭，数据通道消息接收协程退出", .{});
                 wg.done(); // 在退出前主动调用 done()
                 return;
             }
