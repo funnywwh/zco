@@ -340,13 +340,18 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
 
                     // 拷贝 remote_sdp 到 remote_sdp_ptr（注意：这是浅拷贝，字段指针会共享）
                     remote_sdp_ptr.* = remote_sdp;
+                    // 注意：由于浅拷贝，remote_sdp 和 remote_sdp_ptr 共享字段指针
+                    // 一旦 remote_sdp_ptr 的所有权转移给 PeerConnection，remote_sdp 的字段就不应该再被清理
+                    // 所以我们需要在成功转移后，清空 remote_sdp 的字段引用，避免 errdefer 清理
                     
                     // 如果 setRemoteDescription 失败，需要清理 remote_sdp_ptr（包括内部的字段）
                     try pc.setRemoteDescription(remote_sdp_ptr);
                     // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
-                    // 此时 remote_sdp 的字段指针已经转移到 remote_sdp_ptr，需要清空 remote_sdp 的字段
-                    // 以避免 errdefer 释放已转移的指针
+                    // 由于浅拷贝，remote_sdp 和 remote_sdp_ptr 共享字段指针
+                    // 我们需要清空 remote_sdp 的字段引用，避免 errdefer 释放已转移的指针
+                    // 但要注意：不能释放共享的指针，只能清空引用
                     remote_sdp.fingerprint = null;
+                    remote_sdp.times.deinit();
                     remote_sdp.times = std.ArrayList(webrtc.signaling.sdp.Sdp.Time).init(schedule.allocator);
                     remote_sdp_cleaned = true;
                     std.log.info("[Alice] 已设置远程 answer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
@@ -800,6 +805,9 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
 
                     // 拷贝 remote_sdp 到 remote_sdp_ptr（注意：这是浅拷贝，字段指针会共享）
                     remote_sdp_ptr.* = remote_sdp;
+                    // 注意：由于浅拷贝，remote_sdp 和 remote_sdp_ptr 共享字段指针
+                    // 一旦 remote_sdp_ptr 的所有权转移给 PeerConnection，remote_sdp 的字段就不应该再被清理
+                    // 所以我们需要在成功转移后，清空 remote_sdp 的字段引用，避免 errdefer 清理
                     
                     // 如果 setRemoteDescription 失败，需要清理 remote_sdp_ptr（包括内部的字段）
                     pc.setRemoteDescription(remote_sdp_ptr) catch |err| {
@@ -811,9 +819,11 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
                         continue;
                     };
                     // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
-                    // 此时 remote_sdp 的字段指针已经转移到 remote_sdp_ptr，需要清空 remote_sdp 的字段
-                    // 以避免 errdefer 释放已转移的指针
+                    // 由于浅拷贝，remote_sdp 和 remote_sdp_ptr 共享字段指针
+                    // 我们需要清空 remote_sdp 的字段引用，避免 errdefer 释放已转移的指针
+                    // 但要注意：不能释放共享的指针，只能清空引用
                     remote_sdp.fingerprint = null;
+                    remote_sdp.times.deinit();
                     remote_sdp.times = std.ArrayList(webrtc.signaling.sdp.Sdp.Time).init(schedule.allocator);
                     remote_sdp_cleaned = true;
                     std.log.info("[Bob] 已设置远程 offer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
