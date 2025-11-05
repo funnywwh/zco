@@ -287,6 +287,16 @@ pub const PeerConnection = struct {
             // 先禁用回调，避免在清理过程中触发
             agent.on_state_change = null;
             agent.on_state_change_ctx = null;
+
+            // 清理远程 Candidates（这些是在 setRemoteDescription 中堆分配的）
+            // agent.deinit() 不会清理 remote_candidates，因为它们可能由外部管理
+            // 但在这里，这些 candidates 是由 PeerConnection 在 setRemoteDescription 中分配的
+            // 所以我们需要负责清理它们
+            for (agent.remote_candidates.items) |candidate_ptr| {
+                candidate_ptr.deinit();
+                self.allocator.destroy(candidate_ptr);
+            }
+
             agent.deinit();
             // agent.deinit() 内部已经调用了 destroy，不需要再次调用
         }
@@ -789,14 +799,23 @@ pub const PeerConnection = struct {
                     if (attr.value) |candidate_str| {
                         // 解析 candidate 字符串
                         var candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
-                        errdefer candidate.deinit();
+                        // 注意：在成功创建 candidate_ptr 后，candidate 的内容会被移动到堆上
+                        // errdefer 只会在错误路径执行，成功路径上 candidate_ptr 会持有这些内存
 
                         // 创建堆分配的 candidate
                         const candidate_ptr = try self.allocator.create(ice.candidate.Candidate);
+                        errdefer {
+                            // 如果创建 candidate_ptr 失败，需要清理 candidate
+                            candidate.deinit();
+                        }
                         candidate_ptr.* = candidate;
 
-                        // 添加到远程 candidates
-                        try agent.addRemoteCandidate(candidate_ptr);
+                        // 添加到远程 candidates（如果失败，需要清理 candidate_ptr）
+                        agent.addRemoteCandidate(candidate_ptr) catch |e| {
+                            candidate_ptr.deinit();
+                            self.allocator.destroy(candidate_ptr);
+                            return e;
+                        };
                     }
                 }
             }
@@ -808,14 +827,23 @@ pub const PeerConnection = struct {
                         if (attr.value) |candidate_str| {
                             // 解析 candidate 字符串
                             var candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
-                            errdefer candidate.deinit();
+                            // 注意：在成功创建 candidate_ptr 后，candidate 的内容会被移动到堆上
+                            // errdefer 只会在错误路径执行，成功路径上 candidate_ptr 会持有这些内存
 
                             // 创建堆分配的 candidate
                             const candidate_ptr = try self.allocator.create(ice.candidate.Candidate);
+                            errdefer {
+                                // 如果创建 candidate_ptr 失败，需要清理 candidate
+                                candidate.deinit();
+                            }
                             candidate_ptr.* = candidate;
 
-                            // 添加到远程 candidates
-                            try agent.addRemoteCandidate(candidate_ptr);
+                            // 添加到远程 candidates（如果失败，需要清理 candidate_ptr）
+                            agent.addRemoteCandidate(candidate_ptr) catch |e| {
+                                candidate_ptr.deinit();
+                                self.allocator.destroy(candidate_ptr);
+                                return e;
+                            };
                         }
                     }
                 }

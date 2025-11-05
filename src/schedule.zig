@@ -334,7 +334,8 @@ const RingBufferPriorityQueue = struct {
 };
 
 pub const Schedule = struct {
-    ctx: Context = std.mem.zeroes(Context),
+    // 调度器上下文 - 16字节对齐，满足 swapcontext 的对齐要求
+    ctx: Context align(16) = std.mem.zeroes(Context),
     runningCo: ?*Co = null,
     sleepQueue: PriorityQueue,
     readyQueue: RingBufferPriorityQueue,
@@ -508,12 +509,15 @@ pub const Schedule = struct {
         }
     }
     pub fn deinit(self: *Schedule) void {
-
-        // 停止定时器
+        // 先停止定时器（在 resumeAll 之前停止，避免定时器相关的错误）
         if (self.timer_id) |tid| {
             _ = c.timer_delete(tid);
+            self.timer_id = null; // 设置为 null，让 Resume 知道定时器已删除
         }
 
+        // resumeAll 的目的是让 SUSPEND 的协程有机会正常退出，清理资源
+        // 先恢复所有 SUSPEND 的协程，让它们从 Suspend() 调用点返回
+        // 注意：exit 标志应该在 deinit 之前通过 stop() 设置，这里不需要再次设置
         self.resumeAll() catch |e| {
             std.log.err("Schedule deinit resumeAll error:{s}", .{@errorName(e)});
         };

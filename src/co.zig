@@ -48,6 +48,10 @@ pub fn Resume(self: *Co) !void {
             // 启动定时器（在协程开始运行前，重置计时）
             schedule.startTimer() catch |e| {
                 std.log.err("启动定时器失败: {s}", .{@errorName(e)});
+                // 如果定时器不存在（可能是在 deinit 阶段），仍然尝试恢复协程
+                // 因为协程可能正在等待某些资源，需要让它从 Suspend() 返回
+                // 只有在协程实际被唤醒后，它才会检测到 exit 标志并退出
+                // 注意：即使定时器不存在，我们也继续执行 swapcontext，让协程被唤醒
             };
 
             // swapcontext 不会返回，所以不需要恢复信号屏蔽
@@ -76,6 +80,10 @@ pub fn Resume(self: *Co) !void {
             // 启动定时器（在协程开始运行前，重置计时）
             schedule.startTimer() catch |e| {
                 std.log.err("启动定时器失败: {s}", .{@errorName(e)});
+                // 如果定时器不存在（可能是在 deinit 阶段），仍然尝试恢复协程
+                // 因为协程可能正在等待某些资源，需要让它从 Suspend() 返回
+                // 只有在协程实际被唤醒后，它才会检测到 exit 标志并退出
+                // 注意：即使定时器不存在，我们也继续执行 swapcontext，让协程被唤醒
             };
 
             // swapcontext 不会返回，所以不需要恢复信号屏蔽

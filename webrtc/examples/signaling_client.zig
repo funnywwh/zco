@@ -21,6 +21,10 @@ var bob_connection_chan: ?*ConnectionReadyChan = null;
 var alice_message_chan: ?*MessageChan = null;
 var bob_message_chan: ?*MessageChan = null;
 
+// 全局 buffer 用于 WebSocket 消息读取（4096 字节）
+// 注意：在单进程测试场景中，Alice 和 Bob 在不同进程中运行，所以是安全的
+var ws_buffer: [4096]u8 = undefined;
+
 /// WebRTC 信令客户端示例
 /// 通过信令服务器连接两个 PeerConnection
 pub fn main() !void {
@@ -167,13 +171,12 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 等待 Bob 的 user_joined 通知，然后发送 offer
     // 服务器会在 Bob 加入时发送 user_joined 通知给 Alice
     std.log.info("[Alice] 等待 Bob 加入房间的通知...", .{});
-    var buffer: [8192]u8 = undefined;
     var bob_joined = false;
 
     // 直接读取消息，readMessage 会阻塞等待数据（在协程中）
     while (!bob_joined) {
         // 尝试读取消息（readMessage 会阻塞等待，直到有数据或连接关闭）
-        const frame = ws.readMessage(buffer[0..]) catch |err| {
+        const frame = ws.readMessage(ws_buffer[0..]) catch |err| {
             if (err == websocket.WebSocketError.ConnectionClosed or err == error.EOF) {
                 std.log.info("[Alice] WebSocket 连接已关闭（EOF），停止等待", .{});
                 break;
@@ -182,7 +185,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
                 break;
             }
         };
-        defer if (frame.payload.len > buffer.len) ws.allocator.free(frame.payload);
+        defer if (frame.payload.len > ws_buffer.len) ws.allocator.free(frame.payload);
 
         if (frame.opcode == .CLOSE) {
             std.log.info("[Alice] WebSocket 连接已关闭", .{});
@@ -264,14 +267,14 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     std.log.info("[Alice] 已发送 offer", .{});
 
     // 等待接收 answer 和 ICE candidates
-    // 注意：buffer 已经在上面声明了，这里重新使用
+    // 使用全局 ws_buffer 读取消息
     var received_answer = false;
 
     std.log.info("[Alice] 开始等待 answer 和 ICE candidates...", .{});
     // 事件驱动：持续接收消息，直到收到 answer
     // 收到 answer 后，立即退出循环（ICE candidates 会通过 onicecandidate 回调处理）
     while (!received_answer) {
-        const frame = ws.readMessage(buffer[0..]) catch |err| {
+        const frame = ws.readMessage(ws_buffer[0..]) catch |err| {
             // 区分连接关闭和真正的错误
             if (err == websocket.WebSocketError.ConnectionClosed or err == error.EOF) {
                 std.log.info("[Alice] WebSocket 连接已关闭（EOF）", .{});
@@ -280,7 +283,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
             }
             break;
         };
-        defer if (frame.payload.len > buffer.len) ws.allocator.free(frame.payload);
+        defer if (frame.payload.len > ws_buffer.len) ws.allocator.free(frame.payload);
 
         if (frame.opcode == .CLOSE) {
             std.log.info("[Alice] WebSocket 连接已关闭", .{});
@@ -720,13 +723,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
 
     // 等待接收 user_joined 通知（Alice 上线）或 offer
     std.log.info("[Bob] 开始等待 user_joined 通知或 offer...", .{});
-    var buffer: [8192]u8 = undefined;
     var offer_received = false;
     var alice_joined = false;
     var message_count: u32 = 0;
 
     while (message_count < 20) { // 增加最大消息数
-        const frame = ws.readMessage(buffer[0..]) catch |err| {
+        const frame = ws.readMessage(ws_buffer[0..]) catch |err| {
             // 区分连接关闭和真正的错误
             if (err == websocket.WebSocketError.ConnectionClosed or err == error.EOF) {
                 std.log.info("[Bob] WebSocket 连接已关闭（EOF）", .{});
@@ -735,7 +737,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
             }
             break;
         };
-        defer if (frame.payload.len > buffer.len) ws.allocator.free(frame.payload);
+        defer if (frame.payload.len > ws_buffer.len) ws.allocator.free(frame.payload);
 
         if (frame.opcode == .CLOSE) {
             std.log.info("[Bob] WebSocket 连接已关闭", .{});
