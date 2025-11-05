@@ -18,16 +18,11 @@ pub const SignalingServer = struct {
     const Room = struct {
         users: std.StringHashMap(*Client),
         allocator: std.mem.Allocator,
-        // 保存最后一个 offer 和 answer，用于新用户加入时转发
-        last_offer: ?[]const u8 = null,
-        last_answer: ?[]const u8 = null,
 
         pub fn init(allocator: std.mem.Allocator) Room {
             return .{
                 .users = std.StringHashMap(*Client).init(allocator),
                 .allocator = allocator,
-                .last_offer = null,
-                .last_answer = null,
             };
         }
 
@@ -39,7 +34,7 @@ pub const SignalingServer = struct {
             // 先收集所有的 key，然后再释放，避免在迭代时修改 HashMap
             var keys_to_free = std.ArrayList([]const u8).init(self.allocator);
             defer keys_to_free.deinit();
-            
+
             var it = self.users.iterator();
             while (it.next()) |entry| {
                 // 保存 key 的副本，因为 entry.key_ptr.* 可能已经被释放
@@ -53,20 +48,13 @@ pub const SignalingServer = struct {
                     continue;
                 };
             }
-            
+
             // 释放所有收集到的 key
             for (keys_to_free.items) |key| {
                 self.allocator.free(key);
             }
             
             self.users.deinit();
-            // 释放保存的消息
-            if (self.last_offer) |offer| {
-                self.allocator.free(offer);
-            }
-            if (self.last_answer) |answer| {
-                self.allocator.free(answer);
-            }
         }
 
         pub fn broadcast(self: *Room, sender_id: []const u8, msg: []const u8) void {
@@ -291,7 +279,7 @@ pub const SignalingServer = struct {
                         // 所以释放 entry.key 后，需要将 client.user_id 设置为 null，避免在 defer 中重复释放
                         server.allocator.free(entry.key);
                         client.user_id = null; // 避免在 defer 中重复释放
-                        
+
                         // 注意：client.room_id 也需要设置为 null，因为它在 handleMessage 中被分配
                         // 但实际上 room_id 不会被 fetchRemove 释放，所以需要单独处理
                         // 但为了安全，我们也设置为 null
@@ -299,7 +287,7 @@ pub const SignalingServer = struct {
                             server.allocator.free(rid);
                             client.room_id = null;
                         }
-                        
+
                         // 注意：client 对象仍然由 handleClient 的 defer 负责清理
                         // Room.deinit 不会销毁 client，只清理 room 自己的资源
 
@@ -389,12 +377,6 @@ pub const SignalingServer = struct {
                     }
                 }
 
-                // 1.5. 如果房间中有未发送的 offer，转发给新加入的用户
-                if (room_entry.value_ptr.*.last_offer) |offer| {
-                    std.log.info("[服务器] 转发之前的 offer 给新用户 {s}", .{user_id});
-                    try client.send(offer);
-                }
-
                 // 2. 广播新用户加入的通知给房间中的其他用户（不包括刚加入的用户）
                 if (room_entry.value_ptr.*.users.count() > 1) {
                     const room_id_dup = try self.allocator.dupe(u8, room_id);
@@ -421,23 +403,6 @@ pub const SignalingServer = struct {
                             defer self.allocator.free(msg_json);
                             const recipient_count = room.users.count() - 1; // 排除发送者
                             std.log.info("[服务器] 房间 {s} 中有 {} 个接收者", .{ room_id, recipient_count });
-
-                            // 保存 offer 和 answer 用于新用户加入时转发
-                            if (msg.type == .offer) {
-                                // 释放旧的 offer
-                                if (room.last_offer) |old_offer| {
-                                    self.allocator.free(old_offer);
-                                }
-                                // 保存新的 offer（深拷贝）
-                                room.last_offer = try self.allocator.dupe(u8, msg_json);
-                            } else if (msg.type == .answer) {
-                                // 释放旧的 answer
-                                if (room.last_answer) |old_answer| {
-                                    self.allocator.free(old_answer);
-                                }
-                                // 保存新的 answer（深拷贝）
-                                room.last_answer = try self.allocator.dupe(u8, msg_json);
-                            }
 
                             room.broadcast(user_id, msg_json);
                             std.log.info("[服务器] ✅ 消息已广播", .{});
