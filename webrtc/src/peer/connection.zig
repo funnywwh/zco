@@ -212,6 +212,7 @@ pub const PeerConnection = struct {
     is_closing: std.atomic.Value(bool), // 关闭标志（原子操作）
     coroutines_wg: ?zco.WaitGroup = null, // 等待所有协程完成的 WaitGroup
     monitor_ice_running: std.atomic.Value(bool), // monitorIceConnection 协程是否正在运行
+    ice_state_notify_channel: ?*zco.CreateChan(bool) = null, // ICE 状态终态通知 channel
 
     /// 初始化 RTCPeerConnection
     pub fn init(
@@ -237,6 +238,10 @@ pub const PeerConnection = struct {
 
         // 初始化 WaitGroup
         self.coroutines_wg = try zco.WaitGroup.init(schedule);
+
+        // 初始化 ICE 状态通知 channel
+        const IceStateChan = zco.CreateChan(bool);
+        self.ice_state_notify_channel = try IceStateChan.init(schedule, 1);
 
         // 初始化 ICE Agent（组件 ID 1 表示 RTP）
         self.ice_agent = try ice.agent.IceAgent.init(allocator, schedule, 1);
@@ -325,6 +330,13 @@ pub const PeerConnection = struct {
         // 等待所有协程安全退出
         // 注意：必须在调度器还在运行时调用，否则 WaitGroup 的 wait() 会失败
         self.waitAllCoroutines();
+
+        // 清理 ICE 状态通知 channel
+        if (self.ice_state_notify_channel) |ch| {
+            ch.close();
+            ch.deinit();
+            self.ice_state_notify_channel = null;
+        }
 
         // 清理 WaitGroup（在清理协程列表之前）
         // 注意：必须在协程都完成后才能清理 WaitGroup，否则可能导致段错误
@@ -1589,7 +1601,10 @@ pub const PeerConnection = struct {
             _ = current_co; // 确保在协程环境中
 
             // 调用 wait()，它会阻塞直到所有协程完成
-            std.log.info("PeerConnection.waitAllCoroutines: 开始等待 WaitGroup...", .{});
+            // 注意：WaitGroup.count 是内部计数，不能直接访问，需要通过 done() 来减少
+            // 如果 count > 0，说明还有协程没有调用 done()
+            std.log.info("PeerConnection.waitAllCoroutines: 开始等待 WaitGroup... (待完成的协程数应该等于协程列表长度)", .{});
+            std.log.debug("PeerConnection.waitAllCoroutines: 协程列表: {}", .{self.coroutines.items.len});
             wg.wait();
             std.log.info("PeerConnection.waitAllCoroutines: 所有协程已完成", .{});
         } else {
@@ -1665,8 +1680,10 @@ pub const PeerConnection = struct {
 
     /// 处理客户端 DTLS 握手（协程函数）
     fn handleClientHandshake(self: *Self) !void {
+        std.log.info("PeerConnection.handleClientHandshake: 协程启动", .{});
         // 确保在函数退出时调用 wg.done()
         defer {
+            std.log.info("PeerConnection.handleClientHandshake: 协程退出，调用 wg.done()", .{});
             if (self.coroutines_wg) |*wg| {
                 wg.done();
             }
@@ -1690,20 +1707,27 @@ pub const PeerConnection = struct {
             // 检查是否正在关闭
             if (self.isClosing()) {
                 std.log.info("PeerConnection.handleClientHandshake: 检测到关闭标志，退出", .{});
-                // 通知 WaitGroup 协程已完成
-                if (self.coroutines_wg) |*wg| {
-                    wg.done();
-                }
                 return;
             }
 
             // 尝试接收握手消息（事件驱动，会挂起协程直到数据到达）
             var buffer: [2048]u8 = undefined;
             const result = record.recv(&buffer) catch |err| {
+                // 检查是否在接收过程中被关闭
+                if (self.isClosing()) {
+                    std.log.info("PeerConnection.handleClientHandshake: recv 后检测到关闭标志，退出", .{});
+                    return;
+                }
                 // 如果收到非 DTLS 消息（如 STUN），直接重试（事件驱动，不需要 sleep）
                 std.log.debug("PeerConnection.handleClientHandshake: 收到非预期消息，重试: {}", .{err});
                 continue;
             };
+
+            // 再次检查是否在接收过程中被关闭
+            if (self.isClosing()) {
+                std.log.info("PeerConnection.handleClientHandshake: recv 后检测到关闭标志，退出", .{});
+                return;
+            }
 
             // 检查是否是握手消息
             if (result.content_type == .handshake) {
@@ -1796,8 +1820,10 @@ pub const PeerConnection = struct {
 
     /// 处理服务器端 DTLS 握手（协程函数）
     fn handleServerHandshake(self: *Self, remote_address: std.net.Address) !void {
+        std.log.info("PeerConnection.handleServerHandshake: 协程启动", .{});
         // 确保在函数退出时调用 wg.done()
         defer {
+            std.log.info("PeerConnection.handleServerHandshake: 协程退出，调用 wg.done()", .{});
             if (self.coroutines_wg) |*wg| {
                 wg.done();
             }
@@ -1829,10 +1855,21 @@ pub const PeerConnection = struct {
 
             var buffer: [2048]u8 = undefined;
             const result = record.recv(&buffer) catch |err| {
+                // 检查是否在接收过程中被关闭
+                if (self.isClosing()) {
+                    std.log.info("PeerConnection.handleServerHandshake: recv 后检测到关闭标志，退出", .{});
+                    return;
+                }
                 // 如果收到非 DTLS 消息（如 STUN），直接重试（事件驱动，不需要 sleep）
                 std.log.debug("PeerConnection.handleServerHandshake: 收到非预期消息，重试: {}", .{err});
                 continue;
             };
+
+            // 再次检查是否在接收过程中被关闭
+            if (self.isClosing()) {
+                std.log.info("PeerConnection.handleServerHandshake: recv 后检测到关闭标志，退出", .{});
+                return;
+            }
 
             // 检查消息类型
             if (result.content_type == .handshake or result.content_type == .change_cipher_spec) {
@@ -1927,21 +1964,15 @@ pub const PeerConnection = struct {
     /// 注意：现在使用事件驱动（通过 ICE Agent 的回调），此函数主要用于等待状态变化
     /// 如果 ICE Agent 状态变化回调已设置，此函数可以简化或移除
     fn monitorIceConnection(self: *Self) !void {
+        std.log.info("PeerConnection.monitorIceConnection: 协程启动 (ICE 状态: {})", .{self.ice_connection_state});
         // 确保在退出时重置标志并调用 wg.done()
         defer {
+            std.log.info("PeerConnection.monitorIceConnection: 协程退出，调用 wg.done() (ICE 状态: {})", .{self.ice_connection_state});
             self.monitor_ice_running.store(false, .release);
             if (self.coroutines_wg) |*wg| {
                 wg.done();
             }
         }
-
-        std.log.info("PeerConnection.monitorIceConnection: 启动 (ICE 状态: {})", .{self.ice_connection_state});
-
-        // 事件驱动：ICE Agent 的状态变化会通过回调机制自动更新 PeerConnection 状态
-        // 这里只需要等待直到状态变为终态（connected, completed, failed, closed）
-        // 由于状态变化是异步的，我们使用轻量级轮询来检查状态
-        const current_co = try self.schedule.getCurrentCo();
-        const check_interval: u64 = 100 * std.time.ns_per_ms;
 
         // 如果启动时已经是终态，立即退出
         if (self.ice_connection_state == .connected or
@@ -1953,40 +1984,22 @@ pub const PeerConnection = struct {
             return;
         }
 
-        while (self.ice_connection_state != .connected and
-            self.ice_connection_state != .completed and
-            self.ice_connection_state != .failed and
-            self.ice_connection_state != .closed)
-        {
-            // 检查是否正在关闭（在 Sleep 之前检查）
-            if (self.isClosing()) {
-                std.log.info("PeerConnection.monitorIceConnection: 检测到关闭标志，退出", .{});
-                return;
-            }
-
-            // 等待状态变化（事件驱动：状态变化会通过回调触发）
-            // 使用较短的间隔，以便更频繁地检查 isClosing 标志
-            current_co.Sleep(check_interval) catch |err| {
-                // 如果调度器已退出，立即退出
-                if (err == error.ScheduleExited) {
-                    std.log.debug("PeerConnection.monitorIceConnection: 调度器已退出，退出", .{});
+        // 事件驱动：等待 ICE 状态变为终态的通知（通过 channel）
+        // 不再使用 Sleep 轮询，而是等待状态变化通知
+        if (self.ice_state_notify_channel) |ch| {
+            std.log.debug("PeerConnection.monitorIceConnection: 等待 ICE 状态终态通知...", .{});
+            _ = ch.recv() catch |err| {
+                // 如果 channel 已关闭或调度器退出，退出协程
+                if (err == error.ScheduleExited or err == error.recvClosed) {
+                    std.log.debug("PeerConnection.monitorIceConnection: channel 已关闭或调度器退出，退出", .{});
                     return;
                 }
                 return err;
             };
-
-            // 再次检查是否正在关闭（在 Sleep 之后检查）
-            if (self.isClosing()) {
-                std.log.info("PeerConnection.monitorIceConnection: Sleep 后检测到关闭标志，退出", .{});
-                return;
-            }
-
-            // 检查状态是否已变化（通过回调）
-            // 如果状态已变化，循环会自动退出
-            std.log.debug("PeerConnection.monitorIceConnection: 等待 ICE 状态变化 (当前: {})", .{self.ice_connection_state});
+            std.log.info("PeerConnection.monitorIceConnection: 收到 ICE 状态终态通知，退出", .{});
+        } else {
+            std.log.warn("PeerConnection.monitorIceConnection: ICE 状态通知 channel 未初始化，立即退出", .{});
         }
-
-        std.log.info("PeerConnection.monitorIceConnection: ICE 状态已变为终态: {}", .{self.ice_connection_state});
     }
 
     /// 更新 ICE 连接状态（内部方法，由事件回调调用）
@@ -2002,6 +2015,18 @@ pub const PeerConnection = struct {
             // 触发 ICE 连接状态变化事件
             if (self.oniceconnectionstatechange) |callback| {
                 callback(self);
+            }
+
+            // 如果状态变为终态，通知 monitorIceConnection 协程
+            if (new_state == .connected or new_state == .completed or new_state == .failed or new_state == .closed) {
+                if (self.ice_state_notify_channel) |ch| {
+                    ch.send(true) catch |err| {
+                        // 如果 channel 已关闭或调度器退出，忽略错误
+                        if (err != error.ScheduleExited and err != error.sendClosed) {
+                            std.log.warn("PeerConnection.updateIceConnectionState: 发送状态通知失败: {}", .{err});
+                        }
+                    };
+                }
             }
 
             // 如果连接成功，自动启动 DTLS 握手
