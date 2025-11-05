@@ -232,7 +232,7 @@ pub const PeerConnection = struct {
             .is_closing = std.atomic.Value(bool).init(false),
             .coroutines_wg = null,
         };
-        
+
         // 初始化 WaitGroup
         self.coroutines_wg = try zco.WaitGroup.init(schedule);
 
@@ -321,7 +321,23 @@ pub const PeerConnection = struct {
         self.receivers.deinit();
 
         // 等待所有协程安全退出
+        // 注意：必须在调度器还在运行时调用，否则 WaitGroup 的 wait() 会失败
         self.waitAllCoroutines();
+
+        // 清理 WaitGroup（在清理协程列表之前）
+        // 注意：必须在协程都完成后才能清理 WaitGroup，否则可能导致段错误
+        // 注意：WaitGroup.deinit() 会清理内部的 channel，但 channel 可能还在被使用
+        // 所以需要确保所有协程都已完成（通过 waitAllCoroutines 等待）
+        if (self.coroutines_wg) |*wg| {
+            // 先关闭 channel，让等待的协程能够退出
+            wg.waitChn.close();
+            // 然后清理 WaitGroup
+            wg.deinit();
+            self.coroutines_wg = null;
+        }
+
+        // 清理协程列表（协程应该已经被调度器释放）
+        self.coroutines.deinit();
 
         // 释放所有数据通道
         for (self.data_channels.items) |channel| {
@@ -329,15 +345,6 @@ pub const PeerConnection = struct {
             self.allocator.destroy(channel);
         }
         self.data_channels.deinit();
-
-        // 清理协程列表
-        self.coroutines.deinit();
-        
-        // 清理 WaitGroup
-        if (self.coroutines_wg) |*wg| {
-            wg.deinit();
-            self.coroutines_wg = null;
-        }
 
         if (self.srtp_receiver) |transform_ptr| {
             transform_ptr.ctx.deinit();
@@ -1514,7 +1521,7 @@ pub const PeerConnection = struct {
         if (self.coroutines_wg) |*wg| {
             try wg.add(1);
         }
-        
+
         const co = self.schedule.go(func, args) catch |err| {
             // 如果启动失败，需要减少计数
             if (self.coroutines_wg) |*wg| {
@@ -1539,8 +1546,18 @@ pub const PeerConnection = struct {
         self.is_closing.store(true, .release);
 
         // 使用 WaitGroup 等待所有协程完成
+        // 注意：必须在调度器还在运行时调用，否则 wait() 会失败
         if (self.coroutines_wg) |*wg| {
             std.log.debug("PeerConnection.waitAllCoroutines: 等待所有协程完成", .{});
+            // 检查是否在协程环境中（调度器必须还在运行）
+            const current_co = self.schedule.getCurrentCo() catch {
+                // 如果不在协程环境中（调度器可能已停止），跳过等待
+                std.log.debug("PeerConnection.waitAllCoroutines: 不在协程环境中，跳过等待（调度器可能已停止）", .{});
+                return;
+            };
+            _ = current_co; // 确保在协程环境中
+            
+            // 调用 wait()，它会阻塞直到所有协程完成
             wg.wait();
             std.log.debug("PeerConnection.waitAllCoroutines: 所有协程已完成", .{});
         } else {
@@ -1741,7 +1758,7 @@ pub const PeerConnection = struct {
         if (self.ondtlshandshakecomplete) |callback| {
             callback(self);
         }
-        
+
         // 通知 WaitGroup 协程已完成
         if (self.coroutines_wg) |*wg| {
             wg.done();
@@ -1873,7 +1890,7 @@ pub const PeerConnection = struct {
         } else {
             std.log.warn("PeerConnection.handleServerHandshake: 服务器端握手未完成 (状态: {})", .{handshake.state});
         }
-        
+
         // 通知 WaitGroup 协程已完成
         if (self.coroutines_wg) |*wg| {
             wg.done();
@@ -1914,7 +1931,7 @@ pub const PeerConnection = struct {
         }
 
         std.log.info("PeerConnection.monitorIceConnection: ICE 状态已变为终态: {}", .{self.ice_connection_state});
-        
+
         // 通知 WaitGroup 协程已完成
         if (self.coroutines_wg) |*wg| {
             wg.done();
