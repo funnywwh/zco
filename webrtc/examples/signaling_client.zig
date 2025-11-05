@@ -189,14 +189,8 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
                 break;
             }
         };
-        // 注意：readMessage 返回的 payload 总是新分配的内存，需要释放
-        // 检查 payload 是否指向 ws_buffer（如果指向，不需要释放；如果指向动态分配的内存，需要释放）
-        const buffer_start = @intFromPtr(ws_buffer.ptr);
-        const buffer_end = buffer_start + ws_buffer.len;
-        const payload_start = @intFromPtr(frame.payload.ptr);
-        const payload_end = payload_start + frame.payload.len;
-        const is_payload_in_buffer = payload_start >= buffer_start and payload_end <= buffer_end;
-        defer if (!is_payload_in_buffer) ws.allocator.free(frame.payload);
+        // 注意：readMessage 返回的 payload 总是新分配的内存（根据 websocket.zig 注释），需要释放
+        defer ws.allocator.free(frame.payload);
 
         if (frame.opcode == .CLOSE) {
             std.log.info("[Alice] WebSocket 连接已关闭", .{});
@@ -294,14 +288,8 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
             }
             break;
         };
-        // 注意：readMessage 返回的 payload 总是新分配的内存，需要释放
-        // 检查 payload 是否指向 ws_buffer（如果指向，不需要释放；如果指向动态分配的内存，需要释放）
-        const buffer_start = @intFromPtr(ws_buffer.ptr);
-        const buffer_end = buffer_start + ws_buffer.len;
-        const payload_start = @intFromPtr(frame.payload.ptr);
-        const payload_end = payload_start + frame.payload.len;
-        const is_payload_in_buffer = payload_start >= buffer_start and payload_end <= buffer_end;
-        defer if (!is_payload_in_buffer) ws.allocator.free(frame.payload);
+        // 注意：readMessage 返回的 payload 总是新分配的内存（根据 websocket.zig 注释），需要释放
+        defer ws.allocator.free(frame.payload);
 
         if (frame.opcode == .CLOSE) {
             std.log.info("[Alice] WebSocket 连接已关闭", .{});
@@ -743,14 +731,8 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
             }
             break;
         };
-        // 注意：readMessage 返回的 payload 总是新分配的内存，需要释放
-        // 检查 payload 是否指向 ws_buffer（如果指向，不需要释放；如果指向动态分配的内存，需要释放）
-        const buffer_start = @intFromPtr(ws_buffer.ptr);
-        const buffer_end = buffer_start + ws_buffer.len;
-        const payload_start = @intFromPtr(frame.payload.ptr);
-        const payload_end = payload_start + frame.payload.len;
-        const is_payload_in_buffer = payload_start >= buffer_start and payload_end <= buffer_end;
-        defer if (!is_payload_in_buffer) ws.allocator.free(frame.payload);
+        // 注意：readMessage 返回的 payload 总是新分配的内存（根据 websocket.zig 注释），需要释放
+        defer ws.allocator.free(frame.payload);
 
         if (frame.opcode == .CLOSE) {
             std.log.info("[Bob] WebSocket 连接已关闭", .{});
