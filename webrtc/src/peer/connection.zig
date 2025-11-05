@@ -1480,6 +1480,10 @@ pub const PeerConnection = struct {
                     if (self.connection_state != .connected) {
                         self.connection_state = .connected;
                         std.log.info("PeerConnection.checkDtlsHandshakeState: 连接状态更新为 connected", .{});
+                        // 触发连接状态变化回调
+                        if (self.onconnectionstatechange) |callback| {
+                            callback(self);
+                        }
                     }
                 }
 
@@ -1913,6 +1917,20 @@ pub const PeerConnection = struct {
             return error.NoSctpAssociation;
         }
 
+        // 检查所有 DataChannel 是否都已关闭
+        // 如果所有 channel 都已关闭，返回 ChannelClosed 错误，让接收协程退出
+        var all_closed = true;
+        for (self.data_channels.items) |channel| {
+            if (channel.state != .closed) {
+                all_closed = false;
+                break;
+            }
+        }
+        if (all_closed and self.data_channels.items.len > 0) {
+            std.log.debug("PeerConnection.recvSctpData: 所有 DataChannel 已关闭，返回错误", .{});
+            return error.ChannelClosed;
+        }
+
         // 从 DTLS Record 接收数据
         var buffer: [8192]u8 = undefined;
         const record = if (self.dtls_record) |r| r else {
@@ -2059,6 +2077,7 @@ pub const PeerConnection = struct {
         OutOfMemory,
         InvalidState,
         NoSelectedPair,
+        ChannelClosed,
         NoDtlsRecord,
         NoUdpSocket,
         DtlsHandshakeNotComplete,

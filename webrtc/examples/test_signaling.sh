@@ -74,8 +74,8 @@ echo ""
 
 # 等待连接建立和通信
 echo "[4/4] 等待连接建立和数据通道通信..."
-echo "    (等待最多 5 秒...)"
-for i in {1..5}; do
+echo "    (等待最多 3 秒...)"
+for i in {1..3}; do
     sleep 1
     # 检查是否所有进程还在运行
     if ! kill -0 $SERVER_PID 2>/dev/null; then
@@ -119,68 +119,68 @@ else
     echo "❌ Alice 未发送 offer"
 fi
 
-if grep -q "已发送 answer" "$LOG_DIR/bob.log" 2>/dev/null; then
+if grep -qE "已发送 answer|✅ 已发送 answer" "$LOG_DIR/bob.log" 2>/dev/null; then
     echo "✅ Bob 发送了 answer"
 else
     echo "❌ Bob 未发送 answer"
 fi
 
 # 检查 ICE 连接
-if grep -q "ICE 连接状态.*connected\|completed" "$LOG_DIR/alice.log" 2>/dev/null; then
+if grep -qE "ICE 连接状态.*connected|ICE.*状态.*connected|ICE Agent.*connected|ICE Agent.*completed" "$LOG_DIR/alice.log" 2>/dev/null; then
     echo "✅ ICE 连接可能已建立 (Alice)"
 else
     echo "⚠️  ICE 连接状态未知 (Alice)"
 fi
 
-if grep -q "ICE 连接状态.*connected\|completed" "$LOG_DIR/bob.log" 2>/dev/null; then
+if grep -qE "ICE 连接状态.*connected|ICE.*状态.*connected|ICE Agent.*connected|ICE Agent.*completed" "$LOG_DIR/bob.log" 2>/dev/null; then
     echo "✅ ICE 连接可能已建立 (Bob)"
 else
     echo "⚠️  ICE 连接状态未知 (Bob)"
 fi
 
 # 检查 DTLS 握手
-if grep -q "DTLS 握手已完成\|handshake_complete" "$LOG_DIR/alice.log" 2>/dev/null; then
+if grep -q "DTLS 握手已完成" "$LOG_DIR/alice.log" 2>/dev/null; then
     echo "✅ DTLS 握手可能已完成 (Alice)"
 else
     echo "⚠️  DTLS 握手状态未知 (Alice)"
 fi
 
-if grep -q "DTLS 握手已完成\|handshake_complete" "$LOG_DIR/bob.log" 2>/dev/null; then
+if grep -q "DTLS 握手已完成" "$LOG_DIR/bob.log" 2>/dev/null; then
     echo "✅ DTLS 握手可能已完成 (Bob)"
 else
     echo "⚠️  DTLS 握手状态未知 (Bob)"
 fi
 
 # 检查数据通道
-if grep -q "已创建数据通道\|数据通道已打开" "$LOG_DIR/alice.log" 2>/dev/null; then
+if grep -qE "已创建数据通道|数据通道已打开" "$LOG_DIR/alice.log" 2>/dev/null; then
     echo "✅ 数据通道已创建/打开 (Alice)"
 else
     echo "⚠️  数据通道状态未知 (Alice)"
 fi
 
-# 检查消息发送和接收（双向验证）
-if grep -q "已发送测试消息" "$LOG_DIR/alice.log" 2>/dev/null; then
-    echo "✅ Alice 发送了测试消息"
+# 检查消息发送和接收（ping-pong 机制验证）
+if grep -qE "已发送 ping|发送.*ping" "$LOG_DIR/alice.log" 2>/dev/null; then
+    echo "✅ Alice 发送了 ping"
 else
-    echo "❌ Alice 未发送测试消息"
+    echo "❌ Alice 未发送 ping"
 fi
 
-if grep -q "收到消息.*Hello from Alice" "$LOG_DIR/bob.log" 2>/dev/null; then
-    echo "✅ Bob 收到了 Alice 的消息"
+if grep -qE "收到消息.*ping" "$LOG_DIR/bob.log" 2>/dev/null; then
+    echo "✅ Bob 收到了 ping"
 else
-    echo "❌ Bob 未收到 Alice 的消息"
+    echo "❌ Bob 未收到 ping"
 fi
 
-if grep -q "已发送回复消息" "$LOG_DIR/bob.log" 2>/dev/null; then
-    echo "✅ Bob 发送了回复消息"
+if grep -qE "已发送 pong|发送.*pong" "$LOG_DIR/bob.log" 2>/dev/null; then
+    echo "✅ Bob 发送了 pong"
 else
-    echo "❌ Bob 未发送回复消息"
+    echo "❌ Bob 未发送 pong"
 fi
 
-if grep -q "收到消息.*Hello from Bob" "$LOG_DIR/alice.log" 2>/dev/null; then
-    echo "✅ Alice 收到了 Bob 的回复"
+if grep -qE "收到消息.*pong|收到 pong" "$LOG_DIR/alice.log" 2>/dev/null; then
+    echo "✅ Alice 收到了 pong"
 else
-    echo "❌ Alice 未收到 Bob 的回复"
+    echo "❌ Alice 未收到 pong"
 fi
 
 echo ""

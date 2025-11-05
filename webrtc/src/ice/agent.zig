@@ -6,6 +6,28 @@ const Candidate = @import("./candidate.zig").Candidate;
 const Stun = @import("./stun.zig").Stun;
 const Turn = @import("./turn.zig").Turn;
 
+// 用于 HashMap 的 [16]u8 数组哈希和比较上下文（使用 16 字节以获得更好的对齐）
+// 实际的 transaction_id 是 12 字节，存储在 key 的前 12 字节，后 4 字节填充为 0
+const ArrayHashContext = struct {
+    pub fn hash(_: @This(), key: [16]u8) u64 {
+        // 只对前 12 字节进行哈希（实际的 transaction_id）
+        return std.hash.Wyhash.hash(0, key[0..12]);
+    }
+    pub fn eql(_: @This(), a: [16]u8, b: [16]u8) bool {
+        // 只比较前 12 字节（实际的 transaction_id）
+        return std.mem.eql(u8, a[0..12], b[0..12]);
+    }
+};
+
+// 将 12 字节的 transaction_id 转换为 16 字节的 key（后 4 字节填充为 0）
+inline fn transactionIdToKey(trans_id: [12]u8) [16]u8 {
+    var key: [16]u8 = undefined;
+    @memcpy(key[0..12], &trans_id);
+    // 后 4 字节保持未初始化（0），因为哈希和比较只使用前 12 字节
+    @memset(key[12..], 0);
+    return key;
+}
+
 /// ICE Agent 实现
 /// 负责 Candidate 收集、Connectivity Checks 和连接建立
 /// 遵循 RFC 8445
@@ -38,7 +60,8 @@ pub const IceAgent = struct {
     selected_pair: ?*CandidatePair,
 
     // 等待响应的 pending requests（transaction_id -> pair）
-    pending_requests: std.StringHashMap(*CandidatePair),
+    // 使用 [16]u8 以获得更好的对齐性能，实际 transaction_id 是 12 字节，存储在 key 的前 12 字节
+    pending_requests: std.HashMap([16]u8, *CandidatePair, ArrayHashContext, std.hash_map.default_max_load_percentage),
 
     // 组件 ID（RTP 通常为 1，RTCP 为 2）
     component_id: u32,
@@ -153,7 +176,7 @@ pub const IceAgent = struct {
             .turn_servers = std.ArrayList(TurnServer).init(allocator),
             .check_list = std.ArrayList(Check).init(allocator),
             .selected_pair = null,
-            .pending_requests = std.StringHashMap(*CandidatePair).init(allocator),
+            .pending_requests = std.HashMap([16]u8, *CandidatePair, ArrayHashContext, std.hash_map.default_max_load_percentage).init(allocator),
             .component_id = component_id,
         };
         return self;
@@ -681,18 +704,17 @@ pub const IceAgent = struct {
         const request_data = try request.encode(self.allocator);
         defer self.allocator.free(request_data);
 
-        // 将 transaction_id 转换为字符串作为 key
-        var trans_id_str: [12]u8 = undefined;
-        @memcpy(&trans_id_str, &transaction_id);
-        const trans_id_key = try std.fmt.allocPrint(self.allocator, "{s}", .{trans_id_str});
-        defer self.allocator.free(trans_id_key);
-
-        // 记录 pending request
-        try self.pending_requests.put(trans_id_key, pair);
+        // 记录 pending request（转换为 16 字节 key 以获得更好的对齐）
+        const trans_key = transactionIdToKey(transaction_id);
+        try self.pending_requests.put(trans_key, pair);
+        // 确保在错误时也能清理
+        errdefer {
+            _ = self.pending_requests.remove(trans_key);
+        }
 
         // 发送请求
         _ = try stun.udp.?.sendTo(request_data, remote_addr);
-        std.log.debug("ICE.performCheck: 已发送 STUN Binding Request (transaction_id: {s})", .{trans_id_key});
+        std.log.debug("ICE.performCheck: 已发送 STUN Binding Request (transaction_id: {s})", .{std.fmt.fmtSliceHexLower(&transaction_id)});
 
         // 等待响应（最多等待 5 秒）
         const current_co = try self.schedule.getCurrentCo();
@@ -704,6 +726,12 @@ pub const IceAgent = struct {
         while (waited < max_wait and !got_response) {
             try current_co.Sleep(check_interval);
             waited += check_interval;
+
+            // 检查 ICE 状态，如果已经完成或失败，则退出
+            if (self.state == .completed or self.state == .failed or self.state == .closed) {
+                std.log.debug("ICE.performCheck: ICE 状态已变为终态，退出检查 (状态: {})", .{self.state});
+                return;
+            }
 
             // 检查 pair 状态是否已更新（handleIncomingStunMessages 会更新）
             if (pair.state == .succeeded) {
@@ -724,16 +752,27 @@ pub const IceAgent = struct {
             }
         }
 
-        // 清理 pending request
-        _ = self.pending_requests.remove(trans_id_key);
+        // 再次检查 ICE 状态，避免在状态已完成后继续操作
+        if (self.state == .completed or self.state == .failed or self.state == .closed) {
+            // 状态已变为终态，不清理 pending request，让 handleIncomingStunMessages 处理
+            return;
+        }
+
+        // 注意：不在 performCheck 中移除 pending_requests，避免对齐问题
+        // handleIncomingStunMessages 会负责移除已处理的响应
+        // 超时的情况会在后续检查中处理
 
         if (!got_response) {
             std.log.warn("ICE.performCheck: 等待响应超时", .{});
             pair.state = .failed;
+            // 超时情况下，清理 pending request（使用已存在的 trans_key）
+            _ = self.pending_requests.remove(trans_key);
         }
 
-        // 检查是否所有检查都完成
-        self.checkConnectionState();
+        // 检查是否所有检查都完成（只有在状态还不是终态时才检查）
+        if (self.state != .completed and self.state != .failed and self.state != .closed) {
+            self.checkConnectionState();
+        }
     }
 
     /// 处理接收到的 STUN 消息（协程函数）
@@ -812,11 +851,9 @@ pub const IceAgent = struct {
                 }
             } else if (msg_class == .success_response and msg_method == .binding) {
                 // 收到 Binding Response，查找对应的 pending request
-                // 将 transaction_id 转换为字符串作为 key
-                const trans_id_key = try std.fmt.allocPrint(self.allocator, "{s}", .{stun_msg.header.transaction_id});
-                defer self.allocator.free(trans_id_key);
-
-                if (self.pending_requests.get(trans_id_key)) |pair| {
+                // 转换为 16 字节 key 以获得更好的对齐
+                const trans_key = transactionIdToKey(stun_msg.header.transaction_id);
+                if (self.pending_requests.get(trans_key)) |pair| {
                     std.log.info("ICE.handleIncomingStunMessages: 收到 STUN Binding Response，匹配到 pending request", .{});
                     pair.state = .succeeded;
 
@@ -829,6 +866,9 @@ pub const IceAgent = struct {
 
                     // 检查是否所有检查都完成
                     self.checkConnectionState();
+
+                    // 移除条目
+                    _ = self.pending_requests.remove(trans_key);
                 } else {
                     std.log.debug("ICE.handleIncomingStunMessages: 收到 Binding Response，但没有匹配的 pending request", .{});
                 }

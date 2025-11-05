@@ -9,6 +9,18 @@ const Configuration = webrtc.peer.connection.Configuration;
 const SignalingMessage = webrtc.signaling.message.SignalingMessage;
 const DataChannel = webrtc.sctp.datachannel.DataChannel;
 
+// 用于回调驱动的 Channel 指针（由于回调函数签名限制，使用全局变量）
+// 注意：在单进程测试场景中，Alice 和 Bob 在不同进程中运行，所以是安全的
+const ConnectionReadyChan = zco.CreateChan(bool);
+const MessageChan = zco.CreateChan([]const u8);
+
+var alice_connection_chan: ?*ConnectionReadyChan = null;
+var bob_connection_chan: ?*ConnectionReadyChan = null;
+
+// 全局变量用于存储消息 Channel（ping/pong 状态机）
+var alice_message_chan: ?*MessageChan = null;
+var bob_message_chan: ?*MessageChan = null;
+
 /// WebRTC 信令客户端示例
 /// 通过信令服务器连接两个 PeerConnection
 pub fn main() !void {
@@ -48,6 +60,7 @@ pub fn main() !void {
 
     // 运行调度器
     try schedule.loop();
+    std.log.info("[Alice] main loop end", .{});
 }
 
 /// 运行 Alice（发起方）
@@ -57,12 +70,12 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 创建 PeerConnection
     const config = Configuration{};
     const pc = try PeerConnection.init(schedule.allocator, schedule, config);
-    defer pc.deinit();
+    errdefer pc.deinit(); // 错误路径清理
+    // 注意：正常路径手动控制清理顺序
 
     // 跟踪创建的 UDP socket，以便在函数结束时清理
     var created_udp: ?*nets.Udp = null;
-    defer if (created_udp) |udp| {
-        // 清理 UDP socket（在 pc.deinit 之前）
+    errdefer if (created_udp) |udp| {
         if (udp.xobj) |_| {
             udp.close();
         }
@@ -72,7 +85,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 连接到信令服务器
     const server_addr = try std.net.Address.parseIp4("127.0.0.1", 8080);
     const tcp = try nets.Tcp.init(schedule);
-    defer tcp.deinit();
+    errdefer tcp.deinit(); // 错误路径清理
 
     // 尝试连接，如果失败则等待后重试（与 Bob 保持一致）
     const max_retries = 5;
@@ -99,11 +112,12 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
         std.log.err("[Alice] 连接失败，已达到最大重试次数", .{});
         return error.ConnectionRefused;
     }
-    defer tcp.close();
+    // 注意：不在 defer 中关闭，手动控制清理顺序
 
     // 创建 WebSocket 连接
     var ws = try websocket.WebSocket.fromTcp(tcp);
-    defer ws.deinit();
+    errdefer ws.deinit(); // 错误路径清理
+    // 注意：正常路径手动控制清理顺序
 
     // 执行客户端握手
     try ws.clientHandshake("/", "127.0.0.1:8080");
@@ -351,63 +365,120 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     std.log.info("[Alice] 等待 ICE candidates 交换完成...", .{});
     try current_co_alice.Sleep(100 * std.time.ns_per_ms);
 
-    // 事件驱动：直接检查状态，如果未完成则等待（通过轮询，但间隔更长）
-    // 注意：由于 DTLS 握手是异步的，我们需要等待它完成
-    // 理想情况下应该使用回调，但为了简化，这里使用轻量级轮询
-    std.log.info("[Alice] 等待 ICE 连接建立和 DTLS 握手完成（事件驱动检查）...", .{});
+    // 事件驱动：使用回调驱动，等待连接建立（ICE + DTLS）
+    std.log.info("[Alice] 等待 ICE 连接建立和 DTLS 握手完成（回调驱动）...", .{});
 
-    var dtls_ready = false;
-    var check_count: u32 = 0;
-    const max_checks = 60; // 最多检查 60 次（3 秒，每次 50ms）
+    // 创建 Channel 来接收连接就绪的信号
+    var connection_ready_chan = try ConnectionReadyChan.init(schedule, 1);
+    defer connection_ready_chan.deinit();
 
-    // 设置 DTLS 握手完成回调（用于快速响应）
-    pc.ondtlshandshakecomplete = struct {
+    // 检查连接状态
+    const connection_state = pc.getConnectionState();
+    if (connection_state == .failed) {
+        std.log.err("[Alice] 连接失败", .{});
+        return;
+    }
+
+    // 如果连接已经建立，直接继续
+    var connection_ready = false;
+    if (connection_state == .connected) {
+        // 确认 DTLS 握手也已完成
+        if (pc.dtls_handshake) |handshake| {
+            if (handshake.state == .handshake_complete) {
+                connection_ready = true;
+                std.log.info("[Alice] 连接已就绪（ICE + DTLS）", .{});
+            }
+        }
+    }
+
+    // 设置回调（无论连接是否已就绪，都设置回调以便后续状态变化时能收到通知）
+    // 由于回调函数签名限制（?*const fn (*Self) void），不能携带额外参数
+    // 使用全局变量存储 Channel 指针（在单进程测试场景中是安全的）
+    alice_connection_chan = connection_ready_chan;
+
+    // 设置连接状态变化回调（回调驱动）
+    pc.onconnectionstatechange = struct {
         fn callback(pc_self: *PeerConnection) void {
-            _ = pc_self;
-            std.log.info("[Alice] DTLS 握手完成回调被触发", .{});
+            const state = pc_self.getConnectionState();
+            std.log.info("[Alice] 连接状态变化回调被触发: {}", .{state});
+            // 只有在连接成功建立时才发送信号
+            if (state == .connected) {
+                // 确认 DTLS 握手也已完成
+                if (pc_self.dtls_handshake) |handshake| {
+                    if (handshake.state == .handshake_complete) {
+                        if (alice_connection_chan) |ch| {
+                            _ = ch.send(true) catch |e| {
+                                std.log.err("[Alice] 发送连接就绪信号失败: {}", .{e});
+                            };
+                        }
+                    }
+                }
+            }
         }
     }.callback;
 
-    // 轻量级检查循环（事件驱动检查，不频繁轮询）
-    while (check_count < max_checks and !dtls_ready) {
-        // 检查 ICE 连接状态
-        const ice_state = pc.getIceConnectionState();
-        if (ice_state == .failed) {
-            std.log.err("[Alice] ICE 连接失败", .{});
-            return;
+    // 同时监听 DTLS 握手完成回调（确保在 DTLS 完成时也能发送信号）
+    pc.ondtlshandshakecomplete = struct {
+        fn callback(pc_self: *PeerConnection) void {
+            std.log.info("[Alice] DTLS 握手完成回调被触发", .{});
+            // 检查连接状态是否为 connected
+            const state = pc_self.getConnectionState();
+            if (state == .connected) {
+                // 确认 DTLS 握手已完成
+                if (pc_self.dtls_handshake) |handshake| {
+                    if (handshake.state == .handshake_complete) {
+                        if (alice_connection_chan) |ch| {
+                            _ = ch.send(true) catch |e| {
+                                std.log.err("[Alice] 发送连接就绪信号失败: {}", .{e});
+                            };
+                        }
+                    }
+                }
+            }
         }
+    }.callback;
 
-        // 检查 DTLS 握手状态
-        if (pc.dtls_handshake) |handshake| {
-            if (handshake.state == .handshake_complete) {
-                dtls_ready = true;
-                std.log.info("[Alice] DTLS 握手已完成", .{});
-                break;
+    // 如果还未就绪，等待回调通知
+    if (!connection_ready) {
+        // 设置回调后，再次检查状态（避免竞态条件：回调可能在设置回调之前就触发）
+        const state_after_setup = pc.getConnectionState();
+        if (state_after_setup == .connected) {
+            if (pc.dtls_handshake) |handshake| {
+                if (handshake.state == .handshake_complete) {
+                    // 连接已经就绪，直接发送信号
+                    _ = connection_ready_chan.send(true) catch |e| {
+                        std.log.err("[Alice] 发送连接就绪信号失败: {}", .{e});
+                    };
+                    connection_ready = true;
+                }
             }
         }
 
-        // 如果 ICE 已连接但 DTLS 未完成，等待一段时间（事件驱动，协程会被挂起）
-        if (ice_state == .connected or ice_state == .completed) {
-            // ICE 已连接，等待 DTLS 握手完成（使用较长的间隔，减少 CPU 占用）
-            try current_co_alice.Sleep(50 * std.time.ns_per_ms);
-            check_count += 1;
-        } else {
-            // ICE 未连接，等待更长时间
-            try current_co_alice.Sleep(100 * std.time.ns_per_ms);
-            check_count += 1;
+        // 如果还未就绪，等待 Channel 接收信号（事件驱动，协程会被挂起）
+        if (!connection_ready) {
+            _ = try connection_ready_chan.recv();
+            connection_ready = true;
+            std.log.info("[Alice] 连接已就绪（通过回调）", .{});
         }
+    } else {
+        // 连接已经就绪，不需要等待回调
+        // 注意：不要手动触发回调，因为回调可能会尝试发送消息到 channel，
+        // 而 channel 可能已经发送过消息了，这会导致错误
+        std.log.info("[Alice] 连接已就绪（检查时发现已就绪），跳过回调触发", .{});
     }
 
-    // 创建数据通道（如果 DTLS 握手已完成）
-    if (!dtls_ready) {
-        std.log.warn("[Alice] DTLS 握手未完成（等待超时），跳过数据通道创建", .{});
-        return;
-    }
+    // 清理
+    alice_connection_chan = null;
 
     // 注意：DataChannel 的所有权由 PeerConnection 管理，不需要手动 deinit
     // PeerConnection.deinit() 会自动释放所有 DataChannel
     const channel = try pc.createDataChannel("test-channel", null);
     std.log.info("[Alice] 已创建数据通道", .{});
+
+    // 创建消息 Channel 用于 ping-pong 状态机
+    const message_chan = try MessageChan.init(schedule, 10);
+    defer message_chan.deinit();
+    alice_message_chan = message_chan;
 
     // 设置数据通道事件
     channel.setOnOpen(struct {
@@ -419,8 +490,26 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
 
     channel.setOnMessage(struct {
         fn callback(ch: *DataChannel, data: []const u8) void {
-            _ = ch;
             std.log.info("[Alice] 收到消息: {s}", .{data});
+            // 将消息发送到 Channel（用于状态机）
+            if (alice_message_chan) |msg_chan| {
+                // 使用 PeerConnection 的 allocator 来分配内存
+                const pc_ptr = @as(*PeerConnection, @ptrCast(@alignCast(ch.peer_connection orelse {
+                    std.log.err("[Alice] DataChannel 没有关联 PeerConnection", .{});
+                    return;
+                })));
+                const data_copy = pc_ptr.allocator.dupe(u8, data) catch {
+                    std.log.err("[Alice] 复制消息数据失败", .{});
+                    return;
+                };
+                _ = msg_chan.send(data_copy) catch |err| {
+                    // 如果是调度器已退出，这是正常的，不需要报错
+                    if (err != error.ScheduleExited) {
+                        std.log.err("[Alice] 发送消息到 Channel 失败: {}", .{err});
+                    }
+                    pc_ptr.allocator.free(data_copy);
+                };
+            }
         }
     }.callback);
 
@@ -458,21 +547,81 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 等待一段时间，让连接建立
     try current_co_alice.Sleep(200 * std.time.ns_per_ms);
 
-    // 接收数据通道消息（通过 recvSctpData 处理传入的数据）
-    _ = try schedule.go(receiveDataChannelMessages, .{pc});
+    // 创建 WaitGroup 来等待接收协程完成
+    var wg = try zco.WaitGroup.init(schedule);
+    defer wg.deinit();
+    try wg.add(1);
 
-    // 发送测试消息
+    // 接收数据通道消息（通过 recvSctpData 处理传入的数据）
+    _ = try schedule.go(receiveDataChannelMessages, .{ pc, &wg });
+
+    // Ping-Pong 状态机：Alice 发送 ping，等待 pong
     if (channel.getState() == .open) {
-        const test_msg = "Hello from Alice!";
-        if (channel.send(test_msg, null)) {
-            std.log.info("[Alice] 已发送测试消息", .{});
+        const ping_msg = "ping";
+        if (channel.send(ping_msg, null)) {
+            std.log.info("[Alice] 已发送 ping", .{});
         } else |err| {
-            std.log.err("[Alice] 发送消息失败: {}", .{err});
+            std.log.err("[Alice] 发送 ping 失败: {}", .{err});
+            return;
         }
     }
 
-    // 等待接收消息（事件驱动）
-    try current_co_alice.Sleep(500 * std.time.ns_per_ms);
+    // 等待接收 pong（状态机）
+    std.log.info("[Alice] 等待接收 pong...", .{});
+    const received_msg = try message_chan.recv();
+    defer schedule.allocator.free(received_msg);
+
+    if (std.mem.eql(u8, received_msg, "pong")) {
+        std.log.info("[Alice] 收到 pong，退出", .{});
+    } else {
+        std.log.warn("[Alice] 收到非预期消息: {s}", .{received_msg});
+    }
+
+    // 清理：先清理 message_chan，避免回调尝试发送消息
+    alice_message_chan = null;
+
+    // 关闭 DataChannel，让 recvSctpData 返回，使 receiveDataChannelMessages 协程退出
+    channel.setState(.closed);
+    std.log.info("[Alice] 已关闭数据通道", .{});
+
+    // 等待一小段时间，确保所有回调都已完成
+    try current_co_alice.Sleep(50 * std.time.ns_per_ms);
+
+    // 等待接收协程完成（在停止调度器之前）
+    // 注意：关闭 channel 后，receiveDataChannelMessages 会检测到 ChannelClosed 并退出，主动调用 wg.done()
+    std.log.info("[Alice] 等待接收协程完成...", .{});
+    // 在调度器还在运行时等待 WaitGroup
+    // wg.wait() 会发送信号，如果 count > 0，done() 会接收这个信号
+    // 如果 count == 0，说明协程已经退出，直接返回
+    wg.wait();
+    // wait() 的 send() 会阻塞等待，直到 done() 的 recv() 完成
+    // 所以 wait() 返回时，done() 已经完成，不需要额外的 sleep
+
+    // 在停止调度器之前，先关闭所有 socket 和资源
+    std.log.info("[Alice] 程序完成，准备退出", .{});
+
+    // 1. 关闭 WebSocket 连接（会触发 tcp.close）
+    ws.deinit();
+
+    // 2. 关闭 TCP 连接（如果还没有关闭）
+    tcp.close();
+
+    // 3. 关闭 UDP socket（如果存在）
+    if (created_udp) |udp| {
+        if (udp.xobj) |_| {
+            udp.close();
+        }
+        schedule.allocator.destroy(udp);
+        created_udp = null;
+    }
+
+    // 4. 清理 PeerConnection（会关闭所有相关资源）
+    pc.deinit();
+
+    std.log.info("[Alice] [[停止调度器", .{});
+    // 5. 最后停止调度器
+    schedule.stop();
+    std.log.info("[Alice] ]]调度器已停止", .{});
 }
 
 /// 运行 Bob（接收方）
@@ -482,12 +631,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 创建 PeerConnection
     const config = Configuration{};
     const pc = try PeerConnection.init(schedule.allocator, schedule, config);
-    defer pc.deinit();
+    errdefer pc.deinit(); // 错误路径清理
+    // 注意：正常路径手动控制清理顺序
 
     // 跟踪创建的 UDP socket，以便在函数结束时清理
     var created_udp: ?*nets.Udp = null;
-    defer if (created_udp) |udp| {
-        // 清理 UDP socket（在 pc.deinit 之前）
+    errdefer if (created_udp) |udp| {
         if (udp.xobj) |_| {
             udp.close();
         }
@@ -497,7 +646,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 连接到信令服务器
     const server_addr = try std.net.Address.parseIp4("127.0.0.1", 8080);
     const tcp = try nets.Tcp.init(schedule);
-    defer tcp.deinit();
+    errdefer tcp.deinit(); // 错误路径清理
 
     // 尝试连接，如果失败则等待后重试
     const max_retries = 5;
@@ -518,11 +667,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
         };
         break;
     }
-    defer tcp.close();
+    // 注意：不在 defer 中关闭，手动控制清理顺序
 
     // 创建 WebSocket 连接
     var ws = try websocket.WebSocket.fromTcp(tcp);
-    defer ws.deinit();
+    errdefer ws.deinit(); // 错误路径清理
+    // 注意：正常路径手动控制清理顺序
 
     // 执行客户端握手
     try ws.clientHandshake("/", "127.0.0.1:8080");
@@ -751,54 +901,114 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 获取当前协程用于等待
     const current_co_bob_final = try schedule.getCurrentCo();
 
-    // 事件驱动：等待 ICE 连接建立和 DTLS 握手完成
-    std.log.info("[Bob] 等待 ICE 连接建立和 DTLS 握手完成（事件驱动检查）...", .{});
+    // 事件驱动：使用回调驱动，等待连接建立（ICE + DTLS）
+    std.log.info("[Bob] 等待 ICE 连接建立和 DTLS 握手完成（回调驱动）...", .{});
 
-    var dtls_ready = false;
-    var check_count: u32 = 0;
-    const max_checks = 60; // 最多检查 60 次（3 秒，每次 50ms）
+    // 创建 Channel 来接收连接就绪的信号
+    var connection_ready_chan = try ConnectionReadyChan.init(schedule, 1);
+    defer connection_ready_chan.deinit();
 
-    // 设置 DTLS 握手完成回调（用于快速响应）
-    pc.ondtlshandshakecomplete = struct {
-        fn callback(pc_self: *PeerConnection) void {
-            _ = pc_self;
-            std.log.info("[Bob] DTLS 握手完成回调被触发", .{});
-        }
-    }.callback;
+    // 检查连接状态
+    const connection_state = pc.getConnectionState();
+    if (connection_state == .failed) {
+        std.log.err("[Bob] 连接失败", .{});
+        return;
+    }
 
-    // 轻量级检查循环（事件驱动检查，不频繁轮询）
-    while (check_count < max_checks and !dtls_ready) {
-        // 检查 ICE 连接状态
-        const ice_state = pc.getIceConnectionState();
-        if (ice_state == .failed) {
-            std.log.err("[Bob] ICE 连接失败", .{});
-            return;
-        }
-
-        // 检查 DTLS 握手状态
+    // 如果连接已经建立，直接继续
+    var connection_ready = false;
+    if (connection_state == .connected) {
+        // 确认 DTLS 握手也已完成
         if (pc.dtls_handshake) |handshake| {
             if (handshake.state == .handshake_complete) {
-                dtls_ready = true;
-                std.log.info("[Bob] DTLS 握手已完成", .{});
-                break;
+                connection_ready = true;
+                std.log.info("[Bob] 连接已就绪（ICE + DTLS）", .{});
             }
-        }
-
-        // 如果 ICE 已连接但 DTLS 未完成，等待一段时间（事件驱动，协程会被挂起）
-        if (ice_state == .connected or ice_state == .completed) {
-            // ICE 已连接，等待 DTLS 握手完成（使用较长的间隔，减少 CPU 占用）
-            try current_co_bob_final.Sleep(50 * std.time.ns_per_ms);
-            check_count += 1;
-        } else {
-            // ICE 未连接，等待更长时间
-            try current_co_bob_final.Sleep(100 * std.time.ns_per_ms);
-            check_count += 1;
         }
     }
 
+    // 设置回调（无论连接是否已就绪，都设置回调以便后续状态变化时能收到通知）
+    // 由于回调函数签名限制（?*const fn (*Self) void），不能携带额外参数
+    // 使用全局变量存储 Channel 指针（在单进程测试场景中是安全的）
+    bob_connection_chan = connection_ready_chan;
+
+    // 设置连接状态变化回调（回调驱动）
+    pc.onconnectionstatechange = struct {
+        fn callback(pc_self: *PeerConnection) void {
+            const state = pc_self.getConnectionState();
+            std.log.info("[Bob] 连接状态变化回调被触发: {}", .{state});
+            // 只有在连接成功建立时才发送信号
+            if (state == .connected) {
+                // 确认 DTLS 握手也已完成
+                if (pc_self.dtls_handshake) |handshake| {
+                    if (handshake.state == .handshake_complete) {
+                        if (bob_connection_chan) |ch| {
+                            _ = ch.send(true) catch |e| {
+                                std.log.err("[Bob] 发送连接就绪信号失败: {}", .{e});
+                            };
+                        }
+                    }
+                }
+            }
+        }
+    }.callback;
+
+    // 同时监听 DTLS 握手完成回调（确保在 DTLS 完成时也能发送信号）
+    pc.ondtlshandshakecomplete = struct {
+        fn callback(pc_self: *PeerConnection) void {
+            std.log.info("[Bob] DTLS 握手完成回调被触发", .{});
+            // 检查连接状态是否为 connected
+            const state = pc_self.getConnectionState();
+            if (state == .connected) {
+                // 确认 DTLS 握手已完成
+                if (pc_self.dtls_handshake) |handshake| {
+                    if (handshake.state == .handshake_complete) {
+                        if (bob_connection_chan) |ch| {
+                            _ = ch.send(true) catch |e| {
+                                std.log.err("[Bob] 发送连接就绪信号失败: {}", .{e});
+                            };
+                        }
+                    }
+                }
+            }
+        }
+    }.callback;
+
+    // 如果还未就绪，等待回调通知
+    if (!connection_ready) {
+        // 设置回调后，再次检查状态（避免竞态条件：回调可能在设置回调之前就触发）
+        const state_after_setup = pc.getConnectionState();
+        if (state_after_setup == .connected) {
+            if (pc.dtls_handshake) |handshake| {
+                if (handshake.state == .handshake_complete) {
+                    // 连接已经就绪，直接发送信号
+                    _ = connection_ready_chan.send(true) catch |e| {
+                        std.log.err("[Bob] 发送连接就绪信号失败: {}", .{e});
+                    };
+                    connection_ready = true;
+                }
+            }
+        }
+
+        // 如果还未就绪，等待 Channel 接收信号（事件驱动，协程会被挂起）
+        if (!connection_ready) {
+            _ = try connection_ready_chan.recv();
+            connection_ready = true;
+            std.log.info("[Bob] 连接已就绪（通过回调）", .{});
+        }
+    } else {
+        // 连接已经就绪，不需要等待回调
+        // 注意：不要手动触发回调，因为回调可能会尝试发送消息到 channel，
+        // 而 channel 可能已经发送过消息了，这会导致错误
+        std.log.info("[Bob] 连接已就绪（检查时发现已就绪），跳过回调触发", .{});
+    }
+
+    // 清理
+    bob_connection_chan = null;
+
     // 创建数据通道（匹配 Alice 创建的通道）
-    if (!dtls_ready) {
-        std.log.warn("[Bob] DTLS 握手未完成（等待超时），跳过数据通道创建", .{});
+    if (!connection_ready) {
+        std.log.warn("[Bob] 连接未就绪，跳过数据通道创建", .{});
         try current_co_bob_final.Sleep(200 * std.time.ns_per_ms);
         return;
     }
@@ -818,24 +1028,45 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
         }
     }.callback);
 
-    // 设置消息接收回调，收到消息后回复
+    // 创建消息 Channel 用于 ping-pong 状态机
+    const message_chan = try MessageChan.init(schedule, 10);
+    defer message_chan.deinit();
+    bob_message_chan = message_chan;
+
+    // 设置消息接收回调，收到 ping 后发送 pong
     channel.setOnMessage(struct {
         fn callback(ch: *DataChannel, data: []const u8) void {
             std.log.info("[Bob] 收到消息: {s}", .{data});
 
-            // 回复消息
-            const reply_msg = "Hello from Bob! Received: ";
-            var reply_buffer: [256]u8 = undefined;
-            const reply = std.fmt.bufPrint(&reply_buffer, "{s}{s}", .{ reply_msg, data }) catch {
-                std.log.err("[Bob] 格式化回复消息失败", .{});
-                return;
-            };
+            // 如果收到 ping，发送 pong
+            if (std.mem.eql(u8, data, "ping")) {
+                const pong_msg = "pong";
+                ch.send(pong_msg, null) catch |err| {
+                    std.log.err("[Bob] 发送 pong 失败: {}", .{err});
+                    return;
+                };
+                std.log.info("[Bob] 已发送 pong", .{});
+            }
 
-            ch.send(reply, null) catch |err| {
-                std.log.err("[Bob] 发送回复消息失败: {}", .{err});
-                return;
-            };
-            std.log.info("[Bob] 已发送回复消息", .{});
+            // 将消息发送到 Channel（用于状态机）
+            if (bob_message_chan) |msg_chan| {
+                // 使用 PeerConnection 的 allocator 来分配内存
+                const pc_ptr = @as(*PeerConnection, @ptrCast(@alignCast(ch.peer_connection orelse {
+                    std.log.err("[Bob] DataChannel 没有关联 PeerConnection", .{});
+                    return;
+                })));
+                const data_copy = pc_ptr.allocator.dupe(u8, data) catch {
+                    std.log.err("[Bob] 复制消息数据失败", .{});
+                    return;
+                };
+                _ = msg_chan.send(data_copy) catch |err| {
+                    // 如果是调度器已退出，这是正常的，不需要报错
+                    if (err != error.ScheduleExited) {
+                        std.log.err("[Bob] 发送消息到 Channel 失败: {}", .{err});
+                    }
+                    pc_ptr.allocator.free(data_copy);
+                };
+            }
         }
     }.callback);
 
@@ -845,33 +1076,127 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 等待连接建立
     try current_co_bob_final.Sleep(200 * std.time.ns_per_ms);
 
-    // 接收数据通道消息（通过 recvSctpData 处理传入的数据）
-    _ = try schedule.go(receiveDataChannelMessages, .{pc});
+    // 创建 WaitGroup 来等待接收协程完成
+    var wg = try zco.WaitGroup.init(schedule);
+    defer wg.deinit();
+    try wg.add(1);
 
-    // 等待接收和发送消息
-    try current_co_bob_final.Sleep(500 * std.time.ns_per_ms);
+    // 接收数据通道消息（通过 recvSctpData 处理传入的数据）
+    _ = try schedule.go(receiveDataChannelMessages, .{ pc, &wg });
+
+    // Ping-Pong 状态机：Bob 等待接收 ping，收到后发送 pong，然后退出
+    // 注意：只有发送 offer 的一方（Alice）发送 ping，Bob 只回复 pong
+    std.log.info("[Bob] 等待接收 ping...", .{});
+    const received_msg = try message_chan.recv();
+    defer schedule.allocator.free(received_msg);
+
+    if (std.mem.eql(u8, received_msg, "ping")) {
+        std.log.info("[Bob] 收到 ping，已发送 pong（在回调中），退出", .{});
+    } else {
+        std.log.warn("[Bob] 收到非预期消息: {s}", .{received_msg});
+    }
+
+    // 清理：先清理 message_chan，避免回调尝试发送消息
+    bob_message_chan = null;
+
+    // 关闭 DataChannel，让 recvSctpData 返回，使 receiveDataChannelMessages 协程退出
+    channel.setState(.closed);
+    std.log.info("[Bob] 已关闭数据通道", .{});
+
+    // 等待一小段时间，确保所有回调都已完成
+    try current_co_bob_final.Sleep(50 * std.time.ns_per_ms);
+
+    // 等待接收协程完成（在停止调度器之前）
+    // 注意：关闭 channel 后，receiveDataChannelMessages 会检测到 ChannelClosed 并退出，主动调用 wg.done()
+    std.log.info("[Bob] 等待接收协程完成...", .{});
+    // 在调度器还在运行时等待 WaitGroup
+    // wg.wait() 会发送信号，如果 count > 0，done() 会接收这个信号
+    // 如果 count == 0，说明协程已经退出，直接返回
+    wg.wait();
+    // wait() 的 send() 会阻塞等待，直到 done() 的 recv() 完成
+    // 所以 wait() 返回时，done() 已经完成，不需要额外的 sleep
+
+    // 在停止调度器之前，先关闭所有 socket 和资源
+    std.log.info("[Bob] 程序完成，准备退出", .{});
+
+    // 1. 关闭 WebSocket 连接（会触发 tcp.close）
+    ws.deinit();
+
+    // 2. 关闭 TCP 连接（如果还没有关闭）
+    tcp.close();
+
+    // 3. 关闭 UDP socket（如果存在）
+    if (created_udp) |udp| {
+        if (udp.xobj) |_| {
+            udp.close();
+        }
+        schedule.allocator.destroy(udp);
+        created_udp = null;
+    }
+
+    // 4. 清理 PeerConnection（会关闭所有相关资源）
+    pc.deinit();
+
+    // 5. 最后停止调度器
+    schedule.stop();
 }
 
 /// 接收数据通道消息（处理 SCTP 数据包）
-/// 事件驱动：持续接收 SCTP 数据，直到出错或达到上限
-fn receiveDataChannelMessages(pc: *PeerConnection) !void {
+/// 事件驱动：持续接收 SCTP 数据，直到出错或调度器退出
+/// 注意：这个协程只负责接收和处理 SCTP 数据，实际的用户消息通过 onmessage 回调处理
+fn receiveDataChannelMessages(pc: *PeerConnection, wg: *zco.WaitGroup) !void {
+    // 注意：不在 defer 中调用 done()，而是在退出前主动调用，确保在调度器停止前执行
+    errdefer wg.done(); // 只在错误路径调用 done()
+
     const current_co = try pc.schedule.getCurrentCo();
     std.log.info("开始接收数据通道消息（事件驱动）...", .{});
 
-    var count: u32 = 0;
-    const max_count = 100; // 最多接收 100 个数据包
+    var consecutive_errors: u32 = 0;
+    const max_consecutive_errors = 10; // 最多连续错误 10 次后退出
 
     // 事件驱动：recvSctpData 会挂起协程直到数据到达
-    while (count < max_count) {
+    // 持续接收，直到调度器退出、channel 关闭或连续错误太多
+    while (true) {
         pc.recvSctpData() catch |err| {
+            // 如果调度器已退出，立即退出协程
+            if (err == error.ScheduleExited) {
+                std.log.info("调度器已退出，数据通道消息接收协程退出", .{});
+                wg.done(); // 在退出前主动调用 done()
+                return;
+            }
+
+            // 如果 channel 已关闭，退出协程
+            if (err == error.ChannelClosed) {
+                std.log.info("数据通道已关闭，数据通道消息接收协程退出", .{});
+                wg.done(); // 在退出前主动调用 done()
+                return;
+            }
+
+            consecutive_errors += 1;
+            if (consecutive_errors >= max_consecutive_errors) {
+                // 连续错误太多，可能连接已断开，退出
+                std.log.info("数据通道消息接收连续失败，退出", .{});
+                wg.done(); // 在退出前主动调用 done()
+                return;
+            }
+
             // 如果是非阻塞错误（如没有数据），等待后重试
-            std.log.debug("接收 SCTP 数据失败: {}，等待后重试", .{err});
-            try current_co.Sleep(50 * std.time.ns_per_ms);
+            std.log.debug("接收 SCTP 数据失败: {}，等待后重试 ({}/{})", .{ err, consecutive_errors, max_consecutive_errors });
+
+            // 在 Sleep 时也可能收到 ScheduleExited 错误
+            current_co.Sleep(50 * std.time.ns_per_ms) catch |sleep_err| {
+                if (sleep_err == error.ScheduleExited) {
+                    std.log.info("调度器已退出，数据通道消息接收协程退出", .{});
+                    wg.done(); // 在退出前主动调用 done()
+                    return;
+                }
+                wg.done(); // 错误路径也调用 done()
+                return sleep_err;
+            };
             continue;
         };
-        count += 1;
-        std.log.debug("已接收 SCTP 数据包 ({}/{})", .{ count, max_count });
+        // 成功接收（即使是非 application_data 类型，也会正常返回）
+        // 重置错误计数，继续接收
+        consecutive_errors = 0;
     }
-
-    std.log.info("数据通道消息接收完成（已接收 {} 个数据包）", .{count});
 }

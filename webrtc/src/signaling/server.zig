@@ -49,18 +49,36 @@ pub const SignalingServer = struct {
         }
 
         pub fn broadcast(self: *Room, sender_id: []const u8, msg: []const u8) void {
+            // 收集所有需要发送的用户（避免在迭代时修改 HashMap）
+            var users_to_notify = std.ArrayList([]const u8).init(self.users.allocator);
+            defer users_to_notify.deinit();
+
             var it = self.users.iterator();
             while (it.next()) |entry| {
                 const user_id = entry.key_ptr.*;
-                const client = entry.value_ptr.*;
-
                 // 不发送给发送者自己
                 if (!std.mem.eql(u8, user_id, sender_id)) {
+                    users_to_notify.append(user_id) catch {
+                        // 如果分配失败，记录错误但继续
+                        std.log.err("[服务器] 收集用户列表失败，跳过广播", .{});
+                        return;
+                    };
+                }
+            }
+
+            // 遍历收集到的用户列表，发送消息
+            for (users_to_notify.items) |user_id| {
+                // 再次检查用户是否还在房间中（可能在其他协程中断开连接）
+                if (self.users.get(user_id)) |client| {
+                    // 安全地发送消息，捕获所有可能的错误
+                    // 注意：客户端可能正在断开连接，WebSocket 可能已经无效
                     client.send(msg) catch |err| {
                         // 发送失败不应该导致整个连接关闭
                         // 记录错误但继续处理其他用户
-                        std.log.err("[服务器] 发送消息给 {s} 失败: {}", .{ user_id, err });
+                        // 注意：连接可能已经关闭，这是正常的（客户端断开连接）
+                        std.log.debug("[服务器] 发送消息给 {s} 失败: {}（可能已断开连接）", .{ user_id, err });
                         // 可以选择从房间中移除该用户，但这里先只记录错误
+                        // 因为用户可能在其他协程中正在断开连接，避免并发修改
                     };
                 }
             }
@@ -89,7 +107,18 @@ pub const SignalingServer = struct {
         }
 
         pub fn send(self: *Client, data: []const u8) !void {
-            try self.ws.sendText(data);
+            // 检查 WebSocket 是否已经升级（已建立连接）
+            if (!self.ws.upgraded) {
+                return error.ConnectionClosed;
+            }
+            // 尝试发送消息，如果连接已关闭，返回错误而不是崩溃
+            self.ws.sendText(data) catch |err| {
+                // 如果连接已关闭，这是正常的，不需要报错
+                if (err == error.ConnectionClosed or err == error.ConnectionReset or err == error.EOF) {
+                    return error.ConnectionClosed;
+                }
+                return err;
+            };
         }
     };
 
@@ -155,7 +184,16 @@ pub const SignalingServer = struct {
         var buffer: [8192]u8 = undefined;
 
         while (true) {
-            const frame = try ws.readMessage(buffer[0..]);
+            const frame = ws.readMessage(buffer[0..]) catch |err| {
+                // 处理连接错误（客户端断开连接等）
+                if (err == error.ConnectionReset or err == websocket.WebSocketError.ConnectionClosed or err == error.EOF) {
+                    std.log.info("[服务器] 客户端断开连接: {}", .{err});
+                    break;
+                }
+                // 其他错误也记录并退出
+                std.log.err("[服务器] 读取消息失败: {}", .{err});
+                break;
+            };
             defer if (frame.payload.len > buffer.len) ws.allocator.free(frame.payload);
 
             if (frame.opcode == .CLOSE) {
@@ -192,22 +230,35 @@ pub const SignalingServer = struct {
         }
 
         // 客户端断开连接，从房间中移除
+        // 注意：在清理资源之前先移除用户，避免在清理过程中访问已释放的资源
         if (client.room_id) |room_id| {
             if (server.rooms.getPtr(room_id)) |room| {
                 if (client.user_id) |user_id| {
+                    // 先保存 user_id 用于广播（因为 fetchRemove 会释放 key）
+                    const user_id_dup_for_leave = try server.allocator.dupe(u8, user_id);
+                    defer server.allocator.free(user_id_dup_for_leave);
+
                     if (room.users.fetchRemove(user_id)) |entry| {
                         server.allocator.free(entry.key);
-                        // 通知其他用户
-                        // 注意：user_id 是已经分配的内存，会被 leave_msg.deinit 释放
-                        const user_id_dup = try server.allocator.dupe(u8, user_id);
+
+                        // 通知其他用户（在移除用户之后，避免通知自己）
+                        // 注意：广播时可能其他客户端也在断开，所以需要安全处理
+                        // 创建 leave 消息（不调用 deinit，因为 user_id 是我们自己分配的）
                         var leave_msg = message.SignalingMessage{
                             .type = .leave,
-                            .user_id = user_id_dup,
+                            .user_id = user_id_dup_for_leave,
                         };
-                        defer leave_msg.deinit(server.allocator);
-                        const leave_json = try (@as(*const message.SignalingMessage, &leave_msg)).toJson(server.allocator);
+                        // 注意：leave_msg 的 user_id 是我们自己分配的，不会被 deinit 释放
+                        // 所以不需要调用 leave_msg.deinit()
+                        const leave_json = (@as(*const message.SignalingMessage, &leave_msg)).toJson(server.allocator) catch |err| {
+                            std.log.err("[服务器] 创建 leave 消息失败: {}", .{err});
+                            // 如果创建消息失败，跳过广播
+                            return;
+                        };
                         defer server.allocator.free(leave_json);
-                        room.broadcast(user_id, leave_json);
+
+                        // 安全地广播 leave 消息（broadcast 内部已经处理了发送失败的情况）
+                        room.broadcast(user_id_dup_for_leave, leave_json);
                     }
                 }
             }

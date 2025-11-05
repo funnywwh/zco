@@ -1,0 +1,27 @@
+# GDB 对齐错误调试脚本
+set pagination off
+handle SIGABRT stop print
+catch throw
+catch catch
+
+# 运行程序直到对齐错误
+run
+
+# 当对齐错误发生时，显示堆栈
+if $_any_caller_matches(".*incorrect alignment.*")
+    bt
+    frame 0
+    info registers
+    print $pc
+    x/10i $pc
+end
+
+# 如果程序崩溃，显示堆栈
+if $_any_caller_matches(".*panic.*")
+    bt
+    frame 0
+    info registers
+    print $pc
+    x/10i $pc
+end
+
