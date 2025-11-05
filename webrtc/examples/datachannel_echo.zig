@@ -70,89 +70,38 @@ fn runEchoExample() !void {
 }
 
 /// 设置 Alice（发送方）
-fn setupAlice(pc: *PeerConnection, schedule: *zco.Schedule) !void {
+fn setupAlice(pc: *PeerConnection, _: *zco.Schedule) !void {
     std.log.info("[Alice] 开始设置...", .{});
 
-    // 初始化 UDP Socket 和 ICE Agent
-    if (pc.ice_agent) |agent| {
-        // 创建 UDP Socket
-        if (agent.udp == null) {
-            agent.udp = try nets.Udp.init(schedule);
-            // 绑定到本地回环地址（Alice 使用端口 10000）
-            const bind_addr = try std.net.Address.parseIp4("127.0.0.1", 10000);
-            try agent.udp.?.bind(bind_addr);
-            std.log.info("[Alice] UDP Socket 已绑定到 127.0.0.1:10000", .{});
-        }
-
-        // 收集 Host Candidate
-        try agent.gatherHostCandidates();
-        std.log.info("[Alice] Host Candidates 已收集", .{});
-    }
-
-    // 设置 DTLS Record（需要 UDP Socket）
-    if (pc.ice_agent) |agent| {
-        if (agent.udp) |udp| {
-            std.log.debug("[Alice] ICE Agent UDP Socket 存在", .{});
-            if (pc.dtls_record) |record| {
-                std.log.debug("[Alice] DTLS Record 存在，开始关联 UDP Socket", .{});
-                // 将 ICE Agent 的 UDP Socket 关联到 DTLS Record
-                record.setUdp(udp);
-                std.log.info("[Alice] DTLS Record 已关联 UDP Socket", .{});
-                std.log.debug("[Alice] 验证关联: DTLS Record.udp = {}", .{record.udp != null});
-            } else {
-                std.log.err("[Alice] DTLS Record 为 null，无法关联 UDP Socket", .{});
-            }
-        } else {
-            std.log.err("[Alice] ICE Agent UDP Socket 为 null", .{});
-        }
-    }
+    // 设置 UDP Socket（指定特定端口用于测试）
+    // 注意：在浏览器 API 中，UDP Socket 会在 setLocalDescription 时自动创建
+    // 这里提前创建是为了指定特定端口（10000）用于测试
+    const alice_bind_addr = try std.net.Address.parseIp4("127.0.0.1", 10000);
+    _ = try pc.setupUdpSocket(alice_bind_addr);
+    std.log.info("[Alice] UDP Socket 已绑定到 127.0.0.1:10000", .{});
 }
 
 /// 设置 Bob（接收方和 Echo）
-fn setupBob(pc: *PeerConnection, schedule: *zco.Schedule) !void {
+fn setupBob(pc: *PeerConnection, _: *zco.Schedule) !void {
     std.log.info("[Bob] 开始设置...", .{});
 
-    // 初始化 UDP Socket 和 ICE Agent
-    if (pc.ice_agent) |agent| {
-        // 创建 UDP Socket
-        if (agent.udp == null) {
-            agent.udp = try nets.Udp.init(schedule);
-            // 绑定到本地回环地址（Bob 使用端口 10001）
-            const bind_addr = try std.net.Address.parseIp4("127.0.0.1", 10001);
-            try agent.udp.?.bind(bind_addr);
-            std.log.info("[Bob] UDP Socket 已绑定到 127.0.0.1:10001", .{});
-        }
-
-        // 收集 Host Candidate
-        // 注意：gatherHostCandidates 会检查 UDP socket 是否已绑定，如果已绑定则不会重新绑定
-        try agent.gatherHostCandidates();
-        std.log.info("[Bob] Host Candidates 已收集", .{});
-    }
-
-    // 设置 DTLS Record（需要 UDP Socket）
-    if (pc.ice_agent) |agent| {
-        if (agent.udp) |udp| {
-            std.log.debug("[Bob] ICE Agent UDP Socket 存在", .{});
-            if (pc.dtls_record) |record| {
-                std.log.debug("[Bob] DTLS Record 存在，开始关联 UDP Socket", .{});
-                // 将 ICE Agent 的 UDP Socket 关联到 DTLS Record
-                record.setUdp(udp);
-                std.log.info("[Bob] DTLS Record 已关联 UDP Socket", .{});
-                std.log.debug("[Bob] 验证关联: DTLS Record.udp = {}", .{record.udp != null});
-            } else {
-                std.log.err("[Bob] DTLS Record 为 null，无法关联 UDP Socket", .{});
-            }
-        } else {
-            std.log.err("[Bob] ICE Agent UDP Socket 为 null", .{});
-        }
-    }
+    // 设置 UDP Socket（指定特定端口用于测试）
+    // 注意：在浏览器 API 中，UDP Socket 会在 setLocalDescription 时自动创建
+    // 这里提前创建是为了指定特定端口（10001）用于测试
+    const bob_bind_addr = try std.net.Address.parseIp4("127.0.0.1", 10001);
+    _ = try pc.setupUdpSocket(bob_bind_addr);
+    std.log.info("[Bob] UDP Socket 已绑定到 127.0.0.1:10001", .{});
 }
 
 /// 建立 ICE 连接
+/// 注意：此函数直接访问内部字段，仅用于测试目的
+/// 在实际应用中，应该通过 PeerConnection 的公共 API 进行
 fn establishIceConnection(alice: *PeerConnection, bob: *PeerConnection, _: *zco.Schedule) !void {
     std.log.info("开始建立 ICE 连接...", .{});
 
     // 交换 Candidates
+    // 注意：直接访问 ice_agent 内部字段，仅用于测试
+    // 在实际应用中，应该通过 PeerConnection 的公共 API
     if (alice.ice_agent) |alice_agent| {
         if (bob.ice_agent) |bob_agent| {
             // Alice 添加 Bob 的 Candidate
@@ -211,6 +160,8 @@ fn establishIceConnection(alice: *PeerConnection, bob: *PeerConnection, _: *zco.
 }
 
 /// 建立 DTLS 握手
+/// 注意：此函数直接访问内部字段，仅用于测试目的
+/// 在实际应用中，应该通过 PeerConnection 的 DTLS 握手流程完成
 fn establishDtlsHandshake(alice: *PeerConnection, bob: *PeerConnection, _: *zco.Schedule) !void {
     std.log.info("开始 DTLS 握手...", .{});
 
@@ -221,6 +172,7 @@ fn establishDtlsHandshake(alice: *PeerConnection, bob: *PeerConnection, _: *zco.
     const test_iv = [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c };
     const epoch: u16 = 1; // DTLS epoch 从 1 开始（0 用于握手）
 
+    // 注意：直接访问 dtls_handshake 内部字段，仅用于测试
     if (alice.dtls_handshake) |handshake| {
         handshake.state = .handshake_complete;
         std.log.info("[Alice] DTLS 握手完成", .{});
@@ -233,6 +185,7 @@ fn establishDtlsHandshake(alice: *PeerConnection, bob: *PeerConnection, _: *zco.
 
     // 设置加密密钥（用于测试：Alice 和 Bob 使用相同的密钥）
     // 注意：在实际应用中，客户端和服务器的密钥应该是不同的（从 Master Secret 派生）
+    // 注意：直接访问 dtls_record 内部字段，仅用于测试
     if (alice.dtls_record) |record| {
         // Alice 作为客户端：write_cipher 用于发送，read_cipher 用于接收
         record.setWriteCipher(test_key, test_iv, epoch);

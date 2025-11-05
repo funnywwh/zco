@@ -1,6 +1,7 @@
 const std = @import("std");
 const zco = @import("zco");
 const crypto = std.crypto;
+const nets = @import("nets");
 const ice = @import("../ice/root.zig");
 const dtls = @import("../dtls/root.zig");
 const srtp = @import("../srtp/root.zig");
@@ -16,6 +17,45 @@ const sdp = signaling.sdp;
 
 // 使用 Sdp 作为 SessionDescription
 const SessionDescription = sdp.Sdp;
+
+/// RTCSessionDescription 类型别名
+/// 遵循 W3C WebRTC 1.0 规范，对应浏览器的 RTCSessionDescription
+pub const RTCSessionDescription = SessionDescription;
+
+/// RTCIceCandidate 类型别名
+/// 遵循 W3C WebRTC 1.0 规范，对应浏览器的 RTCIceCandidate
+pub const RTCIceCandidate = ice.Candidate;
+
+/// RTCOfferOptions
+/// 用于 createOffer() 方法的选项
+pub const RTCOfferOptions = struct {
+    /// 是否提供 ICE 重启
+    ice_restart: bool = false,
+    /// 是否提供 DTLS 角色切换
+    offer_to_receive_audio: ?bool = null,
+    /// 是否提供接收视频
+    offer_to_receive_video: ?bool = null,
+};
+
+/// RTCAnswerOptions
+/// 用于 createAnswer() 方法的选项
+pub const RTCAnswerOptions = struct {
+    /// 是否提供 ICE 重启
+    ice_restart: bool = false,
+};
+
+/// RTCIceCandidateInit
+/// 用于 addIceCandidate() 方法的候选初始化信息
+pub const RTCIceCandidateInit = struct {
+    /// SDP candidate 字符串
+    candidate: []const u8,
+    /// SDP media stream identification
+    sdp_mid: ?[]const u8 = null,
+    /// SDP media line index
+    sdp_mline_index: ?u16 = null,
+    /// 用户名片段（可选，通常从 SDP 中提取）
+    username_fragment: ?[]const u8 = null,
+};
 
 /// RTCPeerConnection 状态枚举
 /// 遵循 W3C WebRTC 1.0 规范
@@ -79,6 +119,7 @@ pub const ConnectionState = enum {
 };
 
 /// RTCPeerConnection 配置
+/// 遵循 W3C WebRTC 1.0 规范的 RTCConfiguration
 pub const Configuration = struct {
     /// ICE 服务器列表（STUN/TURN）
     ice_servers: []const IceServer = &.{},
@@ -89,10 +130,23 @@ pub const Configuration = struct {
     /// ICE 候选类型策略
     ice_candidate_pool_size: u32 = 0,
 
+    /// 证书（可选，如果不提供则自动生成）
+    certificates: []const Certificate = &.{},
+
     pub const IceServer = struct {
+        /// ICE 服务器 URL 列表
         urls: []const []const u8,
+        /// 用户名（用于 TURN 认证）
         username: ?[]const u8 = null,
+        /// 凭证（用于 TURN 认证）
         credential: ?[]const u8 = null,
+        /// 凭证类型（默认 "password"）
+        credential_type: CredentialType = .password,
+
+        pub const CredentialType = enum {
+            password,
+            oauth,
+        };
     };
 
     pub const IceTransportPolicy = enum {
@@ -100,6 +154,11 @@ pub const Configuration = struct {
         all,
         /// 仅允许中继传输（TURN）
         relay,
+    };
+
+    pub const Certificate = struct {
+        // 证书相关字段（简化实现，实际应包含证书数据）
+        // 当前实现使用自动生成的自签名证书
     };
 };
 
@@ -148,6 +207,10 @@ pub const PeerConnection = struct {
     onicegatheringstatechange: ?*const fn (*Self) void = null,
     ondtlshandshakecomplete: ?*const fn (*Self) void = null, // DTLS 握手完成回调
 
+    // 协程管理
+    coroutines: std.ArrayList(*zco.Co), // 跟踪所有内部协程
+    is_closing: std.atomic.Value(bool), // 关闭标志（原子操作）
+
     /// 初始化 RTCPeerConnection
     pub fn init(
         allocator: std.mem.Allocator,
@@ -164,6 +227,8 @@ pub const PeerConnection = struct {
             .senders = std.ArrayList(*Sender).init(allocator),
             .receivers = std.ArrayList(*Receiver).init(allocator),
             .data_channels = std.ArrayList(*sctp.DataChannel).init(allocator),
+            .coroutines = std.ArrayList(*zco.Co).init(allocator),
+            .is_closing = std.atomic.Value(bool).init(false),
         };
 
         // 初始化 ICE Agent（组件 ID 1 表示 RTP）
@@ -250,12 +315,18 @@ pub const PeerConnection = struct {
         }
         self.receivers.deinit();
 
+        // 等待所有协程安全退出
+        self.waitAllCoroutines();
+
         // 释放所有数据通道
         for (self.data_channels.items) |channel| {
             channel.deinit();
             self.allocator.destroy(channel);
         }
         self.data_channels.deinit();
+
+        // 清理协程列表
+        self.coroutines.deinit();
 
         if (self.srtp_receiver) |transform_ptr| {
             transform_ptr.ctx.deinit();
@@ -367,7 +438,19 @@ pub const PeerConnection = struct {
 
     /// 创建 Offer
     /// 生成 SDP offer 描述
-    pub fn createOffer(self: *Self, allocator: std.mem.Allocator) !*SessionDescription {
+    /// 遵循 W3C WebRTC 1.0 规范，对应浏览器的 createOffer()
+    ///
+    /// 参数:
+    ///   - allocator: 内存分配器
+    ///   - options: 可选的 RTCOfferOptions
+    ///
+    /// 返回: RTCSessionDescription (堆分配，调用者负责释放)
+    pub fn createOffer(
+        self: *Self,
+        allocator: std.mem.Allocator,
+        options: ?RTCOfferOptions,
+    ) !*RTCSessionDescription {
+        _ = options; // TODO: 实现选项支持（如 ICE restart）
         var offer = SessionDescription.init(allocator);
         errdefer offer.deinit();
 
@@ -432,8 +515,24 @@ pub const PeerConnection = struct {
                 .value = try allocator.dupe(u8, ice_pwd),
             });
 
-            // TODO: 添加 ICE candidates（需要等待候选收集完成）
-            // 如果已有本地候选，添加到 SDP
+            // 如果还没有本地 candidates，自动创建 UDP socket（会触发 candidates 收集）
+            // setupUdpSocketInternal 会自动收集 candidates，所以这里只需要确保 socket 存在
+            if (agent.getLocalCandidates().len == 0) {
+                // 如果 UDP Socket 还未创建，自动创建（使用默认地址）
+                // setupUdpSocketInternal 会自动收集 candidates
+                if (agent.udp == null) {
+                    const default_addr = std.net.Address.parseIp4("0.0.0.0", 0) catch |err| {
+                        std.log.warn("Failed to parse default address in createOffer: {}", .{err});
+                        return err;
+                    };
+                    _ = self.setupUdpSocketInternal(default_addr) catch |err| {
+                        std.log.warn("Failed to setup UDP socket in createOffer: {}", .{err});
+                        // 不中断流程，继续尝试
+                    };
+                }
+            }
+
+            // 添加已收集的本地 candidates 到 SDP
             const local_candidates = agent.getLocalCandidates();
             for (local_candidates) |c| {
                 // 将 candidate 转换为 SDP candidate 格式
@@ -494,7 +593,19 @@ pub const PeerConnection = struct {
 
     /// 创建 Answer
     /// 响应远程 offer，生成 SDP answer
-    pub fn createAnswer(self: *Self, allocator: std.mem.Allocator) !*SessionDescription {
+    /// 遵循 W3C WebRTC 1.0 规范，对应浏览器的 createAnswer()
+    ///
+    /// 参数:
+    ///   - allocator: 内存分配器
+    ///   - options: 可选的 RTCAnswerOptions
+    ///
+    /// 返回: RTCSessionDescription (堆分配，调用者负责释放)
+    pub fn createAnswer(
+        self: *Self,
+        allocator: std.mem.Allocator,
+        options: ?RTCAnswerOptions,
+    ) !*RTCSessionDescription {
+        _ = options; // TODO: 实现选项支持（如 ICE restart）
         // 需要基于 remote_description 生成
 
         const remote_desc = self.remote_description orelse {
@@ -582,7 +693,24 @@ pub const PeerConnection = struct {
                     .value = try allocator.dupe(u8, ice_pwd),
                 });
 
-                // 添加 ICE candidates（如果已收集）
+                // 如果还没有本地 candidates，自动创建 UDP socket（会触发 candidates 收集）
+                // setupUdpSocketInternal 会自动收集 candidates，所以这里只需要确保 socket 存在
+                if (agent.getLocalCandidates().len == 0) {
+                    // 如果 UDP Socket 还未创建，自动创建（使用默认地址）
+                    // setupUdpSocketInternal 会自动收集 candidates
+                    if (agent.udp == null) {
+                        const default_addr = std.net.Address.parseIp4("0.0.0.0", 0) catch |err| {
+                            std.log.warn("Failed to parse default address in createAnswer: {}", .{err});
+                            return err;
+                        };
+                        _ = self.setupUdpSocketInternal(default_addr) catch |err| {
+                            std.log.warn("Failed to setup UDP socket in createAnswer: {}", .{err});
+                            // 不中断流程，继续尝试
+                        };
+                    }
+                }
+
+                // 添加已收集的本地 candidates 到 SDP
                 const local_candidates = agent.getLocalCandidates();
                 for (local_candidates) |c| {
                     const candidate_str = try c.toSdpCandidate(allocator);
@@ -651,7 +779,11 @@ pub const PeerConnection = struct {
     }
 
     /// 设置本地描述
-    pub fn setLocalDescription(self: *Self, description: *SessionDescription) !void {
+    /// 遵循 W3C WebRTC 1.0 规范，对应浏览器的 setLocalDescription()
+    ///
+    /// 参数:
+    ///   - description: RTCSessionDescription (可以是 offer 或 answer)
+    pub fn setLocalDescription(self: *Self, description: *RTCSessionDescription) !void {
         if (self.local_description) |desc| {
             desc.deinit();
             self.allocator.destroy(desc);
@@ -691,13 +823,29 @@ pub const PeerConnection = struct {
             }
         }
 
-        // 触发 ICE candidate 收集
+        // 自动触发 ICE candidate 收集（浏览器行为）
+        // 在 setLocalDescription 时会自动开始收集 candidates
         if (self.ice_agent) |agent| {
-            // 开始收集 Host Candidates
-            agent.gatherHostCandidates() catch |err| {
-                // 如果收集失败，记录错误但不中断流程
-                std.log.warn("Failed to gather host candidates: {}", .{err});
-            };
+            // 如果 UDP Socket 还未创建，自动创建（使用默认地址）
+            // setupUdpSocketInternal 会自动收集 candidates
+            if (agent.udp == null) {
+                const default_addr = std.net.Address.parseIp4("0.0.0.0", 0) catch |err| {
+                    std.log.warn("Failed to parse default address: {}", .{err});
+                    return err;
+                };
+                _ = self.setupUdpSocketInternal(default_addr) catch |err| {
+                    std.log.warn("Failed to setup UDP socket automatically: {}", .{err});
+                    // 不中断流程，继续尝试收集
+                };
+            } else {
+                // 如果 UDP socket 已存在但还没有 candidates，尝试收集
+                // 这处理了用户手动调用 setupUdpSocket 但还未收集 candidates 的情况
+                if (agent.getLocalCandidates().len == 0) {
+                    agent.gatherHostCandidates() catch |err| {
+                        std.log.warn("Failed to gather host candidates in setLocalDescription: {}", .{err});
+                    };
+                }
+            }
 
             // TODO: 如果有 STUN/TURN 服务器配置，也收集 Server Reflexive 和 Relay Candidates
             // agent.gatherServerReflexiveCandidates() catch {};
@@ -747,7 +895,7 @@ pub const PeerConnection = struct {
 
                     // 启动协程定期检查 ICE 状态（直到连接建立）
                     if (self.ice_connection_state != .connected and self.ice_connection_state != .completed) {
-                        _ = self.schedule.go(monitorIceConnection, .{self}) catch |err| {
+                        self.startCoroutine(monitorIceConnection, .{self}) catch |err| {
                             std.log.warn("Failed to start ICE monitor in setLocalDescription: {}", .{err});
                         };
                     }
@@ -761,7 +909,11 @@ pub const PeerConnection = struct {
     }
 
     /// 设置远程描述
-    pub fn setRemoteDescription(self: *Self, description: *SessionDescription) !void {
+    /// 遵循 W3C WebRTC 1.0 规范，对应浏览器的 setRemoteDescription()
+    ///
+    /// 参数:
+    ///   - description: RTCSessionDescription (可以是 offer 或 answer)
+    pub fn setRemoteDescription(self: *Self, description: *RTCSessionDescription) !void {
         if (self.remote_description) |desc| {
             desc.deinit();
             self.allocator.destroy(desc);
@@ -790,7 +942,8 @@ pub const PeerConnection = struct {
             }
         }
 
-        // 解析远程 ICE candidates
+        // 自动解析并添加远程 ICE candidates（浏览器行为）
+        // 在浏览器 API 中，setRemoteDescription 会自动解析 SDP 中的 candidates
         if (self.ice_agent) |agent| {
             // 从 SDP 中提取 ICE candidates
             // 检查 session-level candidates
@@ -849,8 +1002,32 @@ pub const PeerConnection = struct {
                 }
             }
 
-            // 如果已有本地描述，可以开始连接检查
+            // 如果已有本地描述，自动开始连接检查（浏览器行为）
+            // 在浏览器 API 中，当本地和远程描述都设置后，会自动开始 ICE 连接检查
             if (self.local_description != null) {
+                // 确保 UDP Socket 已创建（如果本地描述已设置，应该已经创建了）
+                // 但为了健壮性，这里也检查一下
+                if (agent.udp == null) {
+                    // 如果 UDP Socket 还未创建，自动创建（使用默认地址）
+                    const default_addr = std.net.Address.parseIp4("0.0.0.0", 0) catch |err| {
+                        std.log.warn("Failed to parse default address in setRemoteDescription: {}", .{err});
+                        return err;
+                    };
+                    _ = self.setupUdpSocketInternal(default_addr) catch |err| {
+                        std.log.warn("Failed to setup UDP socket automatically in setRemoteDescription: {}", .{err});
+                        // 不中断流程，继续尝试
+                    };
+                }
+
+                // 关联 DTLS Record 的 UDP Socket（如果还未关联）
+                if (agent.udp) |udp| {
+                    if (self.dtls_record) |record| {
+                        if (record.udp == null) {
+                            record.setUdp(udp);
+                        }
+                    }
+                }
+
                 // 如果本地 candidates 已收集但 pairs 还没生成，尝试生成 pairs
                 // 这可能在添加远程 candidate 时本地 candidates 还没收集完的情况
                 if (agent.local_candidates.items.len > 0 and agent.remote_candidates.items.len > 0 and agent.candidate_pairs.items.len == 0) {
@@ -859,31 +1036,41 @@ pub const PeerConnection = struct {
                     };
                 }
 
-                // 更新 ICE 连接状态
+                // 更新 ICE 连接状态并开始连接检查（浏览器会自动处理）
+                // 只有在有 candidate pairs 时才立即开始 connectivity checks
+                // 如果没有 pairs（可能是 SDP 中没有 candidates，需要通过 addIceCandidate 单独添加），
+                // 则等待 addIceCandidate 添加 candidates 后再开始
                 const old_ice_state = self.ice_connection_state;
-                self.ice_connection_state = .checking;
+                if (old_ice_state == .new) {
+                    // 只有在有 candidate pairs 时才立即开始 connectivity checks
+                    if (agent.candidate_pairs.items.len > 0) {
+                        self.ice_connection_state = .checking;
 
-                // 触发 ICE 连接状态变化事件
-                if (old_ice_state != self.ice_connection_state) {
-                    if (self.oniceconnectionstatechange) |callback| {
-                        callback(self);
+                        // 触发 ICE 连接状态变化事件
+                        if (self.oniceconnectionstatechange) |callback| {
+                            callback(self);
+                        }
+
+                        // 开始连接检查（浏览器会自动处理）
+                        agent.startConnectivityChecks() catch |err| {
+                            std.log.warn("Failed to start connectivity checks: {}", .{err});
+                            self.updateIceConnectionState(.failed);
+                        };
+
+                        // 启动协程定期检查 ICE 状态（直到连接建立）
+                        if (self.ice_connection_state != .connected and self.ice_connection_state != .completed) {
+                            self.startCoroutine(monitorIceConnection, .{self}) catch |err| {
+                                std.log.warn("Failed to start ICE monitor in setRemoteDescription: {}", .{err});
+                            };
+                        }
+                    } else {
+                        // 没有 candidate pairs，等待通过 addIceCandidate 添加 candidates
+                        // 不更新 ICE 连接状态，保持为 .new
+                        std.log.debug("setRemoteDescription: 没有 candidate pairs，等待通过 addIceCandidate 添加 candidates (本地: {}, 远程: {})", .{
+                            agent.local_candidates.items.len,
+                            agent.remote_candidates.items.len,
+                        });
                     }
-                }
-
-                // 注意：generateCandidatePairs 会在 addRemoteCandidate 时自动调用
-                // 所以如果所有远程 candidates 都已添加，pairs 应该已经生成
-
-                // 开始连接检查
-                agent.startConnectivityChecks() catch |err| {
-                    std.log.warn("Failed to start connectivity checks: {}", .{err});
-                    self.updateIceConnectionState(.failed);
-                };
-
-                // 启动协程定期检查 ICE 状态（直到连接建立）
-                if (self.ice_connection_state != .connected and self.ice_connection_state != .completed) {
-                    _ = self.schedule.go(monitorIceConnection, .{self}) catch |err| {
-                        std.log.warn("Failed to start ICE monitor in setRemoteDescription: {}", .{err});
-                    };
                 }
             }
         }
@@ -910,7 +1097,7 @@ pub const PeerConnection = struct {
                 // 1. 发送 ClientHello（已完成）
                 // 2. 接收 ServerHello、Certificate、ServerHelloDone
                 // 3. 发送 ClientKeyExchange、ChangeCipherSpec、Finished
-                _ = self.schedule.go(handleClientHandshake, .{self}) catch |err| {
+                self.startCoroutine(handleClientHandshake, .{self}) catch |err| {
                     std.log.warn("Failed to start client handshake coroutine: {}", .{err});
                 };
             } else {
@@ -936,7 +1123,7 @@ pub const PeerConnection = struct {
                                 // 启动协程处理服务器端握手流程
                                 // 1. 接收 ClientHello 并发送 ServerHello、Certificate、ServerHelloDone
                                 // 2. 接收 ClientKeyExchange、ChangeCipherSpec、Finished 并发送响应
-                                _ = self.schedule.go(handleServerHandshake, .{ self, remote_address }) catch |err| {
+                                self.startCoroutine(handleServerHandshake, .{ self, remote_address }) catch |err| {
                                     std.log.warn("Failed to start server handshake coroutine: {}", .{err});
                                 };
                             } else {
@@ -1126,7 +1313,30 @@ pub const PeerConnection = struct {
     }
 
     /// 添加 ICE Candidate
-    pub fn addIceCandidate(self: *Self, candidate: *ice.Candidate) !void {
+    /// 遵循 W3C WebRTC 1.0 规范，对应浏览器的 addIceCandidate()
+    ///
+    /// 支持两种调用方式：
+    /// 1. 直接传递 RTCIceCandidate 对象
+    /// 2. 传递 RTCIceCandidateInit 结构（从 SDP candidate 字符串解析）
+    ///
+    /// 参数:
+    ///   - candidate: RTCIceCandidate 对象或 RTCIceCandidateInit 结构
+    pub fn addIceCandidate(self: *Self, candidate: anytype) !void {
+        const T = @TypeOf(candidate);
+
+        if (T == *RTCIceCandidate) {
+            // 方式 1: 直接传递 RTCIceCandidate 对象
+            try self.addIceCandidateDirect(candidate);
+        } else if (T == RTCIceCandidateInit) {
+            // 方式 2: 从 RTCIceCandidateInit 创建 RTCIceCandidate
+            try self.addIceCandidateFromInit(candidate);
+        } else {
+            @compileError("addIceCandidate expects *RTCIceCandidate or RTCIceCandidateInit, got " ++ @typeName(T));
+        }
+    }
+
+    /// 直接添加 ICE Candidate（内部方法）
+    fn addIceCandidateDirect(self: *Self, candidate: *RTCIceCandidate) !void {
         if (self.ice_agent) |agent| {
             try agent.addRemoteCandidate(candidate);
 
@@ -1135,38 +1345,37 @@ pub const PeerConnection = struct {
                 callback(self, candidate);
             }
 
-            // 检查是否可以开始连接检查
-            if (self.local_description != null) {
+            // 如果添加 candidate 后，本地和远程描述都已设置，尝试开始 connectivity checks
+            // 这解决了 SDP 中没有 candidates，需要通过 addIceCandidate 单独添加的情况
+            if (self.local_description != null and self.remote_description != null) {
                 // 如果本地 candidates 已收集但 pairs 还没生成，尝试生成 pairs
-                // 这可能在添加远程 candidate 时本地 candidates 还没收集完的情况
                 if (agent.local_candidates.items.len > 0 and agent.remote_candidates.items.len > 0 and agent.candidate_pairs.items.len == 0) {
                     agent.generateCandidatePairs() catch |err| {
-                        std.log.warn("Failed to generate candidate pairs after adding remote candidate: {}", .{err});
+                        std.log.warn("Failed to generate candidate pairs in addIceCandidate: {}", .{err});
                     };
                 }
 
-                // 检查 ICE 连接状态，如果还是 .new，更新为 .checking
-                if (self.ice_connection_state == .new) {
-                    const old_ice_state = self.ice_connection_state;
+                // 如果已有 candidate pairs，但 ICE 状态还是 .new，则开始 connectivity checks
+                // 只有在有 candidate pairs 时才启动 connectivity checks
+                if (agent.candidate_pairs.items.len > 0 and self.ice_connection_state == .new) {
                     self.ice_connection_state = .checking;
 
                     // 触发 ICE 连接状态变化事件
-                    if (old_ice_state != self.ice_connection_state) {
-                        if (self.oniceconnectionstatechange) |callback| {
-                            callback(self);
-                        }
+                    if (self.oniceconnectionstatechange) |callback| {
+                        callback(self);
                     }
 
                     // 开始连接检查
                     agent.startConnectivityChecks() catch |err| {
-                        std.log.warn("Failed to start connectivity checks: {}", .{err});
+                        std.log.warn("Failed to start connectivity checks in addIceCandidate: {}", .{err});
                         self.updateIceConnectionState(.failed);
+                        return;
                     };
 
                     // 启动协程定期检查 ICE 状态（直到连接建立）
                     if (self.ice_connection_state != .connected and self.ice_connection_state != .completed) {
-                        _ = self.schedule.go(monitorIceConnection, .{self}) catch |err| {
-                            std.log.warn("Failed to start ICE monitor: {}", .{err});
+                        self.startCoroutine(monitorIceConnection, .{self}) catch |err| {
+                            std.log.warn("Failed to start ICE monitor in addIceCandidate: {}", .{err});
                         };
                     }
                 }
@@ -1174,6 +1383,246 @@ pub const PeerConnection = struct {
         } else {
             return error.NoIceAgent;
         }
+    }
+
+    /// 从 RTCIceCandidateInit 创建并添加 ICE Candidate（内部方法）
+    fn addIceCandidateFromInit(self: *Self, candidate_init: RTCIceCandidateInit) !void {
+        // 从 candidate 字符串解析 ICE Candidate
+        var candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_init.candidate);
+        errdefer candidate.deinit();
+
+        // 创建堆分配的 candidate
+        const candidate_ptr = try self.allocator.create(ice.candidate.Candidate);
+        errdefer {
+            candidate.deinit();
+            self.allocator.destroy(candidate_ptr);
+        }
+        candidate_ptr.* = candidate;
+
+        // 添加到 ICE Agent
+        try self.addIceCandidateDirect(candidate_ptr);
+    }
+
+    /// 获取本地描述
+    /// 遵循 W3C WebRTC 1.0 规范，对应浏览器的 localDescription
+    ///
+    /// 返回: 本地 RTCSessionDescription 或 null
+    pub fn getLocalDescription(self: *const Self) ?*const RTCSessionDescription {
+        return self.local_description;
+    }
+
+    /// 获取远程描述
+    /// 遵循 W3C WebRTC 1.0 规范，对应浏览器的 remoteDescription
+    ///
+    /// 返回: 远程 RTCSessionDescription 或 null
+    pub fn getRemoteDescription(self: *const Self) ?*const RTCSessionDescription {
+        return self.remote_description;
+    }
+
+    /// 设置 UDP Socket（用于 ICE Agent）
+    /// 封装 ICE Agent 的 UDP Socket 初始化
+    ///
+    /// 注意：在浏览器 API 中，UDP Socket 会在 setLocalDescription 时自动创建
+    /// 此方法主要用于需要指定特定地址的场景（如测试）
+    ///
+    /// 参数:
+    ///   - address: 绑定地址（如果为 null，则绑定到 0.0.0.0:0）
+    ///
+    /// 返回: 创建的 UDP Socket（如果需要，用于后续清理）
+    pub fn setupUdpSocket(self: *Self, address: ?std.net.Address) !*nets.Udp {
+        return self.setupUdpSocketInternal(address);
+    }
+
+    /// 设置 UDP Socket（内部方法）
+    /// 如果成功创建了新的 UDP socket，会自动收集 Host Candidates
+    fn setupUdpSocketInternal(self: *Self, address: ?std.net.Address) !*nets.Udp {
+        if (self.ice_agent == null) {
+            return error.NoIceAgent;
+        }
+
+        const agent = self.ice_agent.?;
+        const was_created = agent.udp == null;
+        if (agent.udp == null) {
+            const udp = try nets.Udp.init(self.schedule);
+            agent.udp = udp;
+
+            // 如果提供了地址，则绑定
+            if (address) |addr| {
+                try udp.bind(addr);
+            } else {
+                // 默认绑定到 0.0.0.0:0（随机端口）
+                const default_addr = try std.net.Address.parseIp4("0.0.0.0", 0);
+                try udp.bind(default_addr);
+            }
+
+            // 关联 DTLS Record 的 UDP Socket
+            if (self.dtls_record) |record| {
+                record.setUdp(udp);
+            }
+
+            // 如果成功创建了新的 UDP socket，自动收集 Host Candidates
+            // 这样无论从哪里调用 setupUdpSocketInternal，都会自动收集 candidates
+            if (was_created) {
+                agent.gatherHostCandidates() catch |err| {
+                    std.log.warn("Failed to gather host candidates in setupUdpSocketInternal: {}", .{err});
+                    // 不中断流程，继续返回 socket
+                };
+            }
+        }
+
+        return agent.udp.?;
+    }
+
+    /// 获取本地 ICE Candidates
+    /// 封装 ICE Agent 的 getLocalCandidates
+    ///
+    /// 返回: 本地候选列表
+    pub fn getLocalCandidates(self: *const Self) []const *ice.Candidate {
+        if (self.ice_agent) |agent| {
+            return agent.getLocalCandidates();
+        } else {
+            return &.{};
+        }
+    }
+
+    /// 检查 DTLS 握手是否完成
+    /// 封装 DTLS Handshake 的状态检查
+    ///
+    /// 返回: true 如果握手完成，false 否则
+    pub fn isDtlsHandshakeComplete(self: *const Self) bool {
+        if (self.dtls_handshake) |handshake| {
+            return handshake.state == .handshake_complete;
+        }
+        return false;
+    }
+
+    /// 启动内部协程（辅助方法）
+    /// 记录协程以便后续管理
+    fn startCoroutine(self: *Self, comptime func: anytype, args: anytype) !void {
+        const co = self.schedule.go(func, args) catch |err| {
+            std.log.warn("Failed to start coroutine: {}", .{err});
+            return err;
+        };
+        try self.coroutines.append(co);
+    }
+
+    /// 检查是否正在关闭
+    /// 协程应定期检查此标志并优雅退出
+    fn isClosing(self: *const Self) bool {
+        return self.is_closing.load(.acquire);
+    }
+
+    /// 等待所有协程完成
+    /// 在主协程中调用，等待所有内部协程安全退出
+    fn waitAllCoroutines(self: *Self) void {
+        // 设置关闭标志
+        self.is_closing.store(true, .release);
+
+        // 等待所有协程完成
+        // 注意：需要在协程环境中调用，以便可以使用 Sleep
+        const current_co = self.schedule.getCurrentCo() catch {
+            // 如果不在协程环境中，直接返回（协程会在调度器运行时自动退出）
+            std.log.debug("PeerConnection.waitAllCoroutines: 不在协程环境中，跳过等待", .{});
+            return;
+        };
+
+        // 等待所有协程完成（最多等待 5 秒）
+        const max_wait_time = 5 * std.time.ns_per_s;
+        const check_interval = 10 * std.time.ns_per_ms;
+        var elapsed: u64 = 0;
+
+        while (elapsed < max_wait_time) {
+            // 检查是否还有运行中的协程
+            var all_done = true;
+            for (self.coroutines.items) |co| {
+                if (co.state != .STOP) {
+                    all_done = false;
+                    break;
+                }
+            }
+
+            if (all_done) {
+                std.log.debug("PeerConnection.waitAllCoroutines: 所有协程已完成", .{});
+                break;
+            }
+
+            // 等待一小段时间后再次检查
+            current_co.Sleep(check_interval) catch |err| {
+                std.log.warn("PeerConnection.waitAllCoroutines: Sleep 失败: {}", .{err});
+                break;
+            };
+            elapsed += check_interval;
+        }
+
+        if (elapsed >= max_wait_time) {
+            std.log.warn("PeerConnection.waitAllCoroutines: 等待协程完成超时", .{});
+        }
+    }
+
+    /// 关闭连接
+    /// 遵循 W3C WebRTC 1.0 规范，对应浏览器的 close()
+    ///
+    /// 关闭所有传输、停止所有媒体流、释放所有资源
+    pub fn close(self: *Self) void {
+        // 如果已经关闭，直接返回
+        if (self.signaling_state == .closed) {
+            return;
+        }
+
+        // 设置关闭标志
+        self.is_closing.store(true, .release);
+
+        // 更新信令状态为 closed
+        const old_signaling_state = self.signaling_state;
+        self.signaling_state = .closed;
+
+        // 触发信令状态变化事件
+        if (old_signaling_state != self.signaling_state) {
+            if (self.onsignalingstatechange) |callback| {
+                callback(self);
+            }
+        }
+
+        // 更新 ICE 连接状态为 closed
+        const old_ice_state = self.ice_connection_state;
+        self.ice_connection_state = .closed;
+
+        // 触发 ICE 连接状态变化事件
+        if (old_ice_state != self.ice_connection_state) {
+            if (self.oniceconnectionstatechange) |callback| {
+                callback(self);
+            }
+        }
+
+        // 更新连接状态为 closed
+        const old_conn_state = self.connection_state;
+        self.connection_state = .closed;
+
+        // 触发连接状态变化事件
+        if (old_conn_state != self.connection_state) {
+            if (self.onconnectionstatechange) |callback| {
+                callback(self);
+            }
+        }
+
+        // 关闭 ICE Agent（如果存在）
+        if (self.ice_agent) |agent| {
+            // 禁用回调，避免在关闭过程中触发
+            agent.on_state_change = null;
+            agent.on_state_change_ctx = null;
+        }
+
+        // 关闭所有数据通道
+        for (self.data_channels.items) |channel| {
+            if (channel.state != .closed) {
+                channel.close() catch {};
+            }
+        }
+
+        // 等待所有协程安全退出
+        self.waitAllCoroutines();
+
+        std.log.info("PeerConnection.close: 连接已关闭", .{});
     }
 
     /// 处理客户端 DTLS 握手（协程函数）
@@ -1194,6 +1643,12 @@ pub const PeerConnection = struct {
 
         // 事件驱动：直接调用 recv，它会挂起协程直到收到数据
         while (!server_hello_done_received) {
+            // 检查是否正在关闭
+            if (self.isClosing()) {
+                std.log.info("PeerConnection.handleClientHandshake: 检测到关闭标志，退出", .{});
+                return;
+            }
+
             // 尝试接收握手消息（事件驱动，会挂起协程直到数据到达）
             var buffer: [2048]u8 = undefined;
             const result = record.recv(&buffer) catch |err| {
@@ -1312,6 +1767,12 @@ pub const PeerConnection = struct {
 
         // 事件驱动：直接调用 recv，它会挂起协程直到收到数据
         while (!handshake_complete) {
+            // 检查是否正在关闭
+            if (self.isClosing()) {
+                std.log.info("PeerConnection.handleServerHandshake: 检测到关闭标志，退出", .{});
+                return;
+            }
+
             var buffer: [2048]u8 = undefined;
             const result = record.recv(&buffer) catch |err| {
                 // 如果收到非 DTLS 消息（如 STUN），直接重试（事件驱动，不需要 sleep）
@@ -1423,6 +1884,12 @@ pub const PeerConnection = struct {
             self.ice_connection_state != .failed and
             self.ice_connection_state != .closed)
         {
+            // 检查是否正在关闭
+            if (self.isClosing()) {
+                std.log.info("PeerConnection.monitorIceConnection: 检测到关闭标志，退出", .{});
+                return;
+            }
+
             // 等待状态变化（事件驱动：状态变化会通过回调触发）
             try current_co.Sleep(check_interval);
 

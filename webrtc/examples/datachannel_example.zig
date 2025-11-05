@@ -29,6 +29,9 @@ pub fn main() !void {
     std.log.info("PeerConnection 已创建", .{});
 
     // 模拟 DTLS 握手完成（在实际应用中，这应该通过真实的 DTLS 握手完成）
+    // 注意：在实际应用中，应该通过 PeerConnection 的 DTLS 握手流程完成
+    // 这里为了演示，直接访问内部字段（仅用于测试）
+    // 在实际代码中，应该使用 isDtlsHandshakeComplete() 来检查状态
     if (pc.dtls_handshake) |handshake| {
         handshake.state = .handshake_complete;
         std.log.info("DTLS 握手状态已设置为完成（模拟）", .{});

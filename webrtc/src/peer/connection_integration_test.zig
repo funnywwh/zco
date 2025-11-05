@@ -6,8 +6,8 @@ const rtp = @import("../rtp/root.zig");
 
 const PeerConnection = peer.PeerConnection;
 
-/// 端到端集成测试
-/// 测试两个 PeerConnection 之间的完整连接流程和媒体传输
+// 端到端集成测试
+// 测试两个 PeerConnection 之间的完整连接流程和媒体传输
 
 test "PeerConnection end-to-end: offer/answer exchange" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -27,14 +27,14 @@ test "PeerConnection end-to-end: offer/answer exchange" {
     defer pc2.deinit();
 
     // Peer 1: 创建 offer
-    const offer = try pc1.createOffer(allocator);
+    const offer = try pc1.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
     try pc1.setLocalDescription(offer);
 
     // Peer 2: 接收 offer 并创建 answer
     try pc2.setRemoteDescription(offer);
-    const answer = try pc2.createAnswer(allocator);
+    const answer = try pc2.createAnswer(allocator, null);
     defer answer.deinit();
     defer allocator.destroy(answer);
     try pc2.setLocalDescription(answer);
@@ -233,7 +233,7 @@ test "PeerConnection end-to-end: setup attribute in offer and answer" {
     // Peer 1: 创建 offer
     const pc1 = try PeerConnection.init(allocator, &schedule, config);
     defer pc1.deinit();
-    const offer = try pc1.createOffer(allocator);
+    const offer = try pc1.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
 
@@ -258,7 +258,7 @@ test "PeerConnection end-to-end: setup attribute in offer and answer" {
     const pc2 = try PeerConnection.init(allocator, &schedule, config);
     defer pc2.deinit();
     try pc2.setRemoteDescription(offer);
-    const answer = try pc2.createAnswer(allocator);
+    const answer = try pc2.createAnswer(allocator, null);
     defer answer.deinit();
     defer allocator.destroy(answer);
 
@@ -296,7 +296,7 @@ test "PeerConnection end-to-end: DTLS role determination" {
     // Peer 1: 创建 offer（应该是服务器角色）
     const pc1 = try PeerConnection.init(allocator, &schedule, config);
     defer pc1.deinit();
-    const offer = try pc1.createOffer(allocator);
+    const offer = try pc1.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
     try pc1.setLocalDescription(offer);
@@ -305,7 +305,7 @@ test "PeerConnection end-to-end: DTLS role determination" {
     const pc2 = try PeerConnection.init(allocator, &schedule, config);
     defer pc2.deinit();
     try pc2.setRemoteDescription(offer);
-    const answer = try pc2.createAnswer(allocator);
+    const answer = try pc2.createAnswer(allocator, null);
     defer answer.deinit();
     defer allocator.destroy(answer);
     try pc2.setLocalDescription(answer);
@@ -350,4 +350,3 @@ test "PeerConnection end-to-end: event callback system" {
     try testing.expect(pc.onsignalingstatechange == null); // 默认未设置
     try testing.expect(pc.onicegatheringstatechange == null); // 默认未设置
 }
-

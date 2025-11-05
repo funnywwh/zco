@@ -69,7 +69,7 @@ test "createOffer generates valid SDP" {
     const pc = try PeerConnection.init(allocator, &schedule, config);
     defer pc.deinit();
 
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
 
@@ -125,7 +125,7 @@ test "createAnswer generates valid SDP from offer" {
     defer pc.deinit();
 
     // 先创建 offer
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
 
@@ -133,7 +133,7 @@ test "createAnswer generates valid SDP from offer" {
     try pc.setRemoteDescription(offer);
 
     // 创建 answer
-    const answer = try pc.createAnswer(allocator);
+    const answer = try pc.createAnswer(allocator, null);
     defer answer.deinit();
     defer allocator.destroy(answer);
 
@@ -185,7 +185,7 @@ test "createAnswer requires remote description" {
     defer pc.deinit();
 
     // 不设置 remote description，直接创建 answer 应该失败
-    const result = pc.createAnswer(allocator);
+    const result = pc.createAnswer(allocator, null);
     try testing.expectError(error.NoRemoteDescription, result);
 }
 
@@ -205,7 +205,7 @@ test "setLocalDescription updates signaling state" {
     try testing.expect(pc.getSignalingState() == .stable);
 
     // 创建并设置本地 offer
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
 
@@ -229,7 +229,7 @@ test "setRemoteDescription updates signaling state" {
     defer pc.deinit();
 
     // 创建并设置远程 offer
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
 
@@ -300,7 +300,7 @@ test "DTLS certificate is generated and has valid fingerprint" {
     // 验证指纹格式化
     const fingerprint_str = try cert.formatFingerprint(allocator);
     defer allocator.free(fingerprint_str);
-    
+
     // 指纹格式应该是 "XX:XX:XX:..." (64 个字符，63 个冒号)
     try testing.expect(fingerprint_str.len > 0);
     // 验证包含冒号分隔符
@@ -342,7 +342,7 @@ test "createOffer and createAnswer have different fingerprints" {
     // 两个 PeerConnection 的证书应该不同（因为是随机生成的）
     const fingerprint1 = pc1.dtls_certificate.?.computeFingerprint();
     const fingerprint2 = pc2.dtls_certificate.?.computeFingerprint();
-    
+
     // 验证指纹不同（极大概率）
     var different = false;
     for (fingerprint1, fingerprint2) |b1, b2| {
@@ -414,7 +414,7 @@ test "ICE candidate parsing from SDP" {
     defer pc.deinit();
 
     // 创建 offer（包含 ICE candidates）
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
 
@@ -506,7 +506,7 @@ test "setLocalDescription triggers ICE gathering" {
     const pc = try PeerConnection.init(allocator, &schedule, config);
     defer pc.deinit();
 
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
 
@@ -531,7 +531,7 @@ test "setRemoteDescription triggers ICE checking" {
     defer pc.deinit();
 
     // 先设置本地描述
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
     try pc.setLocalDescription(offer);
@@ -569,7 +569,7 @@ test "multiple createOffer calls generate different ICE credentials" {
     // ICE credentials 应该是随机的，所以应该不同（极大概率）
     try testing.expect(offer1.ice_ufrag != null);
     try testing.expect(offer2.ice_ufrag != null);
-    
+
     // 验证 ufrag 不同（极大概率）
     const ufrag1 = offer1.ice_ufrag.?;
     const ufrag2 = offer2.ice_ufrag.?;
@@ -600,7 +600,7 @@ test "deinit cleans up all resources" {
     const pc = try PeerConnection.init(allocator, &schedule, config);
 
     // 创建一些描述
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
     try pc.setLocalDescription(offer);
@@ -622,7 +622,7 @@ test "startDtlsHandshake without selected pair returns error" {
     defer pc.deinit();
 
     // 设置本地和远程描述，但未建立 ICE 连接（没有 selected pair）
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
     try pc.setLocalDescription(offer);
@@ -638,7 +638,7 @@ test "startDtlsHandshake without selected pair returns error" {
     // 但没有 selected pair 会返回错误
     const result = pc.startDtlsHandshake();
     // 应该返回错误（NoSelectedPair 或 NoUdpSocket）
-    try testing.expectError(error, result);
+    try testing.expectError(error.NoSelectedPair, result);
 }
 
 test "startDtlsHandshake server mode" {
@@ -654,7 +654,7 @@ test "startDtlsHandshake server mode" {
     defer pc.deinit();
 
     // 只设置本地描述（作为服务器）
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
     try pc.setLocalDescription(offer);
@@ -681,7 +681,7 @@ test "addIceCandidate without ICE agent returns error" {
     // 注意：这会导致内存泄漏，因为 deinit 会尝试清理，但这里只是测试错误路径
     // 实际上，init 总是会创建 ICE agent，所以这个测试可能无法真正执行
     // 但我们可以测试 addIceCandidate 的错误处理逻辑
-    
+
     // 创建一个 candidate
     const foundation = try allocator.dupe(u8, "test");
     defer allocator.free(foundation);
@@ -702,7 +702,7 @@ test "addIceCandidate without ICE agent returns error" {
 
     // 正常情况下应该成功
     try pc.addIceCandidate(candidate_ptr);
-    
+
     // 注意：无法真正测试 NoIceAgent 错误，因为 init 总是会创建 agent
     // 但代码中有这个错误处理，所以逻辑是正确的
 }
@@ -777,14 +777,14 @@ test "createAnswer with non-audio media skips it" {
 
     // 创建一个包含非音频媒体的 offer（需要手动构造）
     // 简化：使用现有的 offer，然后手动修改
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
 
     // 添加一个视频媒体描述（会被跳过）
     var video_formats = std.ArrayList([]const u8).init(allocator);
     try video_formats.append(try allocator.dupe(u8, "96")); // VP8
-    
+
     const video_media = SessionDescription.MediaDescription{
         .media_type = try allocator.dupe(u8, "video"),
         .port = 9,
@@ -798,7 +798,7 @@ test "createAnswer with non-audio media skips it" {
     try pc.setRemoteDescription(offer);
 
     // 创建 answer，应该只包含音频媒体
-    const answer = try pc.createAnswer(allocator);
+    const answer = try pc.createAnswer(allocator, null);
     defer answer.deinit();
     defer allocator.destroy(answer);
 
@@ -820,7 +820,7 @@ test "createAnswer with empty formats uses default" {
     defer pc.deinit();
 
     // 创建一个空的 offer（需要手动构造）
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
 
@@ -830,7 +830,7 @@ test "createAnswer with empty formats uses default" {
     try pc.setRemoteDescription(offer);
 
     // 创建 answer，应该使用默认格式
-    const answer = try pc.createAnswer(allocator);
+    const answer = try pc.createAnswer(allocator, null);
     defer answer.deinit();
     defer allocator.destroy(answer);
 
@@ -860,4 +860,3 @@ test "all state getters return correct initial values" {
 
 // 导入集成测试
 const _ = @import("./connection_integration_test.zig");
-

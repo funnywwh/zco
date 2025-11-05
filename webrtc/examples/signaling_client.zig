@@ -166,28 +166,11 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
     try ws.sendText(join_json);
     std.log.info("[Alice] 已加入房间: {s}", .{room_id});
 
-    // 设置 ICE Agent 的 UDP Socket
-    if (pc.ice_agent) |agent| {
-        if (agent.udp == null) {
-            const udp = try nets.Udp.init(schedule);
-            created_udp = udp; // 跟踪创建的 UDP
-            agent.udp = udp;
-            const bind_addr = try std.net.Address.parseIp4("127.0.0.1", 0);
-            try udp.bind(bind_addr);
-        }
-        try agent.gatherHostCandidates();
-        std.log.info("[Alice] 已收集 Host Candidates", .{});
-    }
-
-    // 设置 DTLS Record 的 UDP Socket
-    if (pc.dtls_record) |record| {
-        if (pc.ice_agent) |agent| {
-            if (agent.udp) |udp| {
-                record.setUdp(udp);
-                std.log.info("[Alice] DTLS Record 已关联 UDP Socket", .{});
-            }
-        }
-    }
+    // 设置 UDP Socket（可选，如果指定地址，否则会在 setLocalDescription 时自动创建）
+    // 注意：在浏览器 API 中，UDP Socket 会在 setLocalDescription 时自动创建
+    // 这里提前创建是为了指定绑定地址（127.0.0.1）
+    const bind_addr = try std.net.Address.parseIp4("127.0.0.1", 0);
+    created_udp = try pc.setupUdpSocket(bind_addr); // 跟踪创建的 UDP（用于后续清理）
 
     // 等待 Bob 的 user_joined 通知，然后发送 offer
     // 服务器会在 Bob 加入时发送 user_joined 通知给 Alice
@@ -259,7 +242,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
     }
 
     // 创建 offer
-    const offer = try pc.createOffer(schedule.allocator);
+    const offer = try pc.createOffer(schedule.allocator, null);
     // 注意：offer 会被 setLocalDescription 接管，不需要手动 deinit
     // setLocalDescription 会负责释放旧的描述（如果有）
     const offer_sdp = try offer.generate();
@@ -407,11 +390,9 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
     var connection_ready = false;
     if (connection_state == .connected) {
         // 确认 DTLS 握手也已完成
-        if (pc.dtls_handshake) |handshake| {
-            if (handshake.state == .handshake_complete) {
-                connection_ready = true;
-                std.log.info("[Alice] 连接已就绪（ICE + DTLS）", .{});
-            }
+        if (pc.isDtlsHandshakeComplete()) {
+            connection_ready = true;
+            std.log.info("[Alice] 连接已就绪（ICE + DTLS）", .{});
         }
     }
 
@@ -428,13 +409,11 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
             // 只有在连接成功建立时才发送信号
             if (state == .connected) {
                 // 确认 DTLS 握手也已完成
-                if (pc_self.dtls_handshake) |handshake| {
-                    if (handshake.state == .handshake_complete) {
-                        if (alice_connection_chan) |ch| {
-                            _ = ch.send(true) catch |e| {
-                                std.log.err("[Alice] 发送连接就绪信号失败: {}", .{e});
-                            };
-                        }
+                if (pc_self.isDtlsHandshakeComplete()) {
+                    if (alice_connection_chan) |ch| {
+                        _ = ch.send(true) catch |e| {
+                            std.log.err("[Alice] 发送连接就绪信号失败: {}", .{e});
+                        };
                     }
                 }
             }
@@ -449,13 +428,11 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
             const state = pc_self.getConnectionState();
             if (state == .connected) {
                 // 确认 DTLS 握手已完成
-                if (pc_self.dtls_handshake) |handshake| {
-                    if (handshake.state == .handshake_complete) {
-                        if (alice_connection_chan) |ch| {
-                            _ = ch.send(true) catch |e| {
-                                std.log.err("[Alice] 发送连接就绪信号失败: {}", .{e});
-                            };
-                        }
+                if (pc_self.isDtlsHandshakeComplete()) {
+                    if (alice_connection_chan) |ch| {
+                        _ = ch.send(true) catch |e| {
+                            std.log.err("[Alice] 发送连接就绪信号失败: {}", .{e});
+                        };
                     }
                 }
             }
@@ -467,14 +444,12 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
         // 设置回调后，再次检查状态（避免竞态条件：回调可能在设置回调之前就触发）
         const state_after_setup = pc.getConnectionState();
         if (state_after_setup == .connected) {
-            if (pc.dtls_handshake) |handshake| {
-                if (handshake.state == .handshake_complete) {
-                    // 连接已经就绪，直接发送信号
-                    _ = connection_ready_chan.send(true) catch |e| {
-                        std.log.err("[Alice] 发送连接就绪信号失败: {}", .{e});
-                    };
-                    connection_ready = true;
-                }
+            if (pc.isDtlsHandshakeComplete()) {
+                // 连接已经就绪，直接发送信号
+                _ = connection_ready_chan.send(true) catch |e| {
+                    std.log.err("[Alice] 发送连接就绪信号失败: {}", .{e});
+                };
+                connection_ready = true;
             }
         }
 
@@ -541,32 +516,31 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
     channel.setState(.open);
 
     // 发送 ICE candidates
-    if (pc.ice_agent) |agent| {
-        for (agent.local_candidates.items) |candidate| {
-            const candidate_str = try candidate.toSdpCandidate(schedule.allocator);
-            defer schedule.allocator.free(candidate_str);
+    const local_candidates = pc.getLocalCandidates();
+    for (local_candidates) |candidate| {
+        const candidate_str = try candidate.toSdpCandidate(schedule.allocator);
+        defer schedule.allocator.free(candidate_str);
 
-            // 注意：这些内存会被 ice_msg.deinit 释放
-            const ice_room_id_dup = try schedule.allocator.dupe(u8, room_id);
-            const ice_user_id_dup = try schedule.allocator.dupe(u8, user_id);
-            const ice_candidate_str_dup = try schedule.allocator.dupe(u8, candidate_str);
+        // 注意：这些内存会被 ice_msg.deinit 释放
+        const ice_room_id_dup = try schedule.allocator.dupe(u8, room_id);
+        const ice_user_id_dup = try schedule.allocator.dupe(u8, user_id);
+        const ice_candidate_str_dup = try schedule.allocator.dupe(u8, candidate_str);
 
-            var ice_msg = SignalingMessage{
-                .type = .ice_candidate,
-                .room_id = ice_room_id_dup,
-                .user_id = ice_user_id_dup,
-                .candidate = .{
-                    .candidate = ice_candidate_str_dup,
-                },
-            };
-            defer ice_msg.deinit(schedule.allocator);
+        var ice_msg = SignalingMessage{
+            .type = .ice_candidate,
+            .room_id = ice_room_id_dup,
+            .user_id = ice_user_id_dup,
+            .candidate = .{
+                .candidate = ice_candidate_str_dup,
+            },
+        };
+        defer ice_msg.deinit(schedule.allocator);
 
-            const ice_json = try ice_msg.toJson(schedule.allocator);
-            defer schedule.allocator.free(ice_json);
-            try ws.sendText(ice_json);
-        }
-        std.log.info("[Alice] 已发送所有 ICE candidates", .{});
+        const ice_json = try ice_msg.toJson(schedule.allocator);
+        defer schedule.allocator.free(ice_json);
+        try ws.sendText(ice_json);
     }
+    std.log.info("[Alice] 已发送所有 ICE candidates", .{});
 
     // 等待一段时间，让连接建立
     try current_co_alice.Sleep(200 * std.time.ns_per_ms);
@@ -639,7 +613,7 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
         created_udp = null;
     }
 
-    // 4. 清理 PeerConnection（会关闭所有相关资源）
+    // 4. 清理 PeerConnection（deinit 内部会调用 close() 等待所有协程退出）
     pc.deinit();
 
     // 5. 通知等待协程工作完成（WaitGroup 需要在调度器运行时工作）
@@ -719,28 +693,11 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
     try ws.sendText(join_json);
     std.log.info("[Bob] 已加入房间: {s}", .{room_id});
 
-    // 设置 ICE Agent 的 UDP Socket
-    if (pc.ice_agent) |agent| {
-        if (agent.udp == null) {
-            const udp = try nets.Udp.init(schedule);
-            created_udp = udp; // 跟踪创建的 UDP
-            agent.udp = udp;
-            const bind_addr = try std.net.Address.parseIp4("127.0.0.1", 0);
-            try udp.bind(bind_addr);
-        }
-        try agent.gatherHostCandidates();
-        std.log.info("[Bob] 已收集 Host Candidates", .{});
-    }
-
-    // 设置 DTLS Record 的 UDP Socket
-    if (pc.dtls_record) |record| {
-        if (pc.ice_agent) |agent| {
-            if (agent.udp) |udp| {
-                record.setUdp(udp);
-                std.log.info("[Bob] DTLS Record 已关联 UDP Socket", .{});
-            }
-        }
-    }
+    // 设置 UDP Socket（可选，如果指定地址，否则会在 setLocalDescription 时自动创建）
+    // 注意：在浏览器 API 中，UDP Socket 会在 setLocalDescription 时自动创建
+    // 这里提前创建是为了指定绑定地址（127.0.0.1）
+    const bob_bind_addr = try std.net.Address.parseIp4("127.0.0.1", 0);
+    created_udp = try pc.setupUdpSocket(bob_bind_addr); // 跟踪创建的 UDP（用于后续清理）
 
     // 等待接收 user_joined 通知（Alice 上线）或 offer
     std.log.info("[Bob] 开始等待 user_joined 通知或 offer...", .{});
@@ -824,7 +781,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
 
                     // 创建 answer
                     std.log.info("[Bob] 开始创建 answer...", .{});
-                    const answer = try pc.createAnswer(schedule.allocator);
+                    const answer = try pc.createAnswer(schedule.allocator, null);
                     // 注意：answer 会被 setLocalDescription 接管，不需要手动 deinit
                     const answer_sdp = try answer.generate();
                     defer schedule.allocator.free(answer_sdp);
@@ -890,32 +847,31 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
     }
 
     // 发送 ICE candidates
-    if (pc.ice_agent) |agent| {
-        for (agent.local_candidates.items) |candidate| {
-            const candidate_str = try candidate.toSdpCandidate(schedule.allocator);
-            defer schedule.allocator.free(candidate_str);
+    const bob_local_candidates = pc.getLocalCandidates();
+    for (bob_local_candidates) |candidate| {
+        const candidate_str = try candidate.toSdpCandidate(schedule.allocator);
+        defer schedule.allocator.free(candidate_str);
 
-            // 注意：这些内存会被 ice_msg.deinit 释放
-            const bob_ice_room_id_dup = try schedule.allocator.dupe(u8, room_id);
-            const bob_ice_user_id_dup = try schedule.allocator.dupe(u8, user_id);
-            const bob_ice_candidate_str_dup = try schedule.allocator.dupe(u8, candidate_str);
+        // 注意：这些内存会被 ice_msg.deinit 释放
+        const bob_ice_room_id_dup = try schedule.allocator.dupe(u8, room_id);
+        const bob_ice_user_id_dup = try schedule.allocator.dupe(u8, user_id);
+        const bob_ice_candidate_str_dup = try schedule.allocator.dupe(u8, candidate_str);
 
-            var ice_msg = SignalingMessage{
-                .type = .ice_candidate,
-                .room_id = bob_ice_room_id_dup,
-                .user_id = bob_ice_user_id_dup,
-                .candidate = .{
-                    .candidate = bob_ice_candidate_str_dup,
-                },
-            };
-            defer ice_msg.deinit(schedule.allocator);
+        var ice_msg = SignalingMessage{
+            .type = .ice_candidate,
+            .room_id = bob_ice_room_id_dup,
+            .user_id = bob_ice_user_id_dup,
+            .candidate = .{
+                .candidate = bob_ice_candidate_str_dup,
+            },
+        };
+        defer ice_msg.deinit(schedule.allocator);
 
-            const ice_json = try ice_msg.toJson(schedule.allocator);
-            defer schedule.allocator.free(ice_json);
-            try ws.sendText(ice_json);
-        }
-        std.log.info("[Bob] 已发送所有 ICE candidates", .{});
+        const ice_json = try ice_msg.toJson(schedule.allocator);
+        defer schedule.allocator.free(ice_json);
+        try ws.sendText(ice_json);
     }
+    std.log.info("[Bob] 已发送所有 ICE candidates", .{});
 
     // 设置 SCTP Verification Tags（简化实现）
     // 注意：在实际应用中，verification tags 应该从 SCTP 握手过程中获取
@@ -942,11 +898,9 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
     var connection_ready = false;
     if (connection_state == .connected) {
         // 确认 DTLS 握手也已完成
-        if (pc.dtls_handshake) |handshake| {
-            if (handshake.state == .handshake_complete) {
-                connection_ready = true;
-                std.log.info("[Bob] 连接已就绪（ICE + DTLS）", .{});
-            }
+        if (pc.isDtlsHandshakeComplete()) {
+            connection_ready = true;
+            std.log.info("[Bob] 连接已就绪（ICE + DTLS）", .{});
         }
     }
 
@@ -963,13 +917,11 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
             // 只有在连接成功建立时才发送信号
             if (state == .connected) {
                 // 确认 DTLS 握手也已完成
-                if (pc_self.dtls_handshake) |handshake| {
-                    if (handshake.state == .handshake_complete) {
-                        if (bob_connection_chan) |ch| {
-                            _ = ch.send(true) catch |e| {
-                                std.log.err("[Bob] 发送连接就绪信号失败: {}", .{e});
-                            };
-                        }
+                if (pc_self.isDtlsHandshakeComplete()) {
+                    if (bob_connection_chan) |ch| {
+                        _ = ch.send(true) catch |e| {
+                            std.log.err("[Bob] 发送连接就绪信号失败: {}", .{e});
+                        };
                     }
                 }
             }
@@ -984,13 +936,11 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
             const state = pc_self.getConnectionState();
             if (state == .connected) {
                 // 确认 DTLS 握手已完成
-                if (pc_self.dtls_handshake) |handshake| {
-                    if (handshake.state == .handshake_complete) {
-                        if (bob_connection_chan) |ch| {
-                            _ = ch.send(true) catch |e| {
-                                std.log.err("[Bob] 发送连接就绪信号失败: {}", .{e});
-                            };
-                        }
+                if (pc_self.isDtlsHandshakeComplete()) {
+                    if (bob_connection_chan) |ch| {
+                        _ = ch.send(true) catch |e| {
+                            std.log.err("[Bob] 发送连接就绪信号失败: {}", .{e});
+                        };
                     }
                 }
             }
@@ -1002,14 +952,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
         // 设置回调后，再次检查状态（避免竞态条件：回调可能在设置回调之前就触发）
         const state_after_setup = pc.getConnectionState();
         if (state_after_setup == .connected) {
-            if (pc.dtls_handshake) |handshake| {
-                if (handshake.state == .handshake_complete) {
-                    // 连接已经就绪，直接发送信号
-                    _ = connection_ready_chan.send(true) catch |e| {
-                        std.log.err("[Bob] 发送连接就绪信号失败: {}", .{e});
-                    };
-                    connection_ready = true;
-                }
+            if (pc.isDtlsHandshakeComplete()) {
+                // 连接已经就绪，直接发送信号
+                _ = connection_ready_chan.send(true) catch |e| {
+                    std.log.err("[Bob] 发送连接就绪信号失败: {}", .{e});
+                };
+                connection_ready = true;
             }
         }
 
@@ -1157,7 +1105,7 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
         created_udp = null;
     }
 
-    // 4. 清理 PeerConnection（会关闭所有相关资源）
+    // 4. 清理 PeerConnection（deinit 内部会调用 close() 等待所有协程退出）
     pc.deinit();
 
     // 5. 通知等待协程工作完成（WaitGroup 需要在调度器运行时工作）
