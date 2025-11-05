@@ -469,6 +469,11 @@ ZCO 正在实现完整的 WebRTC 协议栈，支持音视频通话功能。这�
 - [x] 数据通道事件系统（onopen, onclose, onmessage, onerror）
 - [x] Stream ID 自动分配
 - [x] 网络传输（通过 DTLS 发送 SCTP 数据包）
+- [x] 数据通道接收流程（从 DTLS 接收并解析 SCTP 包）
+  - [x] `recvSctpData()` - 从 DTLS 接收数据
+  - [x] `handleSctpPacket()` - 解析 SCTP 包并验证
+  - [x] `handleDataChunk()` - 路由到 DataChannel 并触发事件
+  - [x] 示例程序已验证功能可用
 - 完整单元测试（`webrtc/src/sctp/*_test.zig`）
 
 ### 阶段 7: 媒体处理 🔄 (部分完成)

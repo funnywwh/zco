@@ -471,6 +471,11 @@ webrtc/
 - [x] 实现数据通道事件系统（onopen, onclose, onmessage, onerror）
 - [x] 实现数据通道列表管理和 Stream ID 自动分配
 - [x] 实现数据通道网络传输（通过 DTLS 发送 SCTP 数据包）
+- [x] 实现数据通道接收流程（从 DTLS 接收并解析 SCTP 包）
+  - [x] `recvSctpData()` - 从 DTLS 接收数据
+  - [x] `handleSctpPacket()` - 解析 SCTP 包并验证
+  - [x] `handleDataChunk()` - 路由到 DataChannel 并触发 onmessage 事件
+  - [x] 示例程序已验证功能可用
 - [x] 实现 MediaStreamTrack 抽象和音频/视频轨道管理
 - [x] 实现 RTCRtpSender 和 RTCRtpReceiver
 - [x] 实现 RTCPeerConnection，整合所有组件
@@ -501,6 +506,7 @@ webrtc/
   - ✅ 完成 WebRTC 数据通道实现（RFC 8832）
   - ✅ 完成数据通道事件系统和列表管理
   - ✅ 完成数据通道网络传输（通过 DTLS）
+  - ✅ 完成数据通道接收流程（从 DTLS 接收并解析 SCTP 包）
   - ✅ 完成 MediaStreamTrack 和 RTCRtpSender/Receiver 实现
   - ✅ 完成 RTCPeerConnection 核心功能整合
   - ✅ 完成所有模块的单元测试（216/216 测试通过）
@@ -512,6 +518,13 @@ webrtc/
     - 更新 Configuration 支持 certificates 和 credential_type
     - 修复所有编译错误
     - **所有示例程序已验证通过**（udp_test, datachannel_example, datachannel_echo, signaling_server, signaling_client）
+  - ✅ **数据通道接收流程**（2025-11-05）
+    - 实现 `recvSctpData()` - 从 DTLS 接收并解析 SCTP 数据包
+    - 实现 `handleSctpPacket()` - 解析 SCTP Common Header 和 Chunk
+    - 实现 `handleDataChunk()` - 路由到 DataChannel 并触发 onmessage 事件
+    - 示例程序已验证功能可用（datachannel_echo, signaling_client）
+    - 🔄 待完善：自动创建 DataChannel（收到新 Stream ID 时）
+    - 🔄 待完善：处理其他 SCTP Chunk 类型（SACK、HEARTBEAT 等）
 
 ---
 

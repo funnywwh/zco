@@ -152,8 +152,15 @@ sctp_association: ?*sctp.Association,
 - [x] 实现 createDataChannel
 - [x] 实现数据通道列表管理
 - [x] 实现 Stream ID 自动分配
-- [x] 实现数据通道网络传输（通过 DTLS）
+- [x] 实现数据通道网络传输（通过 DTLS 发送 SCTP 数据包）
+- [x] 实现数据通道接收流程（从 DTLS 接收并解析 SCTP 包）
+  - [x] `recvSctpData()` - 从 DTLS 接收数据
+  - [x] `handleSctpPacket()` - 解析 SCTP 包并验证
+  - [x] `handleDataChunk()` - 路由到 DataChannel 并触发 onmessage 事件
+  - [x] 示例程序已验证功能可用
 - [x] 处理数据通道事件
+- [ ] 自动创建 DataChannel（收到新 Stream ID 时）🔄 待完善
+- [ ] 处理其他 SCTP Chunk 类型（SACK、HEARTBEAT 等）🔄 待完善
 
 ### 步骤 9: 事件系统
 - [x] 实现事件回调（onicecandidate, onconnectionstatechange 等）
