@@ -139,13 +139,13 @@ else
 fi
 
 # 检查 DTLS 握手
-if grep -q "DTLS 握手已完成" "$LOG_DIR/alice.log" 2>/dev/null; then
+if grep -qE "握手完成|DTLS 握手完成回调被触发" "$LOG_DIR/alice.log" 2>/dev/null; then
     echo "✅ DTLS 握手可能已完成 (Alice)"
 else
     echo "⚠️  DTLS 握手状态未知 (Alice)"
 fi
 
-if grep -q "DTLS 握手已完成" "$LOG_DIR/bob.log" 2>/dev/null; then
+if grep -qE "握手完成|DTLS 握手完成回调被触发" "$LOG_DIR/bob.log" 2>/dev/null; then
     echo "✅ DTLS 握手可能已完成 (Bob)"
 else
     echo "⚠️  DTLS 握手状态未知 (Bob)"
