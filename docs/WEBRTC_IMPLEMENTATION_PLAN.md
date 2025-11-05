@@ -1,10 +1,10 @@
 # WebRTC 完整实现计划
 
-**文档版本**: 2.0  
+**文档版本**: 2.1  
 **创建日期**: 2025年11月  
-**最后更新**: 2025年11月4日  
+**最后更新**: 2025年11月5日  
 **项目分支**: `feature/webrtc-implementation`  
-**当前状态**: 核心功能已完成（阶段 1-8 基本完成，阶段 9 进行中）
+**当前状态**: 核心功能已完成，API 优化完成（阶段 1-9 基本完成，示例程序已全部验证通过）
 
 ## 📋 项目概述
 
@@ -288,21 +288,39 @@ webrtc/
 - addTrack/removeTrack
 - addIceCandidate
 - **文件**: `webrtc/src/peer/connection.zig`
-- **状态**: ✅ 基本完成
+- **状态**: ✅ 已完成
 - **功能**:
   - PeerConnection 状态机（SignalingState, IceConnectionState, IceGatheringState, ConnectionState）
   - createOffer() - 生成完整的 SDP offer（包含 ICE 参数、DTLS 指纹、媒体描述）
+    - 自动创建 UDP socket 并收集 candidates（如果还未收集）
+    - 支持 RTCOfferOptions 参数（符合浏览器 API）
   - createAnswer() - 生成 SDP answer
+    - 自动创建 UDP socket 并收集 candidates（如果还未收集）
+    - 支持 RTCAnswerOptions 参数（符合浏览器 API）
   - setLocalDescription() / setRemoteDescription() - SDP 描述设置
+    - setLocalDescription: 自动创建 UDP socket 并收集 candidates（符合浏览器行为）
+    - setRemoteDescription: 自动解析 SDP 中的 candidates，只在有 candidate pairs 时启动 connectivity checks
   - addTrack() / removeTrack() - 媒体轨道管理
+  - addIceCandidate() - 添加 ICE candidate（支持 RTCIceCandidate 或 RTCIceCandidateInit）
+    - 自动生成 candidate pairs 并开始 connectivity checks（如果条件满足）
   - createDataChannel() - 数据通道创建
   - getDataChannels() / findDataChannel() - 数据通道管理
+  - setupUdpSocket() - 设置 UDP socket（可选，主要用于测试）
+    - setupUdpSocketInternal 自动收集 candidates
+  - getLocalCandidates() / isDtlsHandshakeComplete() - 封装内部组件访问
   - DTLS 证书生成和指纹计算
   - DTLS 握手集成（客户端/服务器端）
   - SRTP 密钥派生和设置
   - RTP/RTCP 集成（SSRC 管理、包发送/接收、SRTP 加密/解密）
   - 事件系统（oniceconnectionstatechange, onicecandidate, onconnectionstatechange 等）
   - SCTP 数据通道网络传输（通过 DTLS 发送 SCTP 数据包）
+  - 协程管理（封装内部协程，确保安全退出）
+  - 浏览器 API 兼容性（RTCSessionDescription, RTCIceCandidate, RTCOfferOptions, RTCAnswerOptions, RTCIceCandidateInit）
+- **API 改进**:
+  - 自动化 ICE candidates 收集，符合浏览器行为
+  - 优化 setRemoteDescription，等待 candidates 后再启动 connectivity checks
+  - 改进 addIceCandidate，自动处理 candidate pairs 生成
+  - 所有示例程序已验证通过
 - **测试**: `webrtc/src/peer/connection_test.zig`, `webrtc/src/peer/connection_integration_test.zig`, `webrtc/src/peer/connection_datachannel_test.zig`, `webrtc/src/peer/connection_datachannel_list_test.zig` - 包含完整的单元测试和集成测试
 
 #### 16. Transceiver 和会话管理
@@ -336,7 +354,14 @@ webrtc/
 - 简单的点对点音视频通话示例
 - 信令服务器示例
 - 数据通道示例
-- **状态**: ⏳ 待开始（核心功能已完成，可以开始实现示例应用）
+- **状态**: ✅ 已完成
+- **已完成的示例**:
+  - `examples/udp_test.zig` - UDP 发送/接收测试（已验证通过）
+  - `examples/datachannel_example.zig` - 数据通道基本示例（已验证通过）
+  - `examples/datachannel_echo.zig` - 数据通道 Echo 示例（两个 PeerConnection 通信，已验证通过）
+  - `examples/signaling_server.zig` - WebSocket 信令服务器（已验证通过）
+  - `examples/signaling_client.zig` - 信令客户端示例（Alice/Bob 完整信令交换，已验证通过）
+- **所有示例程序已验证通过，API 使用正确**
 
 ## 🔧 技术要点
 
@@ -458,7 +483,7 @@ webrtc/
   - ✅ 完成 ICE Candidate 数据结构和转换
   - ✅ 完成基础模块的单元测试（50/50 测试通过）
   - 🔧 修复 Zig 0.14.0 API 兼容性问题（`readInt`/`writeInt`、类型别名等）
-- **2025-01-XX**: 
+- **2025-11-05**: 
   - ✅ 完成 ICE Agent 实现（候选收集、连接检查、状态机）
   - ✅ 完成 TURN 协议实现（RFC 5766）
   - ✅ 完成 DTLS 记录层和握手协议实现
@@ -474,6 +499,14 @@ webrtc/
   - ✅ 完成 MediaStreamTrack 和 RTCRtpSender/Receiver 实现
   - ✅ 完成 RTCPeerConnection 核心功能整合
   - ✅ 完成所有模块的单元测试（216/216 测试通过）
+  - ✅ **优化 PeerConnection API 以符合浏览器行为**
+    - 自动化 ICE candidates 收集（setupUdpSocketInternal, createOffer/createAnswer, setLocalDescription）
+    - 优化 setRemoteDescription（只在有 candidate pairs 时启动 connectivity checks）
+    - 改进 addIceCandidate（自动生成 pairs 并开始 connectivity checks）
+    - 添加浏览器标准类型别名（RTCSessionDescription, RTCIceCandidate, RTCOfferOptions, RTCAnswerOptions, RTCIceCandidateInit）
+    - 更新 Configuration 支持 certificates 和 credential_type
+    - 修复所有编译错误
+    - **所有示例程序已验证通过**（udp_test, datachannel_example, datachannel_echo, signaling_server, signaling_client）
 
 ---
 
