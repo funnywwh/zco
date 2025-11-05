@@ -344,8 +344,10 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
                     // 如果 setRemoteDescription 失败，需要清理 remote_sdp_ptr（包括内部的字段）
                     try pc.setRemoteDescription(remote_sdp_ptr);
                     // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
-                    // 此时 remote_sdp 的字段指针已经转移到 remote_sdp_ptr，所以不需要清理
-                    // 但为了安全，我们仍然标记为已清理（虽然 errdefer 不会执行）
+                    // 此时 remote_sdp 的字段指针已经转移到 remote_sdp_ptr，需要清空 remote_sdp 的字段
+                    // 以避免 errdefer 释放已转移的指针
+                    remote_sdp.fingerprint = null;
+                    remote_sdp.times = std.ArrayList(webrtc.signaling.sdp.Sdp.Time).init(schedule.allocator);
                     remote_sdp_cleaned = true;
                     std.log.info("[Alice] 已设置远程 answer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
                     received_answer = true;
@@ -809,8 +811,10 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
                         continue;
                     };
                     // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
-                    // 此时 remote_sdp 的字段指针已经转移到 remote_sdp_ptr，所以不需要清理
-                    // 但为了安全，我们仍然标记为已清理（虽然 errdefer 不会执行）
+                    // 此时 remote_sdp 的字段指针已经转移到 remote_sdp_ptr，需要清空 remote_sdp 的字段
+                    // 以避免 errdefer 释放已转移的指针
+                    remote_sdp.fingerprint = null;
+                    remote_sdp.times = std.ArrayList(webrtc.signaling.sdp.Sdp.Time).init(schedule.allocator);
                     remote_sdp_cleaned = true;
                     std.log.info("[Bob] 已设置远程 offer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
 
