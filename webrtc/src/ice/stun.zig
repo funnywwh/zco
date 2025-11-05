@@ -544,7 +544,7 @@ pub const Stun = struct {
 
         // 创建响应消息
         var response = Message.init(self.allocator);
-        errdefer response.deinit();
+        // 注意：response 会在函数结束时通过 defer 清理
 
         // 设置响应消息头（使用相同的 transaction_id）
         const message_type = MessageHeader.setType(.success_response, .binding);
