@@ -566,10 +566,7 @@ pub const Stun = struct {
         // 注意：如果 addAttribute 失败，需要释放 xor_attr.value
         // 如果成功，所有权转移给 response，会在 response.deinit() 中释放
         try response.addAttribute(xor_attr);
-        errdefer {
-            // 如果后续操作失败，清理 response 的 attributes（包括 xor_attr.value）
-            response.deinit();
-        }
+        // 注意：如果后续操作失败，errdefer response.deinit() 会清理 response 的 attributes（包括 xor_attr.value）
 
         // 编码响应
         const response_data = try response.encode(self.allocator);
