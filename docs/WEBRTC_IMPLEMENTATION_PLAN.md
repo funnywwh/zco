@@ -429,11 +429,16 @@ webrtc/
 - [ ] 实现 WebSocket 信令服务器，支持 offer/answer/ICE candidate 消息路由
 - [ ] 实现实际的 Opus 编码/解码（当前为占位实现）
 - [ ] 实现实际的 VP8 编码/解码（当前为占位实现）
-- [ ] 实现数据通道的完整接收流程（从 DTLS 接收并解析 SCTP 包）
+- [x] 实现数据通道的完整接收流程（从 DTLS 接收并解析 SCTP 包）✅ **基本完成**
+  - ✅ 已实现 `recvSctpData()` - 从 DTLS 接收数据
+  - ✅ 已实现 `handleSctpPacket()` - 解析 SCTP 包
+  - ✅ 已实现 `handleDataChunk()` - 路由到 DataChannel 并触发事件
+  - ✅ 示例程序已验证功能可用
+  - 🔄 待完善：自动创建 DataChannel（收到新 Stream ID 时）
+  - 🔄 待完善：处理其他 SCTP Chunk 类型（SACK、HEARTBEAT 等）
 - [ ] 完善 SCTP 确认和重传机制
 - [ ] 实现 Adler-32 校验和（RFC 4960，当前为简化实现）
-- [ ] 创建完整的音视频通话示例应用
-- [ ] 创建数据通道示例应用
+- [ ] 创建完整的音视频通话示例应用（需要实际编解码器实现）
 
 ### 已完成任务
 - [x] 在 nets 模块中实现 UDP socket 支持（异步读写）

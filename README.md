@@ -224,9 +224,11 @@ pub fn main() !void {
   - ✅ **API 优化**（自动化 ICE candidates 收集，符合浏览器行为）
   - ✅ 216/216 单元测试通过
   - ✅ **示例程序**（udp_test, datachannel_example, datachannel_echo, signaling_server, signaling_client）
+  - ✅ **数据通道接收流程**（从 DTLS 接收并解析 SCTP 包，基本完成）
 - **待完成**:
   - 🔄 实际的 Opus/VP8 编解码器实现（当前为占位实现）
-  - 🔄 数据通道接收流程（从 DTLS 接收并解析 SCTP 包）
+  - 🔄 数据通道自动创建（收到新 Stream ID 时自动创建 DataChannel）
+  - 🔄 完善 SCTP 协议支持（处理 SACK、HEARTBEAT 等 Chunk 类型）
 
 ## 性能测试
 
