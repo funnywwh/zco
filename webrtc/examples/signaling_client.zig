@@ -328,11 +328,6 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
                 if (msg.sdp) |sdp| {
                     std.log.info("[Alice] 收到 answer，开始解析...", .{});
                     var remote_sdp = try webrtc.signaling.sdp.Sdp.parse(schedule.allocator, sdp);
-                    // 注意：remote_sdp 会在成功设置到 PeerConnection 后由 PeerConnection 管理
-                    // 如果失败，需要在错误路径清理
-                    var remote_sdp_cleaned = false;
-                    errdefer if (!remote_sdp_cleaned) remote_sdp.deinit();
-
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
                     const remote_sdp_ptr = try schedule.allocator.create(webrtc.signaling.sdp.Sdp);
@@ -342,18 +337,18 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
                     remote_sdp_ptr.* = remote_sdp;
                     // 注意：由于浅拷贝，remote_sdp 和 remote_sdp_ptr 共享字段指针
                     // 一旦 remote_sdp_ptr 的所有权转移给 PeerConnection，remote_sdp 的字段就不应该再被清理
-                    // 所以我们需要在成功转移后，清空 remote_sdp 的字段引用，避免 errdefer 清理
+                    // 为了避免 errdefer 清理 remote_sdp，我们使用不同的策略：
+                    // 在成功转移后，我们不清空 remote_sdp 的字段，而是确保 errdefer 不会执行
+                    // 但实际上，由于 errdefer 只在错误路径执行，成功路径上不会执行
+                    // 所以问题可能是：在 continue 之后，remote_sdp 仍然在作用域中，但它的字段已经被转移
+                    // 解决方案：在成功转移后，我们不需要做任何事情，因为 errdefer 不会执行
+                    // 但为了安全，我们仍然可以清空字段引用（虽然这不是必需的）
                     
                     // 如果 setRemoteDescription 失败，需要清理 remote_sdp_ptr（包括内部的字段）
                     try pc.setRemoteDescription(remote_sdp_ptr);
                     // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
-                    // 由于浅拷贝，remote_sdp 和 remote_sdp_ptr 共享字段指针
-                    // 我们需要清空 remote_sdp 的字段引用，避免 errdefer 释放已转移的指针
-                    // 但要注意：不能释放共享的指针，只能清空引用
-                    remote_sdp.fingerprint = null;
-                    remote_sdp.times.deinit();
-                    remote_sdp.times = std.ArrayList(webrtc.signaling.sdp.Sdp.Time).init(schedule.allocator);
-                    remote_sdp_cleaned = true;
+                    // remote_sdp 的字段指针已经转移到 remote_sdp_ptr，不需要清理
+                    // errdefer 不会执行（因为函数没有返回错误）
                     std.log.info("[Alice] 已设置远程 answer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
                     received_answer = true;
                     std.log.info("[Alice] 已收到 answer，退出等待循环", .{});
@@ -788,11 +783,6 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
                         std.log.err("[Bob] 解析 SDP 失败: {}", .{err});
                         continue;
                     };
-                    // 注意：remote_sdp 会在成功设置到 PeerConnection 后由 PeerConnection 管理
-                    // 如果失败，需要在错误路径清理
-                    var remote_sdp_cleaned = false;
-                    errdefer if (!remote_sdp_cleaned) remote_sdp.deinit();
-
                     // 注意：remote_sdp 是值类型，需要转换为堆分配
                     // setRemoteDescription 会负责释放旧的描述和新的描述
                     const remote_sdp_ptr = schedule.allocator.create(webrtc.signaling.sdp.Sdp) catch |err| {
@@ -807,7 +797,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
                     remote_sdp_ptr.* = remote_sdp;
                     // 注意：由于浅拷贝，remote_sdp 和 remote_sdp_ptr 共享字段指针
                     // 一旦 remote_sdp_ptr 的所有权转移给 PeerConnection，remote_sdp 的字段就不应该再被清理
-                    // 所以我们需要在成功转移后，清空 remote_sdp 的字段引用，避免 errdefer 清理
+                    // 为了避免 errdefer 清理 remote_sdp，我们使用不同的策略：
+                    // 在成功转移后，我们不清空 remote_sdp 的字段，而是确保 errdefer 不会执行
+                    // 但实际上，由于 errdefer 只在错误路径执行，成功路径上不会执行
+                    // 所以问题可能是：在 continue 之后，remote_sdp 仍然在作用域中，但它的字段已经被转移
+                    // 解决方案：在成功转移后，我们不需要做任何事情，因为 errdefer 不会执行
+                    // 但为了安全，我们仍然可以清空字段引用（虽然这不是必需的）
                     
                     // 如果 setRemoteDescription 失败，需要清理 remote_sdp_ptr（包括内部的字段）
                     pc.setRemoteDescription(remote_sdp_ptr) catch |err| {
@@ -819,13 +814,8 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
                         continue;
                     };
                     // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
-                    // 由于浅拷贝，remote_sdp 和 remote_sdp_ptr 共享字段指针
-                    // 我们需要清空 remote_sdp 的字段引用，避免 errdefer 释放已转移的指针
-                    // 但要注意：不能释放共享的指针，只能清空引用
-                    remote_sdp.fingerprint = null;
-                    remote_sdp.times.deinit();
-                    remote_sdp.times = std.ArrayList(webrtc.signaling.sdp.Sdp.Time).init(schedule.allocator);
-                    remote_sdp_cleaned = true;
+                    // remote_sdp 的字段指针已经转移到 remote_sdp_ptr，不需要清理
+                    // errdefer 不会执行（因为函数没有返回错误）
                     std.log.info("[Bob] 已设置远程 offer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
 
                     // 创建 answer
