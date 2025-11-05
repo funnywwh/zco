@@ -52,23 +52,44 @@ pub fn main() !void {
     const role = args[1];
     const room_id = args[2];
 
+    // 创建 WaitGroup 来等待工作协程完成
+    var wg = try zco.WaitGroup.init(schedule);
+    defer wg.deinit();
+    try wg.add(1);
+
     // 在协程中运行客户端
     if (std.mem.eql(u8, role, "alice")) {
-        _ = try schedule.go(runAlice, .{ schedule, room_id });
+        _ = try schedule.go(runAlice, .{ schedule, room_id, &wg });
     } else if (std.mem.eql(u8, role, "bob")) {
-        _ = try schedule.go(runBob, .{ schedule, room_id });
+        _ = try schedule.go(runBob, .{ schedule, room_id, &wg });
     } else {
         std.log.err("角色必须是 'alice' 或 'bob'", .{});
         return error.InvalidArguments;
     }
 
-    // 运行调度器
+    // 创建协程来等待工作协程完成（WaitGroup.wait() 必须在协程中调用）
+    _ = try schedule.go(waitForWorker, .{ schedule, &wg });
+
+    // 运行调度器（会阻塞直到 schedule.stop() 被调用）
+    // waitForWorker 协程会等待所有工作协程完成，然后调用 schedule.stop()
     try schedule.loop();
-    std.log.info("[Alice] main loop end", .{});
+    std.log.info("[Main] 调度器 loop 已退出，所有协程已安全退出", .{});
+}
+
+/// 等待工作协程完成的协程（WaitGroup 必须在协程中使用）
+fn waitForWorker(schedule: *zco.Schedule, wg: *zco.WaitGroup) !void {
+    std.log.info("[Main] 等待工作协程完成...", .{});
+    // WaitGroup.wait() 必须在协程中调用
+    // 这会阻塞直到工作协程调用 wg.done()
+    wg.wait();
+    std.log.info("[Main] 工作协程已完成，准备停止调度器", .{});
+    // 在退出前停止调度器（这会导致 schedule.loop() 退出）
+    schedule.stop();
+    std.log.info("[Main] 调度器已停止", .{});
 }
 
 /// 运行 Alice（发起方）
-fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
+fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !void {
     std.log.info("[Alice] 启动客户端...", .{});
 
     // 创建 PeerConnection
@@ -551,12 +572,12 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     try current_co_alice.Sleep(200 * std.time.ns_per_ms);
 
     // 创建 WaitGroup 来等待接收协程完成
-    var wg = try zco.WaitGroup.init(schedule);
-    defer wg.deinit();
-    try wg.add(1);
+    var recv_wg = try zco.WaitGroup.init(schedule);
+    defer recv_wg.deinit();
+    try recv_wg.add(1);
 
     // 接收数据通道消息（通过 recvSctpData 处理传入的数据）
-    _ = try schedule.go(receiveDataChannelMessages, .{ pc, &wg });
+    _ = try schedule.go(receiveDataChannelMessages, .{ pc, &recv_wg });
 
     // Ping-Pong 状态机：Alice 发送 ping，等待 pong
     if (channel.getState() == .open) {
@@ -591,12 +612,12 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     try current_co_alice.Sleep(50 * std.time.ns_per_ms);
 
     // 等待接收协程完成（在停止调度器之前）
-    // 注意：关闭 channel 后，receiveDataChannelMessages 会检测到 ChannelClosed 并退出，主动调用 wg.done()
+    // 注意：关闭 channel 后，receiveDataChannelMessages 会检测到 ChannelClosed 并退出，主动调用 recv_wg.done()
     std.log.info("[Alice] 等待接收协程完成...", .{});
     // 在调度器还在运行时等待 WaitGroup
-    // wg.wait() 会发送信号，如果 count > 0，done() 会接收这个信号
+    // recv_wg.wait() 会发送信号，如果 count > 0，done() 会接收这个信号
     // 如果 count == 0，说明协程已经退出，直接返回
-    wg.wait();
+    recv_wg.wait();
     // wait() 的 send() 会阻塞等待，直到 done() 的 recv() 完成
     // 所以 wait() 返回时，done() 已经完成，不需要额外的 sleep
 
@@ -621,14 +642,14 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 4. 清理 PeerConnection（会关闭所有相关资源）
     pc.deinit();
 
-    std.log.info("[Alice] [[停止调度器", .{});
-    // 5. 最后停止调度器
-    schedule.stop();
-    std.log.info("[Alice] ]]调度器已停止", .{});
+    // 5. 通知等待协程工作完成（WaitGroup 需要在调度器运行时工作）
+    std.log.info("[Alice] 通知等待协程工作完成", .{});
+    wg.done();
+    std.log.info("[Alice] 工作完成，协程即将退出", .{});
 }
 
 /// 运行 Bob（接收方）
-fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
+fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !void {
     std.log.info("[Bob] 启动客户端...", .{});
 
     // 创建 PeerConnection
@@ -1079,12 +1100,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     try current_co_bob_final.Sleep(200 * std.time.ns_per_ms);
 
     // 创建 WaitGroup 来等待接收协程完成
-    var wg = try zco.WaitGroup.init(schedule);
-    defer wg.deinit();
-    try wg.add(1);
+    var recv_wg = try zco.WaitGroup.init(schedule);
+    defer recv_wg.deinit();
+    try recv_wg.add(1);
 
     // 接收数据通道消息（通过 recvSctpData 处理传入的数据）
-    _ = try schedule.go(receiveDataChannelMessages, .{ pc, &wg });
+    _ = try schedule.go(receiveDataChannelMessages, .{ pc, &recv_wg });
 
     // Ping-Pong 状态机：Bob 等待接收 ping，收到后发送 pong，然后退出
     // 注意：只有发送 offer 的一方（Alice）发送 ping，Bob 只回复 pong
@@ -1109,12 +1130,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     try current_co_bob_final.Sleep(50 * std.time.ns_per_ms);
 
     // 等待接收协程完成（在停止调度器之前）
-    // 注意：关闭 channel 后，receiveDataChannelMessages 会检测到 ChannelClosed 并退出，主动调用 wg.done()
+    // 注意：关闭 channel 后，receiveDataChannelMessages 会检测到 ChannelClosed 并退出，主动调用 recv_wg.done()
     std.log.info("[Bob] 等待接收协程完成...", .{});
     // 在调度器还在运行时等待 WaitGroup
-    // wg.wait() 会发送信号，如果 count > 0，done() 会接收这个信号
+    // recv_wg.wait() 会发送信号，如果 count > 0，done() 会接收这个信号
     // 如果 count == 0，说明协程已经退出，直接返回
-    wg.wait();
+    recv_wg.wait();
     // wait() 的 send() 会阻塞等待，直到 done() 的 recv() 完成
     // 所以 wait() 返回时，done() 已经完成，不需要额外的 sleep
 
@@ -1139,8 +1160,10 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8) !void {
     // 4. 清理 PeerConnection（会关闭所有相关资源）
     pc.deinit();
 
-    // 5. 最后停止调度器
-    schedule.stop();
+    // 5. 通知等待协程工作完成（WaitGroup 需要在调度器运行时工作）
+    std.log.info("[Bob] 通知等待协程工作完成", .{});
+    wg.done();
+    std.log.info("[Bob] 工作完成，协程即将退出", .{});
 }
 
 /// 接收数据通道消息（处理 SCTP 数据包）
