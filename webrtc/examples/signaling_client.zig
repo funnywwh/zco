@@ -347,8 +347,12 @@ fn runAlice(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !v
                     // 如果 setRemoteDescription 失败，需要清理 remote_sdp_ptr（包括内部的字段）
                     try pc.setRemoteDescription(remote_sdp_ptr);
                     // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
-                    // remote_sdp 的字段指针已经转移到 remote_sdp_ptr，不需要清理
-                    // errdefer 不会执行（因为函数没有返回错误）
+                    // 由于浅拷贝，remote_sdp 和 remote_sdp_ptr 共享字段指针（fingerprint、times 等）
+                    // 需要清空 remote_sdp 的字段引用，避免在函数返回时泄漏
+                    // 注意：不能释放共享的指针，只能清空引用
+                    remote_sdp.fingerprint = null;
+                    remote_sdp.times.deinit();
+                    remote_sdp.times = std.ArrayList(webrtc.signaling.sdp.Sdp.Time).init(schedule.allocator);
                     std.log.info("[Alice] 已设置远程 answer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
                     received_answer = true;
                     std.log.info("[Alice] 已收到 answer，退出等待循环", .{});
@@ -814,8 +818,12 @@ fn runBob(schedule: *zco.Schedule, room_id: []const u8, wg: *zco.WaitGroup) !voi
                         continue;
                     };
                     // 注意：如果成功，remote_sdp_ptr 的所有权转移给 PeerConnection
-                    // remote_sdp 的字段指针已经转移到 remote_sdp_ptr，不需要清理
-                    // errdefer 不会执行（因为函数没有返回错误）
+                    // 由于浅拷贝，remote_sdp 和 remote_sdp_ptr 共享字段指针（fingerprint、times 等）
+                    // 需要清空 remote_sdp 的字段引用，避免在函数返回时泄漏
+                    // 注意：不能释放共享的指针，只能清空引用
+                    remote_sdp.fingerprint = null;
+                    remote_sdp.times.deinit();
+                    remote_sdp.times = std.ArrayList(webrtc.signaling.sdp.Sdp.Time).init(schedule.allocator);
                     std.log.info("[Bob] 已设置远程 offer，ICE 连接状态: {}", .{pc.getIceConnectionState()});
 
                     // 创建 answer
