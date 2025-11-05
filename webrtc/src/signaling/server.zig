@@ -287,7 +287,19 @@ pub const SignalingServer = struct {
                     defer server.allocator.free(user_id_dup_for_leave);
 
                     if (room.users.fetchRemove(user_id)) |entry| {
+                        // 注意：entry.key 和 client.user_id 指向同一个内存（在 handleMessage 中设置的）
+                        // 所以释放 entry.key 后，需要将 client.user_id 设置为 null，避免在 defer 中重复释放
                         server.allocator.free(entry.key);
+                        client.user_id = null; // 避免在 defer 中重复释放
+                        
+                        // 注意：client.room_id 也需要设置为 null，因为它在 handleMessage 中被分配
+                        // 但实际上 room_id 不会被 fetchRemove 释放，所以需要单独处理
+                        // 但为了安全，我们也设置为 null
+                        if (client.room_id) |rid| {
+                            server.allocator.free(rid);
+                            client.room_id = null;
+                        }
+                        
                         // 注意：client 对象仍然由 handleClient 的 defer 负责清理
                         // Room.deinit 不会销毁 client，只清理 room 自己的资源
 
