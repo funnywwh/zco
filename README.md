@@ -207,11 +207,11 @@ pub fn main() !void {
 - **运行**: `cd benchmarks && ./quick_test.sh`
 - **说明**: 提供完整的性能测试和对比分析
 
-### 6. WebRTC 模块 (`webrtc/`) ✅ (核心功能已完成)
+### 6. WebRTC 模块 (`webrtc/`) ✅ (核心功能已完成，API 已优化)
 - **功能**: 完整的 WebRTC 协议栈实现
-- **状态**: 阶段 1-8 核心功能已完成，阶段 9 进行中
+- **状态**: 阶段 1-9 基本完成，示例程序已全部验证通过
 - **运行**: `cd webrtc && zig build run`
-- **说明**: 从零实现所有 WebRTC 协议，支持音视频通话和数据通道
+- **说明**: 从零实现所有 WebRTC 协议，支持音视频通话和数据通道，API 已优化以符合浏览器行为
 - **已完成**:
   - ✅ UDP、SDP、信令消息
   - ✅ STUN、ICE Agent、TURN
@@ -221,11 +221,12 @@ pub fn main() !void {
   - ✅ SCTP（关联、流、数据通道、网络传输）
   - ✅ MediaStreamTrack、RTCRtpSender/Receiver
   - ✅ RTCPeerConnection（状态机、事件系统、完整集成）
+  - ✅ **API 优化**（自动化 ICE candidates 收集，符合浏览器行为）
   - ✅ 216/216 单元测试通过
+  - ✅ **示例程序**（udp_test, datachannel_example, datachannel_echo, signaling_server, signaling_client）
 - **待完成**:
   - 🔄 实际的 Opus/VP8 编解码器实现（当前为占位实现）
   - 🔄 数据通道接收流程（从 DTLS 接收并解析 SCTP 包）
-  - 🔄 示例应用（音视频通话、数据通道）
 
 ## 性能测试
 
@@ -480,18 +481,24 @@ ZCO 正在实现完整的 WebRTC 协议栈，支持音视频通话功能。这�
 
 ### 阶段 8: PeerConnection 整合 ✅ (已完成)
 - [x] RTCPeerConnection 实现
-- [x] createOffer/createAnswer
-- [x] setLocalDescription/setRemoteDescription
+- [x] createOffer/createAnswer（支持 RTCOfferOptions/RTCAnswerOptions）
+- [x] setLocalDescription/setRemoteDescription（自动化 candidates 收集）
 - [x] addTrack/removeTrack
+- [x] addIceCandidate（支持 RTCIceCandidate 或 RTCIceCandidateInit）
 - [x] createDataChannel（数据通道创建和管理）
 - [x] RTCRtpSender 和 RTCRtpReceiver 实现
 - [x] 事件系统（状态变化回调）
 - [x] DTLS 握手自动触发
 - [x] SRTP 密钥自动派生和设置
 - [x] RTP/RTCP 集成（发送/接收、SRTP 加密/解密）
+- [x] **API 优化**（2025-11-05）
+  - 自动化 ICE candidates 收集（setupUdpSocketInternal, createOffer/createAnswer, setLocalDescription）
+  - 优化 setRemoteDescription（只在有 candidate pairs 时启动 connectivity checks）
+  - 改进 addIceCandidate（自动生成 pairs 并开始 connectivity checks）
+  - 添加浏览器标准类型别名（RTCSessionDescription, RTCIceCandidate, RTCOfferOptions, RTCAnswerOptions, RTCIceCandidateInit）
 - 完整单元测试和集成测试（`webrtc/src/peer/*_test.zig`）
 
-### 阶段 9: 测试和示例 🔄 (进行中)
+### 阶段 9: 测试和示例 ✅ (基本完成)
 - [x] 基础模块单元测试
   - UDP 模块测试（`nets/src/udp_test.zig`）
   - SDP 模块测试（`webrtc/src/signaling/sdp_test.zig`）
@@ -508,9 +515,14 @@ ZCO 正在实现完整的 WebRTC 协议栈，支持音视频通话功能。这�
   - PeerConnection 模块测试（`webrtc/src/peer/*_test.zig`）
   - **测试状态**: 216/216 测试通过 ✅
 - [x] 集成测试（端到端连接建立）
+- [x] **示例应用**（已验证通过）
+  - ✅ `examples/udp_test.zig` - UDP 发送/接收测试
+  - ✅ `examples/datachannel_example.zig` - 数据通道基本示例
+  - ✅ `examples/datachannel_echo.zig` - 数据通道 Echo 示例（两个 PeerConnection 通信）
+  - ✅ `examples/signaling_server.zig` - WebSocket 信令服务器
+  - ✅ `examples/signaling_client.zig` - 信令客户端示例（Alice/Bob 完整信令交换）
 - [ ] 浏览器兼容性测试
-- [ ] 音视频通话示例应用
-- [ ] 数据通道示例应用
+- [ ] 音视频通话示例应用（需要实际编解码器实现）
 
 ### 技术要点
 - **从零实现**: 所有协议均从零实现，不依赖外部库
