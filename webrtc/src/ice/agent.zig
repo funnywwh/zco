@@ -809,7 +809,9 @@ pub const IceAgent = struct {
         }
 
         const udp = self.udp.?;
-        var buffer: [2048]u8 = undefined;
+        // 使用堆分配 buffer，避免栈溢出
+        const buffer = try self.schedule.allocator.alloc(u8, 2048);
+        defer self.schedule.allocator.free(buffer);
         const current_co = try self.schedule.getCurrentCo();
 
         std.log.debug("ICE: 开始监听接收到的 STUN 消息", .{});
@@ -818,7 +820,7 @@ pub const IceAgent = struct {
         // 一旦连接建立，所有消息应该由 DTLS/SCTP 处理
         while (self.state != .connected and self.state != .completed and self.state != .failed and self.state != .closed) {
             // 接收 UDP 数据（事件驱动，会挂起协程直到数据到达）
-            const result = udp.recvFrom(&buffer) catch |err| {
+            const result = udp.recvFrom(buffer) catch |err| {
                 // 如果是非阻塞错误（如没有数据），等待后重试
                 std.log.debug("ICE.handleIncomingStunMessages: 接收数据失败: {}，等待后重试", .{err});
                 try current_co.Sleep(50 * std.time.ns_per_ms);

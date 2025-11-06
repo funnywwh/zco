@@ -1,5 +1,14 @@
 const std = @import("std");
 
+// 增加协程栈大小以支持 WebRTC 复杂的调用栈
+// 临时增加到 10MB 用于诊断栈溢出问题
+// Debug 模式：10MB
+// Release 模式：10MB
+pub const DEFAULT_ZCO_STACK_SZIE = if (@import("builtin").mode == .Debug)
+    1024 * 1024 * 10 // 10MB for Debug (诊断用)
+else
+    1024 * 1024 * 10; // 10MB for Release (诊断用)
+
 // 导出所有 WebRTC 模块
 pub const signaling = @import("./signaling/root.zig");
 pub const ice = @import("./ice/root.zig");

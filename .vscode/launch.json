@@ -4,7 +4,7 @@
         "name": "C/C++ Debug (gdb Launch)",
         "type": "cppdbg",
         "request": "launch",
-        "program": "${workspaceFolder}/webrtc/zig-out/bin/signaling_client",
+        "program": "${workspaceFolder}/webrtc/zig-out/bin/browser_compat_server",
         "args": ["bob", "test"],
         "stopAtEntry": true,
         "cwd": "${workspaceFolder}",

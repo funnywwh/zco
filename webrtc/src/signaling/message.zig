@@ -44,13 +44,100 @@ pub const SignalingMessage = struct {
         sdp_mid: ?[]const u8 = null,
         sdp_mline_index: ?u32 = null,
 
+        // 辅助函数：释放 token 中分配的内存
+        // 注意：使用 anytype 来避免类型问题，因为 Token 是 union 类型
+        fn freeToken(allocator: std.mem.Allocator, token: anytype) void {
+            switch (token) {
+                .allocated_number, .allocated_string => |slice| {
+                    allocator.free(slice);
+                },
+                else => {},
+            }
+        }
+
         pub fn jsonParse(
             allocator: std.mem.Allocator,
             source: anytype,
             options: json.ParseOptions,
         ) !IceCandidate {
-            const value = try json.parseFromTokenSourceLeaky(json.Value, allocator, source, options);
-            return try jsonParseFromValue(allocator, value, options);
+            // 直接从 token source 解析对象字段，避免双重解析导致栈溢出
+            // 这样可以减少栈使用，避免在深栈上解析嵌套 JSON 时触发栈探测
+
+            // 读取 object_begin token
+            const obj_start = try source.next();
+            if (obj_start != .object_begin) {
+                return error.UnexpectedToken;
+            }
+
+            var candidate: ?[]const u8 = null;
+            var sdp_mid: ?[]const u8 = null;
+            var sdp_mline_index: ?u32 = null;
+
+            // 循环读取字段
+            while (true) {
+                const name_token = try source.nextAllocMax(allocator, .alloc_if_needed, options.max_value_len.?);
+                const field_name = switch (name_token) {
+                    inline .string, .allocated_string => |slice| slice,
+                    .object_end => break, // 对象结束
+                    else => {
+                        freeToken(allocator, name_token);
+                        return error.UnexpectedToken;
+                    },
+                };
+
+                // 匹配字段名
+                if (std.mem.eql(u8, field_name, "candidate")) {
+                    freeToken(allocator, name_token);
+                    // 读取 candidate 字段的值（字符串）
+                    const value_token = try source.nextAllocMax(allocator, .alloc_always, options.max_value_len.?);
+                    const candidate_str = switch (value_token) {
+                        .allocated_string => |s| s,
+                        else => {
+                            freeToken(allocator, value_token);
+                            return error.UnexpectedToken;
+                        },
+                    };
+                    candidate = candidate_str;
+                } else if (std.mem.eql(u8, field_name, "sdpMid")) {
+                    freeToken(allocator, name_token);
+                    // 读取 sdpMid 字段的值（字符串）
+                    const value_token = try source.nextAllocMax(allocator, .alloc_always, options.max_value_len.?);
+                    const mid_str = switch (value_token) {
+                        .allocated_string => |s| s,
+                        else => {
+                            freeToken(allocator, value_token);
+                            return error.UnexpectedToken;
+                        },
+                    };
+                    sdp_mid = mid_str;
+                } else if (std.mem.eql(u8, field_name, "sdpMLineIndex")) {
+                    freeToken(allocator, name_token);
+                    // 读取 sdpMLineIndex 字段的值（整数）
+                    const value_token = try source.nextAllocMax(allocator, .alloc_if_needed, options.max_value_len.?);
+                    const idx = switch (value_token) {
+                        .number, .allocated_number => |slice| try std.fmt.parseInt(u32, slice, 10),
+                        else => {
+                            freeToken(allocator, value_token);
+                            return error.UnexpectedToken;
+                        },
+                    };
+                    freeToken(allocator, value_token);
+                    sdp_mline_index = idx;
+                } else {
+                    // 未知字段，跳过
+                    freeToken(allocator, name_token);
+                    try source.skipValue();
+                }
+            }
+
+            // 验证必需字段
+            const candidate_str = candidate orelse return error.MissingField;
+
+            return IceCandidate{
+                .candidate = candidate_str,
+                .sdp_mid = sdp_mid,
+                .sdp_mline_index = sdp_mline_index,
+            };
         }
 
         pub fn jsonParseFromValue(

@@ -194,8 +194,10 @@ pub const Turn = struct {
         _ = try self.udp.?.sendTo(request_data, self.server_address);
 
         // 接收响应
-        var buffer: [2048]u8 = undefined;
-        const result = try self.udp.?.recvFrom(&buffer);
+        // 使用堆分配 buffer，避免栈溢出
+        const buffer = try self.allocator.alloc(u8, 2048);
+        defer self.allocator.free(buffer);
+        const result = try self.udp.?.recvFrom(buffer);
 
         // 解析响应
         var response = try Stun.Message.parse(result.data, self.allocator);
@@ -296,8 +298,10 @@ pub const Turn = struct {
         _ = try self.udp.?.sendTo(request_data, self.server_address);
 
         // 接收响应
-        var buffer: [2048]u8 = undefined;
-        const result = try self.udp.?.recvFrom(&buffer);
+        // 使用堆分配 buffer，避免栈溢出
+        const buffer = try self.allocator.alloc(u8, 2048);
+        defer self.allocator.free(buffer);
+        const result = try self.udp.?.recvFrom(buffer);
 
         var response = try Stun.Message.parse(result.data, self.allocator);
         defer response.deinit();
@@ -362,8 +366,10 @@ pub const Turn = struct {
         _ = try self.udp.?.sendTo(request_data, self.server_address);
 
         // 接收响应
-        var buffer: [2048]u8 = undefined;
-        const result = try self.udp.?.recvFrom(&buffer);
+        // 使用堆分配 buffer，避免栈溢出
+        const buffer = try self.allocator.alloc(u8, 2048);
+        defer self.allocator.free(buffer);
+        const result = try self.udp.?.recvFrom(buffer);
 
         var response = try Stun.Message.parse(result.data, self.allocator);
         defer response.deinit();

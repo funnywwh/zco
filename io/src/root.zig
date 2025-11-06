@@ -87,21 +87,29 @@ pub fn CreateIo(IOType: type) type {
                 }
             }).callback);
             try co.Suspend();
-            return result.size;
+            // 注意：Suspend() 返回后，调用栈可能已经很深
+            const size_value = result.size catch |e| {
+                return e;
+            };
+            return size_value;
         }
         pub fn write(self: *Self, buffer: []const u8) !usize {
             const xobj = self.xobj orelse return error.NotInit;
             const XObjType = @TypeOf(xobj);
             var c_write = zco.xev.Completion{};
             const co: *zco.Co = self.schedule.runningCo orelse return error.CallInSchedule;
+            // 使用栈上的局部变量保存结果，避免堆分配
+            // 注意：result 在栈上，但在 Suspend() 返回后访问时，栈可能已经很深
+            var result: anyerror!usize = undefined;
             const Result = struct {
                 co: *zco.Co,
-                size: anyerror!usize = undefined,
+                result_ptr: *anyerror!usize,
             };
-            var result: Result = .{
+            var result_wrapper = Result{
                 .co = co,
+                .result_ptr = &result,
             };
-            xobj.write(&self.schedule.xLoop.?, &c_write, .{ .slice = buffer }, Result, &result, (struct {
+            xobj.write(&self.schedule.xLoop.?, &c_write, .{ .slice = buffer }, Result, &result_wrapper, (struct {
                 fn callback(
                     ud: ?*Result,
                     _: *zco.xev.Loop,
@@ -114,16 +122,22 @@ pub fn CreateIo(IOType: type) type {
                         std.log.err("io {s} callback: userdata is null", .{SelfName});
                         return .disarm;
                     };
-                    _result.size = r;
+                    // 直接在回调函数中设置结果到栈上的局部变量
+                    _result.result_ptr.* = r;
                     _result.co.Resume() catch |e| {
-                        _result.size = e;
+                        _result.result_ptr.* = e;
                         std.log.err("io {s} write Resume error:{s}", .{ SelfName, @errorName(e) });
                     };
                     return .disarm;
                 }
             }).callback);
             try co.Suspend();
-            return result.size;
+            // 注意：Suspend() 返回后，调用栈可能已经很深
+            // 先展开错误联合体，避免在 return 语句中触发栈探测
+            const size_value = result catch |e| {
+                return e;
+            };
+            return size_value;
         }
         pub fn pread(self: *Self, buffer: []u8, offset: usize) anyerror!usize {
             const xobj = self.xobj orelse return error.NotInit;

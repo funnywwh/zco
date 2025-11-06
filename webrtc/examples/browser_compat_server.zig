@@ -13,6 +13,25 @@ const DataChannel = webrtc.sctp.datachannel.DataChannel;
 const ConnectionReadyChan = zco.CreateChan(bool);
 var server_connection_chan: ?*ConnectionReadyChan = null;
 
+// 自定义 panic handler，显示完整的栈跟踪
+pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
+    std.debug.print("\n!!! PANIC !!!\n", .{});
+    std.debug.print("Message: {s}\n\n", .{msg});
+
+    // 打印栈跟踪
+    if (error_return_trace) |trace| {
+        std.debug.dumpStackTrace(trace.*);
+    } else {
+        std.debug.print("(no error return trace available)\n", .{});
+    }
+
+    // 打印当前栈跟踪（如果可用）
+    std.debug.print("\nCurrent stack trace:\n", .{});
+    std.debug.dumpCurrentStackTrace(ret_addr);
+
+    std.process.exit(1);
+}
+
 /// 浏览器兼容性测试服务器
 /// 作为服务器端处理浏览器的 WebRTC 连接
 pub fn main() !void {
@@ -135,6 +154,7 @@ fn connectAsServer(schedule: *zco.Schedule, room_id: []const u8) !void {
     std.log.info("[服务器] 已连接到信令服务器", .{});
 
     // 加入房间
+    std.log.info("[服务器] [connectAsServer] 准备加入房间: {s}", .{room_id});
     const user_id = "server";
     const room_id_dup = try schedule.allocator.dupe(u8, room_id);
     const user_id_dup = try schedule.allocator.dupe(u8, user_id);
@@ -146,10 +166,13 @@ fn connectAsServer(schedule: *zco.Schedule, room_id: []const u8) !void {
     };
     defer join_msg.deinit(schedule.allocator);
 
+    std.log.info("[服务器] [connectAsServer] 创建 join 消息", .{});
     const join_json = try join_msg.toJson(schedule.allocator);
     defer schedule.allocator.free(join_json);
+    std.log.info("[服务器] [connectAsServer] join JSON 长度: {} 字节", .{join_json.len});
+    std.log.info("[服务器] [connectAsServer] 调用 ws.sendText() 发送 join 消息", .{});
     try ws.sendText(join_json);
-    std.log.info("[服务器] 已加入房间: {s}", .{room_id});
+    std.log.info("[服务器] [connectAsServer] ✅ 已发送 join 消息，等待服务器处理", .{});
 
     // 设置 UDP Socket
     const bind_addr = try std.net.Address.parseIp4("127.0.0.1", 0);

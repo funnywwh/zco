@@ -91,7 +91,8 @@ pub fn Resume(self: *Co) !void {
             // 这里永远不会执行到，因为 swapcontext 不会返回
             if (swap_result != 0) return error.swapcontext;
         },
-        else => {},
+        else => {
+        },
     }
     if (self.state == .STOP) {
         schedule.freeCo(self);
@@ -166,7 +167,10 @@ pub const Co = struct {
 
             const swap_result = c.swapcontext(&co.ctx, &schedule.ctx);
 
-            if (swap_result != 0) return error.swapcontext;
+            if (swap_result != 0) {
+                std.log.err("[co] [Suspend] swapcontext 失败: {}", .{swap_result});
+                return error.swapcontext;
+            }
 
             if (self.schedule.exit) {
                 return error.ScheduleExited;
@@ -209,7 +213,10 @@ pub const Co = struct {
             ) xev.CallbackAction {
                 _ = __c; // autofix
                 _ = loop; // autofix
-                const _ud = userdata orelse unreachable;
+                const _ud = userdata orelse {
+                    std.log.err("Co Sleep callback: userdata is null", .{});
+                    return .disarm;
+                };
                 _ud.result = _result;
                 _ud.co.Resume() catch |e| {
                     std.log.err("Co Sleep ns:{d} Resume error:{s}", .{ _ud.ns, @errorName(e) });

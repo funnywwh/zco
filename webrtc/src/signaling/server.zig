@@ -77,46 +77,29 @@ pub const SignalingServer = struct {
                     // 深拷贝 user_id，避免在客户端断开连接时访问已释放的内存
                     const user_id_dup = self.allocator.dupe(u8, user_id) catch {
                         // 如果分配失败，记录错误但继续
-                        std.log.err("[服务器] 复制用户 ID 失败，跳过该用户", .{});
+                        std.log.err("[服务器] [broadcast] 复制用户 ID 失败，跳过该用户", .{});
                         continue;
                     };
                     users_to_notify.append(user_id_dup) catch {
                         // 如果追加失败，释放刚分配的 user_id_dup
                         self.allocator.free(user_id_dup);
-                        std.log.err("[服务器] 收集用户列表失败，跳过广播", .{});
+                        std.log.err("[服务器] [broadcast] 收集用户列表失败，跳过广播", .{});
                         return;
                     };
                 }
             }
 
-            // 遍历收集到的用户列表，发送消息
+            // 遍历收集到的用户列表，直接发送消息
             // 注意：broadcast 必须在协程环境中调用，因为 client.send() 需要协程环境
             for (users_to_notify.items) |user_id| {
                 // 再次检查用户是否还在房间中（可能在其他协程中断开连接）
                 if (self.users.get(user_id)) |client| {
-                    // 安全地发送消息，捕获所有可能的错误
-                    // 注意：客户端可能正在断开连接，WebSocket 可能已经无效
-                    // 注意：client 可能已经被 handleClient 销毁，所以需要检查指针是否有效
-                    // 注意：broadcast 应该在 handleMessage 协程中调用，所以应该在协程环境中
-                    std.log.debug("[服务器] 准备发送消息给 {s}", .{user_id});
                     client.send(msg) catch |err| {
-                        // 发送失败不应该导致整个连接关闭
-                        // 记录错误但继续处理其他用户
-                        // 注意：连接可能已经关闭，这是正常的（客户端断开连接）
-                        // 注意：user_id 是我们深拷贝的，所以可以安全地用于日志记录
-                        std.log.warn("[服务器] 发送消息给 {s} 失败: {}（可能已断开连接或不在协程环境中）", .{ user_id, err });
-                        // 可以选择从房间中移除该用户，但这里先只记录错误
-                        // 因为用户可能在其他协程中正在断开连接，避免并发修改
+                        std.log.warn("[服务器] [broadcast] 发送消息给 {s} 失败: {}（可能已断开连接或不在协程环境中）", .{ user_id, err });
                         continue;
                     };
-                    std.log.debug("[服务器] 已发送消息给 {s}", .{user_id});
-                } else {
-                    // 用户已从房间中移除，跳过
-                    // 注意：user_id 是我们深拷贝的，所以可以安全地用于日志记录
-                    std.log.debug("[服务器] 用户 {s} 已从房间中移除，跳过广播", .{user_id});
                 }
             }
-            std.log.debug("[服务器] broadcast 完成", .{});
         }
     };
 
@@ -129,8 +112,8 @@ pub const SignalingServer = struct {
         // 标记客户端是否正在断开连接（用于避免在广播时访问已销毁的 client）
         is_disconnecting: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
-        pub fn init(ws: *websocket.WebSocket, allocator: std.mem.Allocator) *Client {
-            const client = allocator.create(Client) catch unreachable;
+        pub fn init(ws: *websocket.WebSocket, allocator: std.mem.Allocator) !*Client {
+            const client = allocator.create(Client) catch return error.OutOfMemory;
             client.* = .{
                 .ws = ws,
                 .allocator = allocator,
@@ -160,7 +143,7 @@ pub const SignalingServer = struct {
                 }
                 // 如果不在协程环境中，也返回 ConnectionClosed 错误（避免 CallInSchedule 错误传播）
                 if (err == error.CallInSchedule) {
-                    std.log.warn("[服务器] Client.send() 不在协程环境中，这不应该发生", .{});
+                    std.log.warn("[服务器] [Client.send] 不在协程环境中，这不应该发生", .{});
                     return error.ConnectionClosed;
                 }
                 return err;
@@ -231,7 +214,7 @@ pub const SignalingServer = struct {
 
         try ws.handshake();
 
-        const client = Client.init(ws, server.allocator);
+        const client = try Client.init(ws, server.allocator);
         // 注意：client 始终由 handleClient 负责清理
         // Room.deinit 只清理 room 自己的资源，不会销毁 client
         defer {
@@ -239,10 +222,14 @@ pub const SignalingServer = struct {
             server.allocator.destroy(client);
         }
 
-        var buffer: [8192]u8 = undefined;
+        // 动态分配 buffer，避免栈溢出
+        // 增加 buffer 大小以支持更大的 SDP 消息（answer/offer 可能包含完整的 SDP）
+        // 2048 可能不够，增加到 8192
+        const buffer = try server.allocator.alloc(u8, 8192);
+        defer server.allocator.free(buffer);
 
         while (true) {
-            const frame = ws.readMessage(buffer[0..]) catch |err| {
+            const frame = ws.readMessage(buffer) catch |err| {
                 // 处理连接错误（客户端断开连接等）
                 if (err == error.ConnectionReset or err == websocket.WebSocketError.ConnectionClosed or err == error.EOF) {
                     std.log.info("[服务器] 客户端断开连接: {}", .{err});
@@ -252,7 +239,7 @@ pub const SignalingServer = struct {
                 std.log.err("[服务器] 读取消息失败: {}", .{err});
                 break;
             };
-            defer if (frame.payload.len > buffer.len) ws.allocator.free(frame.payload);
+            defer ws.allocator.free(frame.payload);
 
             if (frame.opcode == .CLOSE) {
                 break;
@@ -262,14 +249,43 @@ pub const SignalingServer = struct {
                 continue;
             }
 
+            // 限制 JSON payload 的最大长度，避免在深栈上解析大 JSON 时触发栈探测
+            const MAX_JSON_PAYLOAD_SIZE: usize = 64 * 1024; // 64KB
+            if (frame.payload.len > MAX_JSON_PAYLOAD_SIZE) {
+                std.log.err("[服务器] [handleClient] JSON payload 太大: {} 字节，最大允许: {} 字节", .{ frame.payload.len, MAX_JSON_PAYLOAD_SIZE });
+                continue;
+            }
+
+            // 验证 payload 的有效性
+            if (frame.payload.len == 0) {
+                std.log.warn("[服务器] [handleClient] payload 为空，跳过", .{});
+                continue;
+            }
+            // 验证 payload 指针是否有效（防御性检查）
+            if (@intFromPtr(frame.payload.ptr) == 0) {
+                std.log.err("[服务器] [handleClient] payload 指针无效 (null)", .{});
+                continue;
+            }
+
+            // 复制 payload 到新缓冲区，确保内存连续且有效
+            // 这样可以避免：
+            // 1. frame.payload 可能指向已释放的内存
+            // 2. frame.payload 可能指向栈上的临时缓冲区
+            // 3. 内存对齐或边界问题
+            const json_buffer = server.allocator.dupe(u8, frame.payload) catch |err| {
+                std.log.err("[服务器] [handleClient] 复制 payload 失败: {}", .{err});
+                continue;
+            };
+            defer server.allocator.free(json_buffer);
+
             // 解析 JSON 消息
             var parsed = std.json.parseFromSlice(
                 message.SignalingMessage,
                 server.allocator,
-                frame.payload,
+                json_buffer,
                 .{},
-            ) catch {
-                std.log.err("Failed to parse signaling message", .{});
+            ) catch |err| {
+                std.log.err("Failed to parse signaling message: {}", .{err});
                 continue;
             };
             var msg = parsed.value;
@@ -283,8 +299,6 @@ pub const SignalingServer = struct {
                 std.log.err("[服务器] 处理消息失败: {}", .{err});
                 // 继续处理下一个消息
             };
-
-            // 不需要手动调用 msg.deinit()，因为 parsed.deinit() 会处理
         }
 
         // 客户端断开连接，从房间中移除
@@ -404,6 +418,7 @@ pub const SignalingServer = struct {
 
                 // 2. 广播新用户加入的通知给房间中的其他用户（不包括刚加入的用户）
                 if (room_entry.value_ptr.*.users.count() > 1) {
+                    std.log.info("[服务器] [handleMessage] 准备广播 user_joined 通知: {s} 加入房间 {s}", .{ user_id, room_id });
                     const room_id_dup = try self.allocator.dupe(u8, room_id);
                     const user_id_for_notify = try self.allocator.dupe(u8, user_id);
                     var user_joined_msg = message.SignalingMessage{
@@ -414,7 +429,6 @@ pub const SignalingServer = struct {
                     defer user_joined_msg.deinit(self.allocator);
                     const notify_json = try (@as(*const message.SignalingMessage, &user_joined_msg)).toJson(self.allocator);
                     defer self.allocator.free(notify_json);
-                    std.log.info("[服务器] 广播 user_joined 通知: {s} 加入房间 {s}", .{ user_id, room_id });
                     room_entry.value_ptr.*.broadcast(user_id, notify_json);
                 }
             },
@@ -423,20 +437,17 @@ pub const SignalingServer = struct {
                 if (client.room_id) |room_id| {
                     if (self.rooms.getPtr(room_id)) |room| {
                         if (client.user_id) |user_id| {
-                            std.log.info("[服务器] 转发 {s} 消息从 {s} 到房间 {s} 的其他用户", .{ @tagName(msg.type), user_id, room_id });
                             const msg_json = try msg.toJson(self.allocator);
                             defer self.allocator.free(msg_json);
-                            const recipient_count = room.users.count() - 1; // 排除发送者
-                            std.log.info("[服务器] 房间 {s} 中有 {} 个接收者", .{ room_id, recipient_count });
-
                             room.broadcast(user_id, msg_json);
-                            std.log.info("[服务器] ✅ 消息已广播", .{});
+                        } else {
+                            std.log.warn("[服务器] [handleMessage] 客户端 user_id 为 null", .{});
                         }
                     } else {
-                        std.log.warn("[服务器] 房间 {s} 不存在", .{room_id});
+                        std.log.warn("[服务器] [handleMessage] 房间 {s} 不存在", .{room_id});
                     }
                 } else {
-                    std.log.warn("[服务器] 客户端未加入房间", .{});
+                    std.log.warn("[服务器] [handleMessage] 客户端未加入房间", .{});
                 }
             },
             .leave => {

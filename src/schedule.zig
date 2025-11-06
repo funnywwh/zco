@@ -594,7 +594,11 @@ pub const Schedule = struct {
             }.free,
             .func = &struct {
                 fn run(_argsTupleOpt: ?*anyopaque) !void {
-                    const _argsTuple: *WrapArgs = @alignCast(@ptrCast(_argsTupleOpt orelse unreachable));
+                    const _argsTuple_opt = _argsTupleOpt orelse {
+                        std.log.err("schedule wrap func: argsTupleOpt is null", .{});
+                        return;
+                    };
+                    const _argsTuple: *WrapArgs = @alignCast(@ptrCast(_argsTuple_opt));
                     _ = @call(.auto, _argsTuple.func, _argsTuple.args) catch |err| {
                         // EOF错误是正常的网络连接关闭，不需要记录为错误
                         if (err != error.EOF) {
@@ -650,7 +654,11 @@ pub const Schedule = struct {
             }.free,
             .func = &struct {
                 fn run(_argsTupleOpt: ?*anyopaque) !void {
-                    const _argsTuple: *WrapArgs = @alignCast(@ptrCast(_argsTupleOpt orelse unreachable));
+                    const _argsTuple_opt = _argsTupleOpt orelse {
+                        std.log.err("schedule wrap func: argsTupleOpt is null", .{});
+                        return;
+                    };
+                    const _argsTuple: *WrapArgs = @alignCast(@ptrCast(_argsTuple_opt));
                     _ = @call(.auto, _argsTuple.func, _argsTuple.args) catch |err| {
                         // EOF错误是正常的网络连接关闭，不需要记录为错误
                         if (err != error.EOF) {
@@ -813,7 +821,10 @@ pub const Schedule = struct {
         std.log.info("===================", .{});
     }
     pub fn loop(self: *Schedule) !void {
-        const xLoop = &(self.xLoop orelse unreachable);
+        const xLoop = &(self.xLoop orelse {
+            std.log.err("schedule.loop: xLoop is null", .{});
+            return error.NoEventLoop;
+        });
         defer {
             xLoop.stop();
         }

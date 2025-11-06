@@ -1840,8 +1840,10 @@ pub const PeerConnection = struct {
             }
 
             // 尝试接收握手消息（事件驱动，会挂起协程直到数据到达）
-            var buffer: [2048]u8 = undefined;
-            const result = record.recv(&buffer) catch |err| {
+            // 使用堆分配 buffer，避免栈溢出
+            const buffer = try self.allocator.alloc(u8, 2048);
+            defer self.allocator.free(buffer);
+            const result = record.recv(buffer) catch |err| {
                 // 检查是否在接收过程中被关闭
                 if (self.isClosing()) {
                     std.log.info("PeerConnection.handleClientHandshake: recv 后检测到关闭标志，退出", .{});
@@ -1982,8 +1984,10 @@ pub const PeerConnection = struct {
                 return;
             }
 
-            var buffer: [2048]u8 = undefined;
-            const result = record.recv(&buffer) catch |err| {
+            // 使用堆分配 buffer，避免栈溢出
+            const buffer = try self.allocator.alloc(u8, 2048);
+            defer self.allocator.free(buffer);
+            const result = record.recv(buffer) catch |err| {
                 // 检查是否在接收过程中被关闭
                 if (self.isClosing()) {
                     std.log.info("PeerConnection.handleServerHandshake: recv 后检测到关闭标志，退出", .{});
@@ -2299,8 +2303,10 @@ pub const PeerConnection = struct {
         // 从 UDP 接收数据（从 ICE Agent 获取 UDP socket）
         const agent = self.ice_agent.?;
         if (agent.udp) |udp| {
-            var buffer: [2048]u8 = undefined;
-            const result = try udp.recvFrom(&buffer);
+            // 使用堆分配 buffer，避免栈溢出
+            const buffer = try allocator.alloc(u8, 2048);
+            defer allocator.free(buffer);
+            const result = try udp.recvFrom(buffer);
 
             // 使用 SRTP 解密
             const rtp_data = try self.srtp_receiver.?.unprotect(result.data, allocator);
@@ -2356,8 +2362,10 @@ pub const PeerConnection = struct {
         // 从 UDP 接收数据
         const agent = self.ice_agent.?;
         if (agent.udp) |udp| {
-            var buffer: [2048]u8 = undefined;
-            const result = try udp.recvFrom(&buffer);
+            // 使用堆分配 buffer，避免栈溢出
+            const buffer = try allocator.alloc(u8, 2048);
+            defer allocator.free(buffer);
+            const result = try udp.recvFrom(buffer);
 
             // 使用 SRTCP 解密
             return try self.srtp_receiver.?.unprotectRtcp(result.data, allocator);
@@ -2669,7 +2677,9 @@ pub const PeerConnection = struct {
         }
 
         // 从 DTLS Record 接收数据
-        var buffer: [8192]u8 = undefined;
+        // 使用堆分配 buffer，避免栈溢出（8192 字节太大，容易导致栈溢出）
+        const buffer = try self.allocator.alloc(u8, 8192);
+        defer self.allocator.free(buffer);
         const record = if (self.dtls_record) |r| r else {
             std.log.err("PeerConnection.recvSctpData: DTLS Record 为 null", .{});
             return error.NoDtlsRecord;
@@ -2688,7 +2698,7 @@ pub const PeerConnection = struct {
         }
 
         std.log.debug("PeerConnection.recvSctpData: 等待接收 DTLS 数据 (UDP socket: {})", .{record.udp != null});
-        const result = record.recv(&buffer) catch |err| {
+        const result = record.recv(buffer) catch |err| {
             // 检查是否在接收过程中被关闭
             if (self.isClosing()) {
                 std.log.debug("PeerConnection.recvSctpData: 在接收过程中检测到关闭标志", .{});

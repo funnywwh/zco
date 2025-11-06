@@ -174,6 +174,8 @@ pub fn build(b: *std.Build) void {
     browser_compat_server.root_module.addImport("nets", nets);
     browser_compat_server.root_module.addImport("websocket", websocket);
     browser_compat_server.root_module.addImport("webrtc", webrtc);
+    // 启用栈跟踪支持（用于调试 panic）
+    browser_compat_server.linkLibC();
     b.installArtifact(browser_compat_server);
 
     const run_browser_compat_server_cmd = b.addRunArtifact(browser_compat_server);
@@ -184,6 +186,29 @@ pub fn build(b: *std.Build) void {
 
     const run_browser_compat_server_step = b.step("run-browser-compat-server", "Run the browser compatibility test server");
     run_browser_compat_server_step.dependOn(&run_browser_compat_server_cmd.step);
+
+    // 测试 IceCandidate JSON 解析
+    const test_ice_candidate_parse = b.addExecutable(.{
+        .name = "test_ice_candidate_parse",
+        .root_source_file = b.path("examples/test_ice_candidate_parse.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_ice_candidate_parse.root_module.addImport("zco", zco);
+    test_ice_candidate_parse.root_module.addImport("nets", nets);
+    test_ice_candidate_parse.root_module.addImport("websocket", websocket);
+    test_ice_candidate_parse.root_module.addImport("webrtc", webrtc);
+    test_ice_candidate_parse.linkLibC();
+    b.installArtifact(test_ice_candidate_parse);
+
+    const run_test_ice_candidate_parse_cmd = b.addRunArtifact(test_ice_candidate_parse);
+    run_test_ice_candidate_parse_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_test_ice_candidate_parse_cmd.addArgs(args);
+    }
+
+    const run_test_ice_candidate_parse_step = b.step("run-test-ice-candidate-parse", "Test IceCandidate JSON parsing");
+    run_test_ice_candidate_parse_step.dependOn(&run_test_ice_candidate_parse_cmd.step);
 
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/root.zig"),
