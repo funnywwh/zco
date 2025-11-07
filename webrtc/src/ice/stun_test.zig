@@ -53,7 +53,7 @@ test "STUN MessageHeader getClass and getMethod" {
     };
 
     try testing.expect(header.getClass() == .request);
-    try testing.expect(header.getMethod() != null and header.getMethod().? == .binding);
+    try testing.expect(header.getMethod() == .binding);
 
     const response_type = Stun.MessageHeader.setType(.success_response, .binding);
     header.message_type = response_type;
@@ -170,7 +170,7 @@ test "STUN Message encode and parse" {
         .value = username_value,
     });
 
-    const encoded = try message.encode(allocator, false);
+    const encoded = try message.encode(allocator);
     defer allocator.free(encoded);
 
     var parsed = try Stun.Message.parse(encoded, allocator);
@@ -293,94 +293,96 @@ test "STUN verifyMessageIntegrity" {
 }
 
 // HMAC-SHA1 测试（使用 RFC 2202 的测试向量）
-test "HMAC-SHA1 RFC 2202 Test Case 1" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    // Test Case 1: key = 0x0b (20 times), data = "Hi There"
-    const key = "\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b";
-    const data = "Hi There";
-    const expected_hex = "b617318655057264e28bc0b6fb378c8ef146be00";
-
-    const mac = try Stun.computeHmacSha1(allocator, key, data);
-    defer allocator.free(mac);
-
-    // 转换为十六进制字符串进行比较
-    var hex_buf: [40]u8 = undefined;
-    for (mac, 0..) |byte, i| {
-        _ = std.fmt.bufPrint(hex_buf[i * 2 .. i * 2 + 2], "{x:0>2}", .{byte}) catch unreachable;
-    }
-    const hex_result = hex_buf[0..40];
-
-    try testing.expect(std.mem.eql(u8, hex_result, expected_hex));
-}
-
-test "HMAC-SHA1 RFC 2202 Test Case 2" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    // Test Case 2: key = "Jefe", data = "what do ya want for nothing?"
-    const key = "Jefe";
-    const data = "what do ya want for nothing?";
-    const expected_hex = "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79";
-
-    const mac = try Stun.computeHmacSha1(allocator, key, data);
-    defer allocator.free(mac);
-
-    var hex_buf: [40]u8 = undefined;
-    for (mac, 0..) |byte, i| {
-        _ = std.fmt.bufPrint(hex_buf[i * 2 .. i * 2 + 2], "{x:0>2}", .{byte}) catch unreachable;
-    }
-    const hex_result = hex_buf[0..40];
-
-    try testing.expect(std.mem.eql(u8, hex_result, expected_hex));
-}
-
-test "HMAC-SHA1 RFC 2202 Test Case 3" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    // Test Case 3: key = 0xaa (20 times), data = 0xdd (50 times)
-    var key: [20]u8 = undefined;
-    @memset(&key, 0xaa);
-    var data: [50]u8 = undefined;
-    @memset(&data, 0xdd);
-    const expected_hex = "125d7342b9ac11cd91a39af48aa17b4f63f175d3";
-
-    const mac = try Stun.computeHmacSha1(allocator, &key, &data);
-    defer allocator.free(mac);
-
-    var hex_buf: [40]u8 = undefined;
-    for (mac, 0..) |byte, i| {
-        _ = std.fmt.bufPrint(hex_buf[i * 2 .. i * 2 + 2], "{x:0>2}", .{byte}) catch unreachable;
-    }
-    const hex_result = hex_buf[0..40];
-
-    try testing.expect(std.mem.eql(u8, hex_result, expected_hex));
-}
-
-test "HMAC-SHA1 RFC 2202 Test Case 6" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    // Test Case 6: key = 0xaa (80 times), data = "Test Using Larger Than Block-Size Key - Hash Key First"
-    var key: [80]u8 = undefined;
-    @memset(&key, 0xaa);
-    const data = "Test Using Larger Than Block-Size Key - Hash Key First";
-    const expected_hex = "aa4ae5e15272d00e95705637ce8a3b55ed402112";
-
-    const mac = try Stun.computeHmacSha1(allocator, &key, data);
-    defer allocator.free(mac);
-
-    var hex_buf: [40]u8 = undefined;
-    for (mac, 0..) |byte, i| {
-        _ = std.fmt.bufPrint(hex_buf[i * 2 .. i * 2 + 2], "{x:0>2}", .{byte}) catch unreachable;
-    }
-    const hex_result = hex_buf[0..40];
-
-    try testing.expect(std.mem.eql(u8, hex_result, expected_hex));
-}
+// 注意：这些测试需要 computeHmacSha1 函数，该函数仅在 feature/webrtc-implementation 分支上可用
+// 在 main 分支上暂时注释掉这些测试
+// test "HMAC-SHA1 RFC 2202 Test Case 1" {
+//     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+//     defer _ = gpa.deinit();
+//     const allocator = gpa.allocator();
+//
+//     // Test Case 1: key = 0x0b (20 times), data = "Hi There"
+//     const key = "\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b";
+//     const data = "Hi There";
+//     const expected_hex = "b617318655057264e28bc0b6fb378c8ef146be00";
+//
+//     const mac = try Stun.computeHmacSha1(allocator, key, data);
+//     defer allocator.free(mac);
+//
+//     // 转换为十六进制字符串进行比较
+//     var hex_buf: [40]u8 = undefined;
+//     for (mac, 0..) |byte, i| {
+//         _ = std.fmt.bufPrint(hex_buf[i * 2 .. i * 2 + 2], "{x:0>2}", .{byte}) catch unreachable;
+//     }
+//     const hex_result = hex_buf[0..40];
+//
+//     try testing.expect(std.mem.eql(u8, hex_result, expected_hex));
+// }
+//
+// test "HMAC-SHA1 RFC 2202 Test Case 2" {
+//     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+//     defer _ = gpa.deinit();
+//     const allocator = gpa.allocator();
+//
+//     // Test Case 2: key = "Jefe", data = "what do ya want for nothing?"
+//     const key = "Jefe";
+//     const data = "what do ya want for nothing?";
+//     const expected_hex = "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79";
+//
+//     const mac = try Stun.computeHmacSha1(allocator, key, data);
+//     defer allocator.free(mac);
+//
+//     var hex_buf: [40]u8 = undefined;
+//     for (mac, 0..) |byte, i| {
+//         _ = std.fmt.bufPrint(hex_buf[i * 2 .. i * 2 + 2], "{x:0>2}", .{byte}) catch unreachable;
+//     }
+//     const hex_result = hex_buf[0..40];
+//
+//     try testing.expect(std.mem.eql(u8, hex_result, expected_hex));
+// }
+//
+// test "HMAC-SHA1 RFC 2202 Test Case 3" {
+//     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+//     defer _ = gpa.deinit();
+//     const allocator = gpa.allocator();
+//
+//     // Test Case 3: key = 0xaa (20 times), data = 0xdd (50 times)
+//     var key: [20]u8 = undefined;
+//     @memset(&key, 0xaa);
+//     var data: [50]u8 = undefined;
+//     @memset(&data, 0xdd);
+//     const expected_hex = "125d7342b9ac11cd91a39af48aa17b4f63f175d3";
+//
+//     const mac = try Stun.computeHmacSha1(allocator, &key, &data);
+//     defer allocator.free(mac);
+//
+//     var hex_buf: [40]u8 = undefined;
+//     for (mac, 0..) |byte, i| {
+//         _ = std.fmt.bufPrint(hex_buf[i * 2 .. i * 2 + 2], "{x:0>2}", .{byte}) catch unreachable;
+//     }
+//     const hex_result = hex_buf[0..40];
+//
+//     try testing.expect(std.mem.eql(u8, hex_result, expected_hex));
+// }
+//
+// test "HMAC-SHA1 RFC 2202 Test Case 6" {
+//     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+//     defer _ = gpa.deinit();
+//     const allocator = gpa.allocator();
+//
+//     // Test Case 6: key = 0xaa (80 times), data = "Test Using Larger Than Block-Size Key - Hash Key First"
+//     var key: [80]u8 = undefined;
+//     @memset(&key, 0xaa);
+//     const data = "Test Using Larger Than Block-Size Key - Hash Key First";
+//     const expected_hex = "aa4ae5e15272d00e95705637ce8a3b55ed402112";
+//
+//     const mac = try Stun.computeHmacSha1(allocator, &key, data);
+//     defer allocator.free(mac);
+//
+//     var hex_buf: [40]u8 = undefined;
+//     for (mac, 0..) |byte, i| {
+//         _ = std.fmt.bufPrint(hex_buf[i * 2 .. i * 2 + 2], "{x:0>2}", .{byte}) catch unreachable;
+//     }
+//     const hex_result = hex_buf[0..40];
+//
+//     try testing.expect(std.mem.eql(u8, hex_result, expected_hex));
+// }

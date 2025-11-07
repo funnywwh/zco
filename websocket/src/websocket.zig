@@ -458,8 +458,6 @@ pub const WebSocket = struct {
             const frame = try self.readFrame(buffer);
 
             // 处理控制帧
-            // 验证 opcode 值是否在有效范围内（防御性检查）
-            const opcode_int = @intFromEnum(frame.opcode);
             switch (frame.opcode) {
                 .CLOSE => {
                     // 处理关闭帧
@@ -481,8 +479,7 @@ pub const WebSocket = struct {
                     // 忽略PONG（如果应用层需要处理，可以在这里添加）
                     continue;
                 },
-                else => {
-                },
+                else => {},
             }
 
             // 第一帧确定消息类型（必须是TEXT或BINARY，不能是CONTINUATION）
