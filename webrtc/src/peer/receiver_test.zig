@@ -28,7 +28,7 @@ test "Receiver set and get track" {
     defer r.deinit();
 
     const track = try Track.init(allocator, "track-1", .video, "Video");
-    defer track.deinit();
+    // 注意：track 由 receiver 拥有，receiver.deinit() 会负责释放，不需要手动 deinit
 
     r.setTrack(track);
     try testing.expect(r.getTrack() == track);

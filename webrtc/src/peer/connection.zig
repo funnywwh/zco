@@ -391,6 +391,20 @@ pub const PeerConnection = struct {
             agent.on_state_change = null;
             agent.on_state_change_ctx = null;
 
+            // 清理 UDP socket（如果由 PeerConnection 创建）
+            // 注意：UDP socket 是在 setupUdpSocketInternal 中创建的，应该由 PeerConnection 负责清理
+            // 注意：udp.close() 需要在协程上下文中调用，但 deinit() 不在协程上下文
+            // 所以这里只清理引用，实际的 socket 关闭应该在协程上下文中完成
+            // 但在测试环境中，可以安全地调用 deinit，因为 deinit 内部会处理非协程上下文的情况
+            if (agent.udp) |udp| {
+                // 在非协程上下文中，udp.close() 只会记录错误并返回，不会导致崩溃
+                // 但为了安全，我们直接清理引用，让 agent.deinit() 处理
+                // 实际上，agent.deinit() 已经将 udp 设置为 null，所以这里不需要再次设置
+                // 但为了确保清理，我们调用 deinit
+                udp.deinit();
+                agent.udp = null;
+            }
+
             // 清理远程 Candidates（这些是在 setRemoteDescription 中堆分配的）
             // agent.deinit() 不会清理 remote_candidates，因为它们可能由外部管理
             // 但在这里，这些 candidates 是由 PeerConnection 在 setRemoteDescription 中分配的
@@ -1149,12 +1163,20 @@ pub const PeerConnection = struct {
                     if (std.mem.eql(u8, attr.name, "candidate")) {
                         if (attr.value) |candidate_str| {
                             // 解析 candidate 字符串
-                            var candidate = try ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str);
+                            // 注意：如果 candidate 格式无效，跳过而不是失败（因为 SDP 可能包含不完整的 candidate）
+                            var candidate = ice.candidate.Candidate.fromSdpCandidate(self.allocator, candidate_str) catch |e| {
+                                std.log.warn("Failed to parse candidate from SDP: {}, candidate_str: {s}", .{ e, candidate_str });
+                                continue; // 跳过无效的 candidate
+                            };
                             // 注意：在成功创建 candidate_ptr 后，candidate 的内容会被移动到堆上
                             // errdefer 只会在错误路径执行，成功路径上 candidate_ptr 会持有这些内存
 
                             // 创建堆分配的 candidate
-                            const candidate_ptr = try self.allocator.create(ice.candidate.Candidate);
+                            const candidate_ptr = self.allocator.create(ice.candidate.Candidate) catch |e| {
+                                candidate.deinit();
+                                std.log.warn("Failed to allocate candidate_ptr: {}", .{e});
+                                continue; // 跳过分配失败的 candidate
+                            };
                             errdefer {
                                 // 如果创建 candidate_ptr 失败，需要清理 candidate
                                 candidate.deinit();
@@ -1165,7 +1187,9 @@ pub const PeerConnection = struct {
                             agent.addRemoteCandidate(candidate_ptr) catch |e| {
                                 candidate_ptr.deinit();
                                 self.allocator.destroy(candidate_ptr);
-                                return e;
+                                std.log.warn("Failed to add remote candidate: {}", .{e});
+                                // 继续处理其他 candidates，不中断整个流程
+                                continue;
                             };
                         }
                     }

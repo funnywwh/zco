@@ -19,13 +19,49 @@ pub const MessageType = enum {
         const str = switch (self) {
             .offer => "offer",
             .answer => "answer",
-            .ice_candidate => "ice_candidate", // 使用下划线，与枚举名一致
+            .ice_candidate => "ice-candidate", // WebRTC 标准使用连字符
             .@"error" => "error",
             .join => "join",
             .leave => "leave",
             .user_joined => "user_joined", // 使用下划线，与枚举名一致
         };
         try json.encodeJsonString(str, .{}, out_stream);
+    }
+
+    pub fn jsonParse(
+        allocator: std.mem.Allocator,
+        source: anytype,
+        options: json.ParseOptions,
+    ) !MessageType {
+        const str = try source.nextAllocMax(allocator, .alloc_if_needed, options.max_value_len.?);
+        const str_slice: []const u8 = switch (str) {
+            .allocated_string => |s| s,
+            .string => |s| s,
+            else => return error.UnexpectedToken,
+        };
+        defer {
+            if (str == .allocated_string) {
+                allocator.free(str_slice);
+            }
+        }
+
+        if (std.mem.eql(u8, str_slice, "offer")) {
+            return .offer;
+        } else if (std.mem.eql(u8, str_slice, "answer")) {
+            return .answer;
+        } else if (std.mem.eql(u8, str_slice, "ice-candidate") or std.mem.eql(u8, str_slice, "ice_candidate")) {
+            return .ice_candidate; // 支持连字符和下划线两种格式
+        } else if (std.mem.eql(u8, str_slice, "error")) {
+            return .@"error";
+        } else if (std.mem.eql(u8, str_slice, "join")) {
+            return .join;
+        } else if (std.mem.eql(u8, str_slice, "leave")) {
+            return .leave;
+        } else if (std.mem.eql(u8, str_slice, "user_joined")) {
+            return .user_joined;
+        } else {
+            return error.UnexpectedToken;
+        }
     }
 };
 
@@ -221,7 +257,7 @@ pub const SignalingMessage = struct {
         const type_str = switch (self.type) {
             .offer => "offer",
             .answer => "answer",
-            .ice_candidate => "ice_candidate", // 使用下划线，与枚举名一致
+            .ice_candidate => "ice-candidate", // WebRTC 标准使用连字符
             .@"error" => "error",
             .join => "join",
             .leave => "leave",
