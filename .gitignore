@@ -2,5 +2,5 @@
 zig-out
 **/node_modules
 .VSCodeCounter/
-benchmark/rust_server/target
 webrtc/1.log
+benchmarks/rust_server/target/
