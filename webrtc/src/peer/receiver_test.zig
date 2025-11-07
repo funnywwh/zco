@@ -1,10 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
-const receiver = @import("./receiver.zig");
-const media = @import("../media/root.zig");
+// 通过 webrtc 模块访问子模块（test.zig 作为根文件时，相对路径导入可以工作）
+const webrtc = @import("webrtc");
 
-const Receiver = receiver.Receiver;
-const Track = media.Track;
+const Receiver = webrtc.peer.Receiver;
+const Track = webrtc.media.Track;
 
 test "Receiver init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -59,4 +59,3 @@ test "Receiver set and get payload type" {
     r.setPayloadType(payload_type);
     try testing.expect(r.getPayloadType() == payload_type);
 }
-

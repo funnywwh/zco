@@ -1,7 +1,9 @@
 const std = @import("std");
 const testing = std.testing;
 const zco = @import("zco");
-const Record = @import("./record.zig").Record;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const Record = webrtc.dtls.record.Record;
 
 test "DTLS RecordHeader encode and parse" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -73,10 +75,10 @@ test "DTLS Cipher encrypt and decrypt" {
     // 使用固定的密钥和 IV（仅用于测试）
     var key: [16]u8 = undefined;
     @memset(&key, 0x42);
-    
+
     var iv: [12]u8 = undefined;
     @memset(&iv, 0x24);
-    
+
     var cipher = Record.Cipher.init(key, iv);
 
     const plaintext = "Hello, DTLS!";

@@ -1,8 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
 const zco = @import("zco");
-const Handshake = @import("./handshake.zig").Handshake;
-const Record = @import("./record.zig").Record;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const Handshake = webrtc.dtls.handshake.Handshake;
+const Record = webrtc.dtls.record.Record;
 
 test "Handshake init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

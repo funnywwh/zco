@@ -1,15 +1,17 @@
 const std = @import("std");
 const testing = std.testing;
-const codec = @import("./codec.zig");
-const opus = @import("./codec/opus.zig");
-const vp8 = @import("./codec/vp8.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const codec = webrtc.media.codec;
+const opus = webrtc.media.opus;
+const vp8 = webrtc.media.vp8;
 
 test "Opus encoder init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const encoder = try opus.OpusCodec.createEncoder(allocator, 48000, 2, 64000);
+    var encoder = try opus.OpusCodec.createEncoder(allocator, 48000, 2, 64000);
     defer encoder.deinit(allocator);
 
     const info = encoder.getInfo();
@@ -26,7 +28,7 @@ test "Opus decoder init and deinit" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const decoder = try opus.OpusCodec.createDecoder(allocator, 48000, 2);
+    var decoder = try opus.OpusCodec.createDecoder(allocator, 48000, 2);
     defer decoder.deinit(allocator);
 
     const info = decoder.getInfo();
@@ -39,10 +41,10 @@ test "Opus encode and decode (placeholder)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const encoder = try opus.OpusCodec.createEncoder(allocator, 48000, 2, 64000);
+    var encoder = try opus.OpusCodec.createEncoder(allocator, 48000, 2, 64000);
     defer encoder.deinit(allocator);
 
-    const decoder = try opus.OpusCodec.createDecoder(allocator, 48000, 2);
+    var decoder = try opus.OpusCodec.createDecoder(allocator, 48000, 2);
     defer decoder.deinit(allocator);
 
     const input = "test audio data";
@@ -61,7 +63,7 @@ test "VP8 encoder init and deinit" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const encoder = try vp8.Vp8Codec.createEncoder(allocator, 640, 480, 30);
+    var encoder = try vp8.Vp8Codec.createEncoder(allocator, 640, 480, 30);
     defer encoder.deinit(allocator);
 
     const info = encoder.getInfo();
@@ -78,7 +80,7 @@ test "VP8 decoder init and deinit" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const decoder = try vp8.Vp8Codec.createDecoder(allocator, 640, 480);
+    var decoder = try vp8.Vp8Codec.createDecoder(allocator, 640, 480);
     defer decoder.deinit(allocator);
 
     const info = decoder.getInfo();
@@ -91,10 +93,10 @@ test "VP8 encode and decode (placeholder)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const encoder = try vp8.Vp8Codec.createEncoder(allocator, 640, 480, 30);
+    var encoder = try vp8.Vp8Codec.createEncoder(allocator, 640, 480, 30);
     defer encoder.deinit(allocator);
 
-    const decoder = try vp8.Vp8Codec.createDecoder(allocator, 640, 480);
+    var decoder = try vp8.Vp8Codec.createDecoder(allocator, 640, 480);
     defer decoder.deinit(allocator);
 
     const input = "test video data";
@@ -107,4 +109,3 @@ test "VP8 encode and decode (placeholder)" {
     // 占位符实现：输入和输出应该相同
     try testing.expect(std.mem.eql(u8, input, decoded));
 }
-

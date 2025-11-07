@@ -1,10 +1,9 @@
 const std = @import("std");
 const testing = std.testing;
-const sender = @import("./sender.zig");
-const media = @import("../media/root.zig");
+const webrtc = @import("webrtc");
 
-const Sender = sender.Sender;
-const Track = media.Track;
+const Sender = webrtc.peer.Sender;
+const Track = webrtc.media.Track;
 
 test "Sender init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -82,4 +81,3 @@ test "Sender replace track" {
     try s.replaceTrack(null);
     try testing.expect(s.getTrack() == null);
 }
-

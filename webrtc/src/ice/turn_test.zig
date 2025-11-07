@@ -1,8 +1,9 @@
 const std = @import("std");
 const testing = std.testing;
 const zco = @import("zco");
-const turn_mod = @import("./turn.zig");
-const Turn = turn_mod.Turn;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const Turn = webrtc.ice.turn.Turn;
 
 test "TURN init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

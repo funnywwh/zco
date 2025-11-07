@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const ReplayWindow = @import("./replay.zig").ReplayWindow;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const ReplayWindow = webrtc.srtp.replay.ReplayWindow;
 
 test "ReplayWindow checkReplay initial sequence" {
     var window = ReplayWindow{};

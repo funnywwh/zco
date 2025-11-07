@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const rtcp = @import("./rtcp.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const rtcp = webrtc.rtp.rtcp;
 
 test "RTCP Header parse and encode" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

@@ -1,10 +1,11 @@
 const std = @import("std");
 const testing = std.testing;
-const track = @import("./track.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
 
-const Track = track.Track;
-const TrackKind = track.TrackKind;
-const TrackState = track.TrackState;
+const Track = webrtc.media.Track;
+const TrackKind = webrtc.media.TrackKind;
+const TrackState = webrtc.media.TrackState;
 
 test "Track init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

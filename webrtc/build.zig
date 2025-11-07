@@ -210,14 +210,16 @@ pub fn build(b: *std.Build) void {
     const run_test_ice_candidate_parse_step = b.step("run-test-ice-candidate-parse", "Test IceCandidate JSON parsing");
     run_test_ice_candidate_parse_step.dependOn(&run_test_ice_candidate_parse_cmd.step);
 
+    // 使用 test.zig 作为所有测试的根文件
     const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
+        .root_source_file = b.path("src/test.zig"),
         .target = target,
         .optimize = optimize,
     });
     lib_unit_tests.root_module.addImport("zco", zco);
     lib_unit_tests.root_module.addImport("nets", nets);
     lib_unit_tests.root_module.addImport("websocket", websocket);
+    lib_unit_tests.root_module.addImport("webrtc", webrtc);
 
     // SDP 测试
     const sdp_tests = b.addTest(.{
@@ -226,6 +228,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const run_sdp_tests = b.addRunArtifact(sdp_tests);
+    _ = run_sdp_tests; // 暂时屏蔽，避免未使用警告
 
     // 消息测试
     const message_tests = b.addTest(.{
@@ -237,6 +240,7 @@ pub fn build(b: *std.Build) void {
     message_tests.root_module.addImport("nets", nets);
     message_tests.root_module.addImport("websocket", websocket);
     const run_message_tests = b.addRunArtifact(message_tests);
+    _ = run_message_tests; // 暂时屏蔽，避免未使用警告
 
     // STUN 测试
     const stun_tests = b.addTest(.{
@@ -247,6 +251,7 @@ pub fn build(b: *std.Build) void {
     stun_tests.root_module.addImport("zco", zco);
     stun_tests.root_module.addImport("nets", nets);
     const run_stun_tests = b.addRunArtifact(stun_tests);
+    _ = run_stun_tests; // 暂时屏蔽，避免未使用警告
 
     // Candidate 测试
     const candidate_tests = b.addTest(.{
@@ -257,6 +262,7 @@ pub fn build(b: *std.Build) void {
     candidate_tests.root_module.addImport("zco", zco);
     candidate_tests.root_module.addImport("nets", nets);
     const run_candidate_tests = b.addRunArtifact(candidate_tests);
+    _ = run_candidate_tests; // 暂时屏蔽，避免未使用警告
 
     // ICE Agent 测试
     const agent_tests = b.addTest(.{
@@ -267,6 +273,7 @@ pub fn build(b: *std.Build) void {
     agent_tests.root_module.addImport("zco", zco);
     agent_tests.root_module.addImport("nets", nets);
     const run_agent_tests = b.addRunArtifact(agent_tests);
+    _ = run_agent_tests; // 暂时屏蔽，避免未使用警告
 
     // TURN 测试
     const turn_tests = b.addTest(.{
@@ -277,6 +284,7 @@ pub fn build(b: *std.Build) void {
     turn_tests.root_module.addImport("zco", zco);
     turn_tests.root_module.addImport("nets", nets);
     const run_turn_tests = b.addRunArtifact(turn_tests);
+    _ = run_turn_tests; // 暂时屏蔽，避免未使用警告
 
     // DTLS 记录层测试
     const record_tests = b.addTest(.{
@@ -287,6 +295,7 @@ pub fn build(b: *std.Build) void {
     record_tests.root_module.addImport("zco", zco);
     record_tests.root_module.addImport("nets", nets);
     const run_record_tests = b.addRunArtifact(record_tests);
+    _ = run_record_tests; // 暂时屏蔽，避免未使用警告
 
     // DTLS 密钥派生测试
     const key_derivation_tests = b.addTest(.{
@@ -295,6 +304,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const run_key_derivation_tests = b.addRunArtifact(key_derivation_tests);
+    _ = run_key_derivation_tests; // 暂时屏蔽，避免未使用警告
 
     // DTLS 握手协议测试
     const handshake_tests = b.addTest(.{
@@ -305,6 +315,7 @@ pub fn build(b: *std.Build) void {
     handshake_tests.root_module.addImport("zco", zco);
     handshake_tests.root_module.addImport("nets", nets);
     const run_handshake_tests = b.addRunArtifact(handshake_tests);
+    _ = run_handshake_tests; // 暂时屏蔽，避免未使用警告
 
     // DTLS ECDHE 测试
     const ecdh_tests = b.addTest(.{
@@ -313,6 +324,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const run_ecdh_tests = b.addRunArtifact(ecdh_tests);
+    _ = run_ecdh_tests; // 暂时屏蔽，避免未使用警告
 
     // SRTP 测试
     const srtp_replay_tests = b.addTest(.{
@@ -321,6 +333,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const run_srtp_replay_tests = b.addRunArtifact(srtp_replay_tests);
+    _ = run_srtp_replay_tests; // 暂时屏蔽，避免未使用警告
 
     const srtp_crypto_tests = b.addTest(.{
         .root_source_file = b.path("src/srtp/crypto_test.zig"),
@@ -328,6 +341,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const run_srtp_crypto_tests = b.addRunArtifact(srtp_crypto_tests);
+    _ = run_srtp_crypto_tests; // 暂时屏蔽，避免未使用警告
 
     const srtp_context_tests = b.addTest(.{
         .root_source_file = b.path("src/srtp/context_test.zig"),
@@ -335,6 +349,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const run_srtp_context_tests = b.addRunArtifact(srtp_context_tests);
+    _ = run_srtp_context_tests; // 暂时屏蔽，避免未使用警告
 
     const srtp_transform_tests = b.addTest(.{
         .root_source_file = b.path("src/srtp/transform_test.zig"),
@@ -342,6 +357,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const run_srtp_transform_tests = b.addRunArtifact(srtp_transform_tests);
+    _ = run_srtp_transform_tests; // 暂时屏蔽，避免未使用警告
 
     const rtp_packet_tests = b.addTest(.{
         .root_source_file = b.path("src/rtp/packet_test.zig"),
@@ -350,6 +366,7 @@ pub fn build(b: *std.Build) void {
     });
     rtp_packet_tests.root_module.addImport("zco", zco);
     const run_rtp_packet_tests = b.addRunArtifact(rtp_packet_tests);
+    _ = run_rtp_packet_tests; // 暂时屏蔽，避免未使用警告
 
     const rtp_ssrc_tests = b.addTest(.{
         .root_source_file = b.path("src/rtp/ssrc_test.zig"),
@@ -358,6 +375,7 @@ pub fn build(b: *std.Build) void {
     });
     rtp_ssrc_tests.root_module.addImport("zco", zco);
     const run_rtp_ssrc_tests = b.addRunArtifact(rtp_ssrc_tests);
+    _ = run_rtp_ssrc_tests; // 暂时屏蔽，避免未使用警告
 
     const rtp_rtcp_tests = b.addTest(.{
         .root_source_file = b.path("src/rtp/rtcp_test.zig"),
@@ -366,6 +384,7 @@ pub fn build(b: *std.Build) void {
     });
     rtp_rtcp_tests.root_module.addImport("zco", zco);
     const run_rtp_rtcp_tests = b.addRunArtifact(rtp_rtcp_tests);
+    _ = run_rtp_rtcp_tests; // 暂时屏蔽，避免未使用警告
 
     const sctp_chunk_tests = b.addTest(.{
         .root_source_file = b.path("src/sctp/chunk_test.zig"),
@@ -374,6 +393,7 @@ pub fn build(b: *std.Build) void {
     });
     sctp_chunk_tests.root_module.addImport("zco", zco);
     const run_sctp_chunk_tests = b.addRunArtifact(sctp_chunk_tests);
+    _ = run_sctp_chunk_tests; // 暂时屏蔽，避免未使用警告
 
     const sctp_association_tests = b.addTest(.{
         .root_source_file = b.path("src/sctp/association_test.zig"),
@@ -382,6 +402,7 @@ pub fn build(b: *std.Build) void {
     });
     sctp_association_tests.root_module.addImport("zco", zco);
     const run_sctp_association_tests = b.addRunArtifact(sctp_association_tests);
+    _ = run_sctp_association_tests; // 暂时屏蔽，避免未使用警告
 
     const sctp_stream_tests = b.addTest(.{
         .root_source_file = b.path("src/sctp/stream_test.zig"),
@@ -390,6 +411,7 @@ pub fn build(b: *std.Build) void {
     });
     sctp_stream_tests.root_module.addImport("zco", zco);
     const run_sctp_stream_tests = b.addRunArtifact(sctp_stream_tests);
+    _ = run_sctp_stream_tests; // 暂时屏蔽，避免未使用警告
 
     const sctp_datachannel_tests = b.addTest(.{
         .root_source_file = b.path("src/sctp/datachannel_test.zig"),
@@ -398,6 +420,7 @@ pub fn build(b: *std.Build) void {
     });
     sctp_datachannel_tests.root_module.addImport("zco", zco);
     const run_sctp_datachannel_tests = b.addRunArtifact(sctp_datachannel_tests);
+    _ = run_sctp_datachannel_tests; // 暂时屏蔽，避免未使用警告
 
     // Media Track 测试
     const media_track_tests = b.addTest(.{
@@ -406,6 +429,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const run_media_track_tests = b.addRunArtifact(media_track_tests);
+    _ = run_media_track_tests; // 暂时屏蔽，避免未使用警告
 
     // PeerConnection Sender 测试
     const sender_tests = b.addTest(.{
@@ -416,7 +440,20 @@ pub fn build(b: *std.Build) void {
     sender_tests.root_module.addImport("zco", zco);
     sender_tests.root_module.addImport("nets", nets);
     sender_tests.root_module.addImport("websocket", websocket);
+    sender_tests.root_module.addImport("webrtc", webrtc);
+    // 添加 test 模块导入，让测试文件可以通过 test.zig 访问子模块
+    const test_mod = b.addModule("test", .{
+        .root_source_file = b.path("src/test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_mod.addImport("zco", zco);
+    test_mod.addImport("nets", nets);
+    test_mod.addImport("websocket", websocket);
+    test_mod.addImport("webrtc", webrtc);
+    sender_tests.root_module.addImport("test", test_mod);
     const run_sender_tests = b.addRunArtifact(sender_tests);
+    _ = run_sender_tests; // 暂时屏蔽，避免未使用警告
 
     // PeerConnection Receiver 测试
     const receiver_tests = b.addTest(.{
@@ -427,7 +464,10 @@ pub fn build(b: *std.Build) void {
     receiver_tests.root_module.addImport("zco", zco);
     receiver_tests.root_module.addImport("nets", nets);
     receiver_tests.root_module.addImport("websocket", websocket);
+    receiver_tests.root_module.addImport("webrtc", webrtc);
+    receiver_tests.root_module.addImport("test", test_mod);
     const run_receiver_tests = b.addRunArtifact(receiver_tests);
+    _ = run_receiver_tests; // 暂时屏蔽，避免未使用警告
 
     // Media Codec 测试
     const codec_tests = b.addTest(.{
@@ -436,6 +476,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const run_codec_tests = b.addRunArtifact(codec_tests);
+    _ = run_codec_tests; // 暂时屏蔽，避免未使用警告
 
     // PeerConnection DataChannel 测试
     const datachannel_tests = b.addTest(.{
@@ -446,7 +487,9 @@ pub fn build(b: *std.Build) void {
     datachannel_tests.root_module.addImport("zco", zco);
     datachannel_tests.root_module.addImport("nets", nets);
     datachannel_tests.root_module.addImport("websocket", websocket);
+    datachannel_tests.root_module.addImport("webrtc", webrtc);
     const run_datachannel_tests = b.addRunArtifact(datachannel_tests);
+    _ = run_datachannel_tests; // 暂时屏蔽，避免未使用警告
 
     // PeerConnection DataChannel 列表管理测试
     const datachannel_list_tests = b.addTest(.{
@@ -457,7 +500,9 @@ pub fn build(b: *std.Build) void {
     datachannel_list_tests.root_module.addImport("zco", zco);
     datachannel_list_tests.root_module.addImport("nets", nets);
     datachannel_list_tests.root_module.addImport("websocket", websocket);
+    datachannel_list_tests.root_module.addImport("webrtc", webrtc);
     const run_datachannel_list_tests = b.addRunArtifact(datachannel_list_tests);
+    _ = run_datachannel_list_tests; // 暂时屏蔽，避免未使用警告
 
     // PeerConnection SCTP 接收测试
     const sctp_receive_tests = b.addTest(.{
@@ -468,7 +513,9 @@ pub fn build(b: *std.Build) void {
     sctp_receive_tests.root_module.addImport("zco", zco);
     sctp_receive_tests.root_module.addImport("nets", nets);
     sctp_receive_tests.root_module.addImport("websocket", websocket);
+    sctp_receive_tests.root_module.addImport("webrtc", webrtc);
     const run_sctp_receive_tests = b.addRunArtifact(sctp_receive_tests);
+    _ = run_sctp_receive_tests; // 暂时屏蔽，避免未使用警告
 
     // SCTP DataChannel 发送/接收测试
     const datachannel_send_tests = b.addTest(.{
@@ -478,7 +525,10 @@ pub fn build(b: *std.Build) void {
     });
     datachannel_send_tests.root_module.addImport("zco", zco);
     datachannel_send_tests.root_module.addImport("nets", nets);
+    // 添加 webrtc 模块导入（datachannel.zig 需要它来编译，即使测试不使用）
+    datachannel_send_tests.root_module.addImport("webrtc", webrtc);
     const run_datachannel_send_tests = b.addRunArtifact(datachannel_send_tests);
+    _ = run_datachannel_send_tests; // 暂时屏蔽，避免未使用警告
 
     // SCTP DataChannel 事件测试
     const datachannel_events_tests = b.addTest(.{
@@ -488,40 +538,73 @@ pub fn build(b: *std.Build) void {
     });
     datachannel_events_tests.root_module.addImport("zco", zco);
     datachannel_events_tests.root_module.addImport("nets", nets);
+    // 添加 webrtc 模块导入（datachannel.zig 需要它来编译，即使测试不使用）
+    datachannel_events_tests.root_module.addImport("webrtc", webrtc);
     const run_datachannel_events_tests = b.addRunArtifact(datachannel_events_tests);
+    _ = run_datachannel_events_tests; // 暂时屏蔽，避免未使用警告
+
+    // PeerConnection 连接测试
+    const connection_tests = b.addTest(.{
+        .root_source_file = b.path("src/peer/connection_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    connection_tests.root_module.addImport("zco", zco);
+    connection_tests.root_module.addImport("nets", nets);
+    connection_tests.root_module.addImport("websocket", websocket);
+    connection_tests.root_module.addImport("webrtc", webrtc);
+    const run_connection_tests = b.addRunArtifact(connection_tests);
+    _ = run_connection_tests; // 暂时屏蔽，避免未使用警告
+
+    // PeerConnection 集成测试
+    const connection_integration_tests = b.addTest(.{
+        .root_source_file = b.path("src/peer/connection_integration_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    connection_integration_tests.root_module.addImport("zco", zco);
+    connection_integration_tests.root_module.addImport("nets", nets);
+    connection_integration_tests.root_module.addImport("websocket", websocket);
+    connection_integration_tests.root_module.addImport("webrtc", webrtc);
+    const run_connection_integration_tests = b.addRunArtifact(connection_integration_tests);
+    _ = run_connection_integration_tests; // 暂时屏蔽，避免未使用警告
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
+    // 使用 test.zig 作为根文件，所有测试都通过 lib_unit_tests 运行
     test_step.dependOn(&run_lib_unit_tests.step);
-    test_step.dependOn(&run_sdp_tests.step);
-    test_step.dependOn(&run_message_tests.step);
-    test_step.dependOn(&run_stun_tests.step);
-    test_step.dependOn(&run_candidate_tests.step);
-    test_step.dependOn(&run_agent_tests.step);
-    test_step.dependOn(&run_turn_tests.step);
-    test_step.dependOn(&run_record_tests.step);
-    test_step.dependOn(&run_key_derivation_tests.step);
-    test_step.dependOn(&run_handshake_tests.step);
-    test_step.dependOn(&run_ecdh_tests.step);
-    test_step.dependOn(&run_srtp_replay_tests.step);
-    test_step.dependOn(&run_srtp_crypto_tests.step);
-    test_step.dependOn(&run_srtp_context_tests.step);
-    test_step.dependOn(&run_srtp_transform_tests.step);
-    test_step.dependOn(&run_rtp_packet_tests.step);
-    test_step.dependOn(&run_rtp_ssrc_tests.step);
-    test_step.dependOn(&run_rtp_rtcp_tests.step);
-    test_step.dependOn(&run_sctp_chunk_tests.step);
-    test_step.dependOn(&run_sctp_association_tests.step);
-    test_step.dependOn(&run_sctp_stream_tests.step);
-    test_step.dependOn(&run_sctp_datachannel_tests.step);
-    test_step.dependOn(&run_media_track_tests.step);
-    test_step.dependOn(&run_sender_tests.step);
-    test_step.dependOn(&run_receiver_tests.step);
-    test_step.dependOn(&run_codec_tests.step);
-    test_step.dependOn(&run_datachannel_tests.step);
-    test_step.dependOn(&run_datachannel_send_tests.step);
-    test_step.dependOn(&run_datachannel_events_tests.step);
-    test_step.dependOn(&run_datachannel_list_tests.step);
-    test_step.dependOn(&run_sctp_receive_tests.step);
+    // 暂时屏蔽其他独立测试，因为现在都通过 test.zig 运行
+    // test_step.dependOn(&run_sdp_tests.step);
+    // test_step.dependOn(&run_message_tests.step);
+    // test_step.dependOn(&run_stun_tests.step);
+    // test_step.dependOn(&run_candidate_tests.step);
+    // test_step.dependOn(&run_agent_tests.step);
+    // test_step.dependOn(&run_turn_tests.step);
+    // test_step.dependOn(&run_record_tests.step);
+    // test_step.dependOn(&run_key_derivation_tests.step);
+    // test_step.dependOn(&run_handshake_tests.step);
+    // test_step.dependOn(&run_ecdh_tests.step);
+    // test_step.dependOn(&run_srtp_replay_tests.step);
+    // test_step.dependOn(&run_srtp_crypto_tests.step);
+    // test_step.dependOn(&run_srtp_context_tests.step);
+    // test_step.dependOn(&run_srtp_transform_tests.step);
+    // test_step.dependOn(&run_rtp_packet_tests.step);
+    // test_step.dependOn(&run_rtp_ssrc_tests.step);
+    // test_step.dependOn(&run_rtp_rtcp_tests.step);
+    // test_step.dependOn(&run_sctp_chunk_tests.step);
+    // test_step.dependOn(&run_sctp_association_tests.step);
+    // test_step.dependOn(&run_sctp_stream_tests.step);
+    // test_step.dependOn(&run_sctp_datachannel_tests.step);
+    // test_step.dependOn(&run_media_track_tests.step);
+    // test_step.dependOn(&run_sender_tests.step);
+    // test_step.dependOn(&run_receiver_tests.step);
+    // test_step.dependOn(&run_codec_tests.step);
+    // test_step.dependOn(&run_datachannel_tests.step);
+    // test_step.dependOn(&run_datachannel_send_tests.step);
+    // test_step.dependOn(&run_datachannel_events_tests.step);
+    // test_step.dependOn(&run_datachannel_list_tests.step);
+    // test_step.dependOn(&run_sctp_receive_tests.step);
+    // test_step.dependOn(&run_connection_tests.step);
+    // test_step.dependOn(&run_connection_integration_tests.step);
 }

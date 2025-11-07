@@ -1,9 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
 const zco = @import("zco");
-const peer = @import("./root.zig");
+const webrtc = @import("webrtc");
 
-const PeerConnection = peer.PeerConnection;
+const PeerConnection = webrtc.peer.PeerConnection;
+const Configuration = webrtc.peer.Configuration;
 
 test "PeerConnection getDataChannels returns all channels" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -13,8 +14,8 @@ test "PeerConnection getDataChannels returns all channels" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 模拟 DTLS 握手完成
@@ -56,8 +57,8 @@ test "PeerConnection findDataChannel by label" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 模拟 DTLS 握手完成
@@ -87,8 +88,8 @@ test "PeerConnection findDataChannelByStreamId" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 模拟 DTLS 握手完成
@@ -119,8 +120,8 @@ test "PeerConnection Stream ID auto-increment" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 模拟 DTLS 握手完成
@@ -155,8 +156,8 @@ test "PeerConnection removeDataChannel" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 模拟 DTLS 握手完成
@@ -189,8 +190,8 @@ test "PeerConnection multiple channels with different stream IDs" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 模拟 DTLS 握手完成
@@ -199,7 +200,7 @@ test "PeerConnection multiple channels with different stream IDs" {
     }
 
     // 创建 5 个数据通道
-    const DataChannel = @import("../sctp/datachannel.zig").DataChannel;
+    const DataChannel = webrtc.sctp.DataChannel;
     var channels: [5]*DataChannel = undefined;
     for (&channels, 0..) |*ch, i| {
         var label_buf: [20]u8 = undefined;

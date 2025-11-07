@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const packet = @import("./packet.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const packet = webrtc.rtp.packet;
 
 test "RTP Packet parse basic" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

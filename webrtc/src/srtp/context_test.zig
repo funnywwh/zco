@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const Context = @import("./context.zig").Context;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const Context = webrtc.srtp.context.Context;
 
 test "Context init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

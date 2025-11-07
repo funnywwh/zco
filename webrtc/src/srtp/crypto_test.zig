@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const Crypto = @import("./crypto.zig").Crypto;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const Crypto = webrtc.srtp.crypto.Crypto;
 
 test "Crypto generateIV" {
     var session_salt: [14]u8 = undefined;

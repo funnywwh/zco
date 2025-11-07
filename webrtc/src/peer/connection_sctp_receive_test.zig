@@ -1,10 +1,11 @@
 const std = @import("std");
 const zco = @import("zco");
 const testing = std.testing;
-const peer = @import("./root.zig");
-const sctp = @import("../sctp/root.zig");
+const webrtc = @import("webrtc");
 
-const PeerConnection = peer.PeerConnection;
+const PeerConnection = webrtc.peer.PeerConnection;
+const Configuration = webrtc.peer.Configuration;
+const sctp = webrtc.sctp;
 
 test "PeerConnection recvSctpData - 接收并解析 SCTP 数据包" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -16,7 +17,8 @@ test "PeerConnection recvSctpData - 接收并解析 SCTP 数据包" {
     defer schedule.deinit();
 
     // 创建 PeerConnection
-    var pc = try PeerConnection.init(allocator, &schedule);
+    const config = Configuration{};
+    var pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 注意：这个测试需要完整的 DTLS 和 SCTP 设置
@@ -38,16 +40,19 @@ test "PeerConnection handleSctpPacket - 解析 SCTP 包并路由到 DataChannel"
     defer schedule.deinit();
 
     // 创建 PeerConnection
-    var pc = try PeerConnection.init(allocator, &schedule);
+    const config = Configuration{};
+    var pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 创建 SCTP Association
-    const assoc = try sctp.Association.init(allocator, 5000);
+    var assoc = try sctp.Association.init(allocator, 5000);
     defer assoc.deinit();
-    pc.sctp_association = assoc;
+    pc.sctp_association = &assoc;
 
     // 创建测试用的 DataChannel
-    const channel = try sctp.DataChannel.init(
+    var channel = try allocator.create(sctp.DataChannel);
+    errdefer allocator.destroy(channel);
+    channel.* = try sctp.DataChannel.init(
         allocator,
         0, // stream_id
         "test",
@@ -57,7 +62,7 @@ test "PeerConnection handleSctpPacket - 解析 SCTP 包并路由到 DataChannel"
         0,
         true,
     );
-    defer channel.deinit();
+    errdefer channel.deinit();
     try pc.data_channels.append(channel);
 
     // 构建一个简单的 SCTP 包（CommonHeader + Data Chunk）
@@ -101,16 +106,19 @@ test "PeerConnection handleDataChunk - 解析 Data Chunk 并触发事件" {
     defer schedule.deinit();
 
     // 创建 PeerConnection
-    var pc = try PeerConnection.init(allocator, &schedule);
+    const config = Configuration{};
+    var pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 创建 SCTP Association
-    const assoc = try sctp.Association.init(allocator, 5000);
+    var assoc = try sctp.Association.init(allocator, 5000);
     defer assoc.deinit();
-    pc.sctp_association = assoc;
+    pc.sctp_association = &assoc;
 
     // 创建测试用的 DataChannel
-    const channel = try sctp.DataChannel.init(
+    var channel = try allocator.create(sctp.DataChannel);
+    errdefer allocator.destroy(channel);
+    channel.* = try sctp.DataChannel.init(
         allocator,
         0, // stream_id
         "test",
@@ -120,8 +128,7 @@ test "PeerConnection handleDataChunk - 解析 Data Chunk 并触发事件" {
         0,
         true,
     );
-    defer channel.deinit();
-
+    errdefer channel.deinit();
     try pc.data_channels.append(channel);
 
     // 构建 Data Chunk 数据
@@ -137,7 +144,7 @@ test "PeerConnection handleDataChunk - 解析 Data Chunk 并触发事件" {
     @memcpy(chunk_data[16..20], "test");
 
     // 测试：解析 Data Chunk（验证 Data Chunk 可以正确解析）
-    const data_chunk = try sctp.chunk.DataChunk.parse(allocator, &chunk_data);
+    var data_chunk = try sctp.chunk.DataChunk.parse(allocator, &chunk_data);
     defer data_chunk.deinit(allocator);
 
     try testing.expectEqual(@as(u16, 0), data_chunk.stream_id);

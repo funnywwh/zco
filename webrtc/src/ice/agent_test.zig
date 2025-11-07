@@ -1,8 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
 const zco = @import("zco");
-const IceAgent = @import("./agent.zig").IceAgent;
-const Candidate = @import("./candidate.zig").Candidate;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const IceAgent = webrtc.ice.agent.IceAgent;
+const Candidate = webrtc.ice.candidate.Candidate;
 
 test "ICE Agent init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

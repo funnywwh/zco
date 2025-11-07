@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const candidate = @import("./candidate.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const candidate = webrtc.ice.candidate;
 
 test "Candidate init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const association = @import("./association.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const association = webrtc.sctp.association;
 
 test "SCTP Association init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

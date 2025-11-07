@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const KeyDerivation = @import("./key_derivation.zig").KeyDerivation;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const KeyDerivation = webrtc.dtls.key_derivation.KeyDerivation;
 
 test "KeyDerivation deriveSrtpKeys client" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

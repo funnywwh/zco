@@ -1,8 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
 const zco = @import("zco");
-const datachannel = @import("./datachannel.zig");
-const association = @import("./association.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const datachannel = webrtc.sctp.datachannel;
+const association = webrtc.sctp.association;
 
 const DataChannel = datachannel.DataChannel;
 const ChannelType = datachannel.ChannelType;
@@ -17,7 +19,7 @@ test "DataChannel send requires open state" {
     defer schedule.deinit();
 
     // 创建数据通道（状态为 connecting）
-    const channel = try DataChannel.init(
+    var channel = try DataChannel.init(
         allocator,
         0,
         "test-channel",
@@ -30,11 +32,11 @@ test "DataChannel send requires open state" {
     defer channel.deinit();
 
     // 创建关联（用于测试）
-    const assoc = try Association.init(allocator, 5000);
+    var assoc = try Association.init(allocator, 5000);
     defer assoc.deinit();
 
     // 尝试发送数据（状态不是 open）
-    const result = channel.send("test data", assoc);
+    const result = channel.send("test data", &assoc);
     try testing.expectError(error.ChannelNotOpen, result);
 }
 
@@ -47,7 +49,7 @@ test "DataChannel send with associated association" {
     defer schedule.deinit();
 
     // 创建数据通道
-    const channel = try DataChannel.init(
+    var channel = try DataChannel.init(
         allocator,
         0,
         "test-channel",
@@ -60,11 +62,11 @@ test "DataChannel send with associated association" {
     defer channel.deinit();
 
     // 创建关联
-    const assoc = try Association.init(allocator, 5000);
+    var assoc = try Association.init(allocator, 5000);
     defer assoc.deinit();
 
     // 设置关联
-    channel.setAssociation(assoc);
+    channel.setAssociation(&assoc);
 
     // 设置状态为 open
     channel.setState(.open);
@@ -79,7 +81,7 @@ test "DataChannel setState and getState" {
     const allocator = gpa.allocator();
 
     // 创建数据通道
-    const channel = try DataChannel.init(
+    var channel = try DataChannel.init(
         allocator,
         0,
         "test-channel",
@@ -112,7 +114,7 @@ test "DataChannel setAssociation and getAssociation" {
     defer schedule.deinit();
 
     // 创建数据通道
-    const channel = try DataChannel.init(
+    var channel = try DataChannel.init(
         allocator,
         0,
         "test-channel",
@@ -128,12 +130,12 @@ test "DataChannel setAssociation and getAssociation" {
     try testing.expect(channel.getAssociation() == null);
 
     // 创建关联
-    const assoc = try Association.init(allocator, 5000);
+    var assoc = try Association.init(allocator, 5000);
     defer assoc.deinit();
 
     // 设置关联
-    channel.setAssociation(assoc);
-    try testing.expect(channel.getAssociation() == assoc);
+    channel.setAssociation(&assoc);
+    try testing.expect(channel.getAssociation() == &assoc);
 }
 
 test "DataChannel recv from stream" {
@@ -145,7 +147,7 @@ test "DataChannel recv from stream" {
     defer schedule.deinit();
 
     // 创建数据通道
-    const channel = try DataChannel.init(
+    var channel = try DataChannel.init(
         allocator,
         0,
         "test-channel",
@@ -158,11 +160,11 @@ test "DataChannel recv from stream" {
     defer channel.deinit();
 
     // 创建关联
-    const assoc = try Association.init(allocator, 5000);
+    var assoc = try Association.init(allocator, 5000);
     defer assoc.deinit();
 
     // 设置关联
-    channel.setAssociation(assoc);
+    channel.setAssociation(&assoc);
 
     // 设置状态为 open
     channel.setState(.open);
@@ -176,3 +178,4 @@ test "DataChannel recv from stream" {
     defer allocator.free(received);
 
     try testing.expectEqualStrings("test data", received);
+}

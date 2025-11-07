@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const Ecdh = @import("./ecdh.zig").Ecdh;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const Ecdh = webrtc.dtls.ecdh.Ecdh;
 
 test "ECDH generateKeyPair" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

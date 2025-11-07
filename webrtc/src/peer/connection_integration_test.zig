@@ -1,10 +1,11 @@
 const std = @import("std");
 const testing = std.testing;
 const zco = @import("zco");
-const peer = @import("./root.zig");
-const rtp = @import("../rtp/root.zig");
+const webrtc = @import("webrtc");
 
-const PeerConnection = peer.PeerConnection;
+const PeerConnection = webrtc.peer.PeerConnection;
+const Configuration = webrtc.peer.Configuration;
+const rtp = webrtc.rtp;
 
 // 端到端集成测试
 // 测试两个 PeerConnection 之间的完整连接流程和媒体传输
@@ -17,30 +18,29 @@ test "PeerConnection end-to-end: offer/answer exchange" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
+    const config = Configuration{};
 
     // 创建两个 PeerConnection（模拟两个端点）
-    const pc1 = try PeerConnection.init(allocator, &schedule, config);
+    const pc1 = try PeerConnection.init(allocator, schedule, config);
     defer pc1.deinit();
 
-    const pc2 = try PeerConnection.init(allocator, &schedule, config);
+    const pc2 = try PeerConnection.init(allocator, schedule, config);
     defer pc2.deinit();
 
     // Peer 1: 创建 offer
     const offer = try pc1.createOffer(allocator, null);
-    defer offer.deinit();
-    defer allocator.destroy(offer);
+    // 注意：不要在这里释放 offer，因为 setLocalDescription 和 setRemoteDescription 会获得所有权
     try pc1.setLocalDescription(offer);
 
     // Peer 2: 接收 offer 并创建 answer
     try pc2.setRemoteDescription(offer);
     const answer = try pc2.createAnswer(allocator, null);
-    defer answer.deinit();
-    defer allocator.destroy(answer);
+    // 注意：不要在这里释放 answer，因为 setLocalDescription 和 setRemoteDescription 会获得所有权
     try pc2.setLocalDescription(answer);
 
     // Peer 1: 接收 answer
     try pc1.setRemoteDescription(answer);
+    // 注意：offer 和 answer 的所有权已经转移给 PeerConnection，会在 pc1.deinit() 和 pc2.deinit() 时释放
 
     // 验证两个 PeerConnection 都有本地和远程描述
     try testing.expect(pc1.local_description != null);
@@ -61,8 +61,8 @@ test "PeerConnection end-to-end: SSRC generation" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 生成多个 SSRC
@@ -89,8 +89,8 @@ test "PeerConnection end-to-end: RTP packet creation and encoding" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 生成 SSRC
@@ -129,7 +129,7 @@ test "PeerConnection end-to-end: RTP packet creation and encoding" {
     try testing.expect(encoded.len >= 12 + payload_data.len);
 
     // 解析编码后的数据
-    const parsed = try rtp.Packet.parse(allocator, encoded);
+    var parsed = try rtp.Packet.parse(allocator, encoded);
     defer parsed.deinit();
     defer allocator.free(parsed.payload);
 
@@ -150,11 +150,11 @@ test "PeerConnection end-to-end: DTLS certificate generation" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc1 = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc1 = try PeerConnection.init(allocator, schedule, config);
     defer pc1.deinit();
 
-    const pc2 = try PeerConnection.init(allocator, &schedule, config);
+    const pc2 = try PeerConnection.init(allocator, schedule, config);
     defer pc2.deinit();
 
     // 验证两个 PeerConnection 都有 DTLS 证书
@@ -185,12 +185,13 @@ test "PeerConnection end-to-end: SDP fingerprint in offer" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 创建 offer
-    const offer = try pc.createOffer(allocator);
+    const offer = try pc.createOffer(allocator, null);
+    // 注意：offer 没有被设置到 PeerConnection，所以需要手动释放
     defer offer.deinit();
     defer allocator.destroy(offer);
 
@@ -228,14 +229,13 @@ test "PeerConnection end-to-end: setup attribute in offer and answer" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
+    const config = Configuration{};
 
     // Peer 1: 创建 offer
-    const pc1 = try PeerConnection.init(allocator, &schedule, config);
+    const pc1 = try PeerConnection.init(allocator, schedule, config);
     defer pc1.deinit();
     const offer = try pc1.createOffer(allocator, null);
-    defer offer.deinit();
-    defer allocator.destroy(offer);
+    // 注意：offer 会被设置到 pc2.setRemoteDescription，所有权转移，不要手动释放
 
     // 验证 offer 中有 setup 属性（应该是 "actpass"）
     var has_setup = false;
@@ -255,12 +255,11 @@ test "PeerConnection end-to-end: setup attribute in offer and answer" {
     try testing.expect(setup_value != null);
 
     // Peer 2: 创建 answer
-    const pc2 = try PeerConnection.init(allocator, &schedule, config);
+    const pc2 = try PeerConnection.init(allocator, schedule, config);
     defer pc2.deinit();
     try pc2.setRemoteDescription(offer);
     const answer = try pc2.createAnswer(allocator, null);
-    defer answer.deinit();
-    defer allocator.destroy(answer);
+    // 注意：answer 的所有权已经转移给 PeerConnection，会在 pc2.deinit() 时释放
 
     // 验证 answer 中有 setup 属性（应该是 "active"）
     has_setup = false;
@@ -291,24 +290,23 @@ test "PeerConnection end-to-end: DTLS role determination" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
+    const config = Configuration{};
 
     // Peer 1: 创建 offer（应该是服务器角色）
-    const pc1 = try PeerConnection.init(allocator, &schedule, config);
+    const pc1 = try PeerConnection.init(allocator, schedule, config);
     defer pc1.deinit();
     const offer = try pc1.createOffer(allocator, null);
-    defer offer.deinit();
-    defer allocator.destroy(offer);
+    // 注意：offer 会被设置到 pc1.setLocalDescription 和 pc2.setRemoteDescription，所有权转移，不要手动释放
     try pc1.setLocalDescription(offer);
 
     // Peer 2: 创建 answer（应该是客户端角色）
-    const pc2 = try PeerConnection.init(allocator, &schedule, config);
+    const pc2 = try PeerConnection.init(allocator, schedule, config);
     defer pc2.deinit();
     try pc2.setRemoteDescription(offer);
     const answer = try pc2.createAnswer(allocator, null);
-    defer answer.deinit();
-    defer allocator.destroy(answer);
+    // 注意：answer 会被设置到 pc2.setLocalDescription，所有权转移，不要手动释放
     try pc2.setLocalDescription(answer);
+    // 注意：offer 和 answer 的所有权已经转移给 PeerConnection，会在 pc1.deinit() 和 pc2.deinit() 时释放
 
     // Peer 1: 接收 answer
     try pc1.setRemoteDescription(answer);
@@ -328,8 +326,8 @@ test "PeerConnection end-to-end: event callback system" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 简化测试：验证事件回调字段存在且可以设置
@@ -337,9 +335,8 @@ test "PeerConnection end-to-end: event callback system" {
     // 这里主要验证事件系统的基本功能
 
     // 创建 offer（应该触发信令状态变化）
-    const offer = try pc.createOffer(allocator);
-    defer offer.deinit();
-    defer allocator.destroy(offer);
+    const offer = try pc.createOffer(allocator, null);
+    // 注意：offer 会被设置到 pc.setLocalDescription，所有权转移，不要手动释放
     try pc.setLocalDescription(offer);
 
     // 验证状态已更新（间接验证事件系统）

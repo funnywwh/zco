@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const message = @import("./message.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const message = webrtc.signaling.message;
 
 test "SignalingMessage toJson basic" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

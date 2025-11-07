@@ -1,7 +1,9 @@
 const std = @import("std");
 const testing = std.testing;
-const stream = @import("./stream.zig");
-const chunk = @import("./chunk.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const stream = webrtc.sctp.stream;
+const chunk = webrtc.sctp.chunk;
 
 test "SCTP Stream init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

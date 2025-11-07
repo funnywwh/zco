@@ -1,9 +1,12 @@
 const std = @import("std");
 const testing = std.testing;
 const zco = @import("zco");
-const peer = @import("./root.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const peer = webrtc.peer;
 
 const PeerConnection = peer.PeerConnection;
+const Configuration = peer.Configuration;
 
 test "PeerConnection createDataChannel without DTLS handshake returns error" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -13,8 +16,8 @@ test "PeerConnection createDataChannel without DTLS handshake returns error" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 尝试创建数据通道（DTLS 握手未完成）
@@ -30,8 +33,8 @@ test "PeerConnection createDataChannel with default options" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 模拟 DTLS 握手完成
@@ -43,8 +46,7 @@ test "PeerConnection createDataChannel with default options" {
     const channel = try pc.createDataChannel("test-channel", null);
     defer channel.deinit();
 
-    // 验证数据通道已创建
-    try testing.expect(channel != null);
+    // 验证数据通道已创建（channel 是非空指针，createDataChannel 成功即表示已创建）
 }
 
 test "PeerConnection createDataChannel with custom options" {
@@ -55,8 +57,8 @@ test "PeerConnection createDataChannel with custom options" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 模拟 DTLS 握手完成
@@ -74,6 +76,5 @@ test "PeerConnection createDataChannel with custom options" {
     const channel = try pc.createDataChannel("custom-channel", options);
     defer channel.deinit();
 
-    // 验证数据通道已创建
-    try testing.expect(channel != null);
+    // 验证数据通道已创建（channel 是非空指针，createDataChannel 成功即表示已创建）
 }

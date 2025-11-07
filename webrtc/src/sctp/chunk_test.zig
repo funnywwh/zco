@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const chunk = @import("./chunk.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const chunk = webrtc.sctp.chunk;
 
 test "SCTP CommonHeader parse and encode" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

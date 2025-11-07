@@ -1,8 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
 const zco = @import("zco");
-const datachannel = @import("./datachannel.zig");
-const association = @import("./association.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const datachannel = webrtc.sctp.datachannel;
+const association = webrtc.sctp.association;
 
 const DataChannel = datachannel.DataChannel;
 const DataChannelState = datachannel.DataChannelState;
@@ -26,16 +28,17 @@ test "DataChannel onopen event" {
     );
     defer channel.deinit();
 
-    // 设置 onopen 回调
-    var open_called = false;
-    const onOpenCallback = struct {
+    // 使用全局变量（在测试函数作用域内）来捕获回调状态
+    var open_called: bool = false;
+    const TestState = struct {
+        var open_called_ptr: *bool = undefined;
         fn callback(ch: *DataChannel) void {
             _ = ch;
-            open_called = true;
+            open_called_ptr.* = true;
         }
-    }.callback;
-
-    channel.setOnOpen(onOpenCallback);
+    };
+    TestState.open_called_ptr = &open_called;
+    channel.setOnOpen(TestState.callback);
 
     // 设置状态为 open（应该触发 onopen）
     channel.setState(.open);
@@ -63,15 +66,16 @@ test "DataChannel onclose event" {
     defer channel.deinit();
 
     // 设置 onclose 回调
-    var close_called = false;
-    const onCloseCallback = struct {
+    var close_called: bool = false;
+    const TestState = struct {
+        var close_called_ptr: *bool = undefined;
         fn callback(ch: *DataChannel) void {
             _ = ch;
-            close_called = true;
+            close_called_ptr.* = true;
         }
-    }.callback;
-
-    channel.setOnClose(onCloseCallback);
+    };
+    TestState.close_called_ptr = &close_called;
+    channel.setOnClose(TestState.callback);
 
     // 先设置为 open
     channel.setState(.open);
@@ -106,26 +110,27 @@ test "DataChannel onmessage event" {
     defer channel.deinit();
 
     // 创建关联
-    const assoc = try Association.init(allocator, 5000);
+    var assoc = try Association.init(allocator, 5000);
     defer assoc.deinit();
 
     // 设置关联
-    channel.setAssociation(assoc);
+    channel.setAssociation(&assoc);
 
     // 设置状态为 open
     channel.setState(.open);
 
     // 设置 onmessage 回调
     var message_received: ?[]const u8 = null;
-    const onMessageCallback = struct {
+    const TestState = struct {
+        var message_received_ptr: *?[]const u8 = undefined;
         fn callback(ch: *DataChannel, data: []const u8) void {
             _ = ch;
             // 注意：这里只是测试，实际使用中应该复制数据
-            message_received = data;
+            message_received_ptr.* = data;
         }
-    }.callback;
-
-    channel.setOnMessage(onMessageCallback);
+    };
+    TestState.message_received_ptr = &message_received;
+    channel.setOnMessage(TestState.callback);
 
     // 创建 Stream 并添加测试数据
     const stream = try assoc.stream_manager.createStream(0, true);
@@ -159,14 +164,15 @@ test "DataChannel onerror event" {
 
     // 设置 onerror 回调
     var error_received: ?anyerror = null;
-    const onErrorCallback = struct {
+    const TestState = struct {
+        var error_received_ptr: *?anyerror = undefined;
         fn callback(ch: *DataChannel, err: anyerror) void {
             _ = ch;
-            error_received = err;
+            error_received_ptr.* = err;
         }
-    }.callback;
-
-    channel.setOnError(onErrorCallback);
+    };
+    TestState.error_received_ptr = &error_received;
+    channel.setOnError(TestState.callback);
 
     // 尝试在非 open 状态下发送数据（应该触发错误）
     // 注意：当前实现中，send() 会返回错误，但不会调用 onerror

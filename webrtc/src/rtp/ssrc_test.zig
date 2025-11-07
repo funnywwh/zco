@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const ssrc = @import("./ssrc.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const ssrc = webrtc.rtp.ssrc;
 
 test "SsrcManager init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

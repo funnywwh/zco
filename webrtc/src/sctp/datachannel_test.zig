@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const datachannel = @import("./datachannel.zig");
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const datachannel = webrtc.sctp.datachannel;
 
 test "DCEP Open parse and encode" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -299,7 +301,7 @@ test "DataChannel sendData" {
     );
     defer channel.deinit();
 
-    const Stream = @import("./stream.zig").Stream;
+    const Stream = webrtc.sctp.stream.Stream;
     var sctp_stream = try Stream.init(allocator, 1, true);
     defer sctp_stream.deinit();
     sctp_stream.open();

@@ -1,7 +1,9 @@
 const std = @import("std");
 const testing = std.testing;
-const Context = @import("./context.zig").Context;
-const Transform = @import("./transform.zig").Transform;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
+const Context = webrtc.srtp.context.Context;
+const Transform = webrtc.srtp.transform.Transform;
 
 /// 创建一个简单的 RTP 包用于测试
 fn createRtpPacket(allocator: std.mem.Allocator, ssrc: u32, sequence: u16, payload: []const u8) ![]u8 {

@@ -1,12 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
+// 通过 webrtc 模块访问，避免相对路径导入问题
+const webrtc = @import("webrtc");
 
-// 由于 sdp.zig 中的 parse 函数需要 allocator 参数，我们需要直接导入
-const SdpModule = struct {
-    pub const Sdp = @import("./sdp.zig").Sdp;
-};
-
-const sdp = SdpModule;
+const Sdp = webrtc.signaling.sdp.Sdp;
+const sdp = webrtc.signaling.sdp;
 
 test "SDP init and deinit" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

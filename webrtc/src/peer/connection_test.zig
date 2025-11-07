@@ -1,30 +1,29 @@
 const std = @import("std");
 const testing = std.testing;
 const zco = @import("zco");
-const peer = @import("./root.zig");
-const ice = @import("../ice/root.zig");
-const signaling = @import("../signaling/root.zig");
+const webrtc = @import("webrtc");
 
-const PeerConnection = peer.PeerConnection;
-const SignalingState = peer.SignalingState;
-const IceConnectionState = peer.IceConnectionState;
-const IceGatheringState = peer.IceGatheringState;
-const ConnectionState = peer.ConnectionState;
-const Candidate = ice.Candidate;
-const SessionDescription = signaling.sdp.Sdp;
+const PeerConnection = webrtc.peer.PeerConnection;
+const Configuration = webrtc.peer.Configuration;
+const SignalingState = webrtc.peer.SignalingState;
+const IceConnectionState = webrtc.peer.IceConnectionState;
+const IceGatheringState = webrtc.peer.IceGatheringState;
+const ConnectionState = webrtc.peer.ConnectionState;
+const Candidate = webrtc.ice.Candidate;
+const SessionDescription = webrtc.signaling.sdp.Sdp;
 
 /// 创建测试用的 PeerConnection
 fn createTestPeerConnection(allocator: std.mem.Allocator) !*PeerConnection {
     var schedule = try zco.Schedule.init(allocator);
     errdefer schedule.deinit();
 
-    const config = PeerConnection.Configuration{
+    const config = Configuration{
         .ice_servers = &.{},
         .ice_transport_policy = .all,
         .ice_candidate_pool_size = 0,
     };
 
-    return try PeerConnection.init(allocator, &schedule, config);
+    return try PeerConnection.init(allocator, schedule, config);
 }
 
 test "PeerConnection init and deinit" {
@@ -35,13 +34,13 @@ test "PeerConnection init and deinit" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{
+    const config = Configuration{
         .ice_servers = &.{},
         .ice_transport_policy = .all,
         .ice_candidate_pool_size = 0,
     };
 
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 验证初始状态
@@ -65,8 +64,8 @@ test "createOffer generates valid SDP" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     const offer = try pc.createOffer(allocator, null);
@@ -75,7 +74,10 @@ test "createOffer generates valid SDP" {
 
     // 验证基础字段
     try testing.expect(offer.version == 0);
-    try testing.expect(offer.origin.username != null);
+    try testing.expect(offer.origin != null);
+    if (offer.origin) |origin| {
+        try testing.expect(origin.username.len > 0);
+    }
     try testing.expect(offer.session_name != null);
     try testing.expect(offer.connection != null);
 
@@ -95,9 +97,11 @@ test "createOffer generates valid SDP" {
 
     // 验证 DTLS 指纹
     try testing.expect(offer.fingerprint != null);
-    try testing.expect(offer.fingerprint.?.hash != null);
-    try testing.expect(offer.fingerprint.?.value != null);
-    try testing.expect(std.mem.eql(u8, offer.fingerprint.?.hash.?, "sha-256"));
+    if (offer.fingerprint) |fp| {
+        try testing.expect(fp.hash.len > 0);
+        try testing.expect(fp.value.len > 0);
+        try testing.expect(std.mem.eql(u8, fp.hash, "sha-256"));
+    }
 
     // 验证 setup 属性
     var has_setup = false;
@@ -120,8 +124,8 @@ test "createAnswer generates valid SDP from offer" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 先创建 offer
@@ -139,8 +143,14 @@ test "createAnswer generates valid SDP from offer" {
 
     // 验证基础字段
     try testing.expect(answer.version == 0);
-    try testing.expect(answer.origin.username != null);
+    try testing.expect(answer.origin != null);
+    if (answer.origin) |origin| {
+        try testing.expect(origin.username.len > 0);
+    }
     try testing.expect(answer.session_name != null);
+    if (answer.session_name) |name| {
+        try testing.expect(name.len > 0);
+    }
 
     // 验证媒体描述数量匹配
     try testing.expect(answer.media_descriptions.items.len == offer.media_descriptions.items.len);
@@ -156,8 +166,10 @@ test "createAnswer generates valid SDP from offer" {
 
     // 验证 DTLS 指纹
     try testing.expect(answer.fingerprint != null);
-    try testing.expect(answer.fingerprint.?.hash != null);
-    try testing.expect(std.mem.eql(u8, answer.fingerprint.?.hash.?, "sha-256"));
+    if (answer.fingerprint) |fp| {
+        try testing.expect(fp.hash.len > 0);
+        try testing.expect(std.mem.eql(u8, fp.hash, "sha-256"));
+    }
 
     // 验证 setup 属性（answer 应该是 active）
     var has_setup = false;
@@ -180,8 +192,8 @@ test "createAnswer requires remote description" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 不设置 remote description，直接创建 answer 应该失败
@@ -197,8 +209,8 @@ test "setLocalDescription updates signaling state" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 初始状态应该是 stable
@@ -224,8 +236,8 @@ test "setRemoteDescription updates signaling state" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 创建并设置远程 offer
@@ -247,24 +259,24 @@ test "setLocalDescription and setRemoteDescription complete offer/answer" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
+    const config = Configuration{};
 
     // Peer 1: 创建 offer
-    const pc1 = try PeerConnection.init(allocator, &schedule, config);
+    const pc1 = try PeerConnection.init(allocator, schedule, config);
     defer pc1.deinit();
-    const offer = try pc1.createOffer(allocator);
+    const offer = try pc1.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
     try pc1.setLocalDescription(offer);
     try testing.expect(pc1.getSignalingState() == .have_local_offer);
 
     // Peer 2: 接收 offer，创建 answer
-    const pc2 = try PeerConnection.init(allocator, &schedule, config);
+    const pc2 = try PeerConnection.init(allocator, schedule, config);
     defer pc2.deinit();
     try pc2.setRemoteDescription(offer);
     try testing.expect(pc2.getSignalingState() == .have_remote_offer);
 
-    const answer = try pc2.createAnswer(allocator);
+    const answer = try pc2.createAnswer(allocator, null);
     defer answer.deinit();
     defer allocator.destroy(answer);
     try pc2.setLocalDescription(answer);
@@ -283,8 +295,8 @@ test "DTLS certificate is generated and has valid fingerprint" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 验证证书已生成
@@ -322,20 +334,20 @@ test "createOffer and createAnswer have different fingerprints" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
+    const config = Configuration{};
 
     // 创建两个 PeerConnection
-    const pc1 = try PeerConnection.init(allocator, &schedule, config);
+    const pc1 = try PeerConnection.init(allocator, schedule, config);
     defer pc1.deinit();
-    const pc2 = try PeerConnection.init(allocator, &schedule, config);
+    const pc2 = try PeerConnection.init(allocator, schedule, config);
     defer pc2.deinit();
 
-    const offer = try pc1.createOffer(allocator);
+    const offer = try pc1.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
 
     try pc2.setRemoteDescription(offer);
-    const answer = try pc2.createAnswer(allocator);
+    const answer = try pc2.createAnswer(allocator, null);
     defer answer.deinit();
     defer allocator.destroy(answer);
 
@@ -362,21 +374,21 @@ test "determineDtlsRole from setup attribute" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
+    const config = Configuration{};
 
     // Peer 1: 创建 offer（setup=actpass）
-    const pc1 = try PeerConnection.init(allocator, &schedule, config);
+    const pc1 = try PeerConnection.init(allocator, schedule, config);
     defer pc1.deinit();
-    const offer = try pc1.createOffer(allocator);
+    const offer = try pc1.createOffer(allocator, null);
     defer offer.deinit();
     defer allocator.destroy(offer);
     try pc1.setLocalDescription(offer);
 
     // Peer 2: 创建 answer（setup=active，表示作为客户端）
-    const pc2 = try PeerConnection.init(allocator, &schedule, config);
+    const pc2 = try PeerConnection.init(allocator, schedule, config);
     defer pc2.deinit();
     try pc2.setRemoteDescription(offer);
-    const answer = try pc2.createAnswer(allocator);
+    const answer = try pc2.createAnswer(allocator, null);
     defer answer.deinit();
     defer allocator.destroy(answer);
     try pc2.setLocalDescription(answer);
@@ -409,8 +421,8 @@ test "ICE candidate parsing from SDP" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 创建 offer（包含 ICE candidates）
@@ -444,8 +456,8 @@ test "addIceCandidate" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 创建一个测试 candidate
@@ -484,8 +496,8 @@ test "getSignalingState returns current state" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     try testing.expect(pc.getSignalingState() == .stable);
@@ -502,8 +514,8 @@ test "setLocalDescription triggers ICE gathering" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     const offer = try pc.createOffer(allocator, null);
@@ -526,8 +538,8 @@ test "setRemoteDescription triggers ICE checking" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 先设置本地描述
@@ -537,7 +549,7 @@ test "setRemoteDescription triggers ICE checking" {
     try pc.setLocalDescription(offer);
 
     // 设置远程描述
-    const remote_offer = try pc.createOffer(allocator);
+    const remote_offer = try pc.createOffer(allocator, null);
     defer remote_offer.deinit();
     defer allocator.destroy(remote_offer);
     try pc.setRemoteDescription(remote_offer);
@@ -554,15 +566,15 @@ test "multiple createOffer calls generate different ICE credentials" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
-    const offer1 = try pc.createOffer(allocator);
+    const offer1 = try pc.createOffer(allocator, null);
     defer offer1.deinit();
     defer allocator.destroy(offer1);
 
-    const offer2 = try pc.createOffer(allocator);
+    const offer2 = try pc.createOffer(allocator, null);
     defer offer2.deinit();
     defer allocator.destroy(offer2);
 
@@ -596,8 +608,8 @@ test "deinit cleans up all resources" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
 
     // 创建一些描述
     const offer = try pc.createOffer(allocator, null);
@@ -617,8 +629,8 @@ test "startDtlsHandshake without selected pair returns error" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 设置本地和远程描述，但未建立 ICE 连接（没有 selected pair）
@@ -627,7 +639,7 @@ test "startDtlsHandshake without selected pair returns error" {
     defer allocator.destroy(offer);
     try pc.setLocalDescription(offer);
 
-    const remote_offer = try pc.createOffer(allocator);
+    const remote_offer = try pc.createOffer(allocator, null);
     defer remote_offer.deinit();
     defer allocator.destroy(remote_offer);
     try pc.setRemoteDescription(remote_offer);
@@ -649,8 +661,8 @@ test "startDtlsHandshake server mode" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 只设置本地描述（作为服务器）
@@ -673,8 +685,8 @@ test "addIceCandidate without ICE agent returns error" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 手动清空 ICE agent（不应该发生，但测试错误处理）
@@ -715,18 +727,18 @@ test "setLocalDescription with existing description replaces it" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 创建并设置第一个 offer
-    const offer1 = try pc.createOffer(allocator);
+    const offer1 = try pc.createOffer(allocator, null);
     defer offer1.deinit();
     defer allocator.destroy(offer1);
     try pc.setLocalDescription(offer1);
 
     // 创建并设置第二个 offer（应该替换第一个）
-    const offer2 = try pc.createOffer(allocator);
+    const offer2 = try pc.createOffer(allocator, null);
     defer offer2.deinit();
     defer allocator.destroy(offer2);
     try pc.setLocalDescription(offer2);
@@ -743,18 +755,18 @@ test "setRemoteDescription with existing description replaces it" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 创建并设置第一个 remote description
-    const offer1 = try pc.createOffer(allocator);
+    const offer1 = try pc.createOffer(allocator, null);
     defer offer1.deinit();
     defer allocator.destroy(offer1);
     try pc.setRemoteDescription(offer1);
 
     // 创建并设置第二个 remote description（应该替换第一个）
-    const offer2 = try pc.createOffer(allocator);
+    const offer2 = try pc.createOffer(allocator, null);
     defer offer2.deinit();
     defer allocator.destroy(offer2);
     try pc.setRemoteDescription(offer2);
@@ -771,8 +783,8 @@ test "createAnswer with non-audio media skips it" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 创建一个包含非音频媒体的 offer（需要手动构造）
@@ -815,8 +827,8 @@ test "createAnswer with empty formats uses default" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 创建一个空的 offer（需要手动构造）
@@ -847,8 +859,8 @@ test "all state getters return correct initial values" {
     var schedule = try zco.Schedule.init(allocator);
     defer schedule.deinit();
 
-    const config = PeerConnection.Configuration{};
-    const pc = try PeerConnection.init(allocator, &schedule, config);
+    const config = Configuration{};
+    const pc = try PeerConnection.init(allocator, schedule, config);
     defer pc.deinit();
 
     // 验证所有初始状态
@@ -859,4 +871,4 @@ test "all state getters return correct initial values" {
 }
 
 // 导入集成测试
-const _ = @import("./connection_integration_test.zig");
+// connection_integration_test.zig 已在 test.zig 中导入，无需重复导入
