@@ -766,8 +766,9 @@ test "addIceCandidate without ICE agent returns error" {
         std.net.Address.initIp4([4]u8{ 127, 0, 0, 1 }, 12345),
         .host,
     );
-    defer candidate_ptr.deinit();
-    defer allocator.destroy(candidate_ptr);
+    // 注意：addIceCandidate 会接管 candidate_ptr 的所有权，不需要手动释放
+    // defer candidate_ptr.deinit();
+    // defer allocator.destroy(candidate_ptr);
 
     // 正常情况下应该成功
     try pc.addIceCandidate(candidate_ptr);

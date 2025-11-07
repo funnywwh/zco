@@ -25,6 +25,8 @@ pub const Udp = struct {
     /// 注意：此方法会销毁 UDP 对象本身，调用者需要确保不再使用此对象
     pub fn deinit(self: *Self) void {
         // 先关闭 socket（如果已绑定）
+        // 注意：close() 需要在协程上下文中调用，但 deinit() 可能不在协程上下文
+        // 如果不在协程上下文，close() 会记录错误并返回，不会导致崩溃
         if (self.xobj) |_| {
             self.close();
         }
@@ -238,7 +240,9 @@ pub const Udp = struct {
             if (self.schedule.xLoop) |*loop| {
                 var c_close = zco.xev.Completion{};
                 const co = self.schedule.runningCo orelse {
-                    std.log.err("nets udp close: not in coroutine context", .{});
+                    // 注意：在非协程上下文中调用 close() 是正常的（例如在 deinit() 中）
+                    // 这种情况下，socket 会在调度器关闭时自动清理，所以只记录调试信息
+                    std.log.debug("nets udp close: not in coroutine context (this is normal during cleanup)", .{});
                     return;
                 };
 

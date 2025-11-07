@@ -191,21 +191,27 @@ pub const Candidate = struct {
         // 注意：浏览器发送的格式是 "candidate:..."（带冒号），需要处理
         var parts = std.mem.splitScalar(u8, candidate_str, ' ');
 
-        // 跳过第一个字段（可能是 "candidate" 或 "candidate:"）
+        // 解析格式：candidate: foundation component transport priority address port typ [raddr] [rport]
+        // 或者：foundation component transport priority address port typ [raddr] [rport]（不带 candidate 前缀）
+        // 注意：浏览器发送的格式是 "candidate:..."（带冒号），但 toSdpCandidate 生成的格式不包含 "candidate" 前缀
         const first_part = parts.next() orelse return error.InvalidCandidate;
-        // 如果第一个字段是 "candidate:"（带冒号），需要提取冒号后的部分
         const foundation_str: []const u8 = blk: {
-            if (std.mem.indexOfScalar(u8, first_part, ':')) |colon_pos| {
-                // 如果第一个字段包含冒号（candidate:3661879332），提取冒号后的部分作为 foundation
-                if (first_part.len > colon_pos + 1) {
-                    break :blk first_part[colon_pos + 1 ..];
+            // 检查第一个字段是否是 "candidate" 或 "candidate:"
+            if (std.mem.eql(u8, first_part, "candidate")) {
+                // 如果第一个字段是 "candidate"（不带冒号），获取下一个字段作为 foundation
+                break :blk parts.next() orelse return error.InvalidCandidate;
+            } else if (std.mem.startsWith(u8, first_part, "candidate:")) {
+                // 如果第一个字段是 "candidate:..."（带冒号），提取冒号后的部分作为 foundation
+                if (first_part.len > 10) { // "candidate:" 是 10 个字符
+                    break :blk first_part[10..];
                 } else {
                     // 如果冒号后没有内容，尝试下一个字段
                     break :blk parts.next() orelse return error.InvalidCandidate;
                 }
             } else {
-                // 如果第一个字段是 "candidate"（不带冒号），获取下一个字段作为 foundation
-                break :blk parts.next() orelse return error.InvalidCandidate;
+                // 如果第一个字段不是 "candidate" 或 "candidate:"，直接使用第一个字段作为 foundation
+                // 这是 toSdpCandidate 生成的格式：foundation component transport priority address port typ type
+                break :blk first_part;
             }
         };
         const component_str = parts.next() orelse return error.InvalidCandidate;
