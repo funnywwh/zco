@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -O2 -std=c11
+CFLAGS = -Wall -Wextra -O3 -std=c11
 TARGET = c_server
 SOURCE = server.c
 

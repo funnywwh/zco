@@ -1,0 +1,18 @@
+.{
+    .name = .zig_server,
+    .version = "0.0.0",
+    .fingerprint = 0x163d0e71a1f6aff3,
+    .dependencies = .{
+        .zco = .{
+            .path = "../../",
+        },
+        .nets = .{
+            .path = "../../nets",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+    },
+}
