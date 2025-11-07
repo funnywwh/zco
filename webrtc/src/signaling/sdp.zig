@@ -103,10 +103,25 @@ pub const Sdp = struct {
     /// 清理 SDP 资源
     pub fn deinit(self: *Self) void {
         if (self.origin) |*o| {
-            self.allocator.free(o.username);
-            self.allocator.free(o.nettype);
-            self.allocator.free(o.addrtype);
-            self.allocator.free(o.address);
+            // 注意：createOffer/createAnswer 总是通过 dupe 分配这些字段，所以应该总是释放
+            // 检查切片长度，如果长度大于 0，说明已分配，需要释放
+            // 注意：即使内容是 "zco"、"IN"、"IP4" 等默认值，由于是通过 dupe 分配的，也应该释放
+            // 注意：如果内存已经被释放或损坏，这里会崩溃
+            // 但这是调用者的责任，确保不会双重释放
+            if (o.username.len > 0) {
+                self.allocator.free(o.username);
+            }
+            // nettype 和 addrtype 有默认值（字符串字面量 "IN" 和 "IP4"）
+            // 但由于 createOffer/createAnswer 总是通过 dupe 分配，所以应该总是释放
+            if (o.nettype.len > 0) {
+                self.allocator.free(o.nettype);
+            }
+            if (o.addrtype.len > 0) {
+                self.allocator.free(o.addrtype);
+            }
+            if (o.address.len > 0) {
+                self.allocator.free(o.address);
+            }
         }
         if (self.session_name) |name| {
             self.allocator.free(name);

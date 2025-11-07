@@ -284,7 +284,12 @@ test "setLocalDescription and setRemoteDescription complete offer/answer" {
     try pc2.setRemoteDescription(offer_copy);
     try testing.expect(pc2.getSignalingState() == .have_remote_offer);
 
+    // 先创建 answer，然后创建 answer_copy（在设置 local_description 之前）
     const answer = try pc2.createAnswer(allocator, null);
+    // 注意：在设置 local_description 之前，先创建 answer_copy
+    // 这样 answer_copy 和 answer 是两个独立的对象，不会共享内存
+    const answer_copy = try pc2.createAnswer(allocator, null);
+
     // 注意：setLocalDescription 会接管 answer 的所有权
     // defer answer.deinit();
     // defer allocator.destroy(answer);
@@ -293,9 +298,7 @@ test "setLocalDescription and setRemoteDescription complete offer/answer" {
 
     // Peer 1: 接收 answer
     // 注意：在真实场景中，answer 应该通过信令服务器传输并重新解析
-    // 这里为了简化测试，创建一个新的 answer（基于相同的 remote_description）
-    // 但实际上，应该从 SDP 字符串重新解析
-    const answer_copy = try pc2.createAnswer(allocator, null);
+    // 这里为了简化测试，使用 answer_copy（在设置 local_description 之前创建的）
     // 注意：setRemoteDescription 会接管 answer_copy 的所有权
     try pc1.setRemoteDescription(answer_copy);
     try testing.expect(pc1.getSignalingState() == .stable);
@@ -852,8 +855,9 @@ test "createAnswer with non-audio media skips it" {
     // 创建一个包含非音频媒体的 offer（需要手动构造）
     // 简化：使用现有的 offer，然后手动修改
     const offer = try pc.createOffer(allocator, null);
-    defer offer.deinit();
-    defer allocator.destroy(offer);
+    // 注意：setRemoteDescription 会接管 offer 的所有权，不需要手动释放
+    // defer offer.deinit();
+    // defer allocator.destroy(offer);
 
     // 添加一个视频媒体描述（会被跳过）
     var video_formats = std.ArrayList([]const u8).init(allocator);
